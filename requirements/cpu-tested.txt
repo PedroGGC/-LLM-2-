@@ -1,0 +1,12 @@
+# Direct versions tested on Windows, Python 3.12.2, without a virtual environment.
+# This is not a complete transitive lock; each run also records environment.freeze.txt.
+# Do not use this CPU wheel list on Colab/CUDA.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+numpy==2.5.4
+PyYAML==6.0.3
+tokenizers==0.22.2
+safetensors==0.8.0
+tensorboard==2.21.0
+pytest==9.1.1
+

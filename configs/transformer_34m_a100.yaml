@@ -1,0 +1,42 @@
+# 33,990,144 unique parameters; memory/throughput must be measured on the actual A100.
+model:
+  vocab_size: 8192
+  d_model: 512
+  n_layers: 9
+  n_heads: 8
+  hidden_dim: 1472
+  max_seq_len: 512
+  rope_theta: 10000.0
+  norm_eps: 0.000001
+  dropout: 0.0
+data:
+  path: ../data/processed-bpe
+  seq_len: 512
+  batch_size: 8
+  eval_batch_size: 8
+optimizer:
+  lr: 0.0003
+  min_lr_ratio: 0.1
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  eps: 0.00000001
+  warmup_steps: 100
+  schedule_steps: 5000
+train:
+  seed: 42
+  device: cuda
+  precision: bf16
+  deterministic: false
+  compile: false
+  compile_backend: inductor
+  max_steps: 5000
+  grad_accum_steps: 4
+  grad_clip: 1.0
+  eval_interval: 100
+  eval_batches: 20
+  checkpoint_interval: 500
+  log_interval: 10
+  output_dir: ../runs/transformer-34m-a100
+  cpu_threads: 2
+

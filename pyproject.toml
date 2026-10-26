@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm2-lab"
+version = "0.1.0"
+description = "Reproducible experimental infrastructure for language model research"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.5,<3", "numpy>=1.26,<3", "PyYAML>=6,<7",
+  "tokenizers>=0.20,<1", "safetensors>=0.4.5,<1", "tensorboard>=2.18,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+llm2 = "llm2.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = ["cuda: requires a CUDA device with BF16", "compile: optional torch.compile smoke"]
+

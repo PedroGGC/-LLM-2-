@@ -1,0 +1,32 @@
+# All paths are relative to this file. Engineering test, not a language quality benchmark.
+model:
+  vocab_size: 257
+  d_model: 64
+  n_layers: 2
+  n_heads: 4
+  hidden_dim: 128
+  max_seq_len: 64
+  dropout: 0.1
+data:
+  path: ../data/processed-byte
+  seq_len: 32
+  batch_size: 2
+  eval_batch_size: 4
+optimizer:
+  lr: 0.001
+  warmup_steps: 5
+  schedule_steps: 100
+train:
+  device: cpu
+  precision: fp32
+  deterministic: true
+  seed: 42
+  max_steps: 20
+  grad_accum_steps: 2
+  eval_interval: 5
+  eval_batches: 4
+  checkpoint_interval: 10
+  log_interval: 1
+  output_dir: ../runs/cpu-smoke
+  cpu_threads: 1
+

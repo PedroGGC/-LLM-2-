@@ -1,0 +1,153 @@
+"""Strict, serializable configuration. Paths in YAML are relative to that YAML."""
+
+from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
+from typing import get_type_hints
+import math
+
+import yaml
+
+
+@dataclass
+class ModelConfig:
+    vocab_size: int = 8192
+    d_model: int = 512
+    n_layers: int = 9
+    n_heads: int = 8
+    hidden_dim: int = 1472
+    max_seq_len: int = 512
+    rope_theta: float = 10000.0
+    norm_eps: float = 1e-6
+    dropout: float = 0.0
+
+    def __post_init__(self):
+        _types(self)
+        for key in ("vocab_size", "d_model", "n_layers", "n_heads", "hidden_dim", "max_seq_len"):
+            if getattr(self, key) <= 0:
+                raise ValueError(f"model.{key} must be positive")
+        if self.d_model % self.n_heads or (self.d_model // self.n_heads) % 2:
+            raise ValueError("head dimension must be integral and even for RoPE")
+        if not 0 <= self.dropout < 1 or self.rope_theta <= 0 or self.norm_eps <= 0:
+            raise ValueError("invalid dropout, RoPE theta or norm epsilon")
+
+
+@dataclass
+class DataConfig:
+    path: str = "data/processed"
+    seq_len: int = 512
+    batch_size: int = 8
+    eval_batch_size: int = 8
+
+    def __post_init__(self):
+        _types(self)
+        if min(self.seq_len, self.batch_size, self.eval_batch_size) <= 0:
+            raise ValueError("data dimensions must be positive")
+
+
+@dataclass
+class OptimizerConfig:
+    lr: float = 3e-4
+    min_lr_ratio: float = 0.1
+    weight_decay: float = 0.1
+    beta1: float = 0.9
+    beta2: float = 0.95
+    eps: float = 1e-8
+    warmup_steps: int = 100
+    schedule_steps: int = 5000
+
+    def __post_init__(self):
+        _types(self)
+        if self.lr <= 0 or self.eps <= 0 or self.weight_decay < 0:
+            raise ValueError("invalid optimizer rates")
+        if not (0 <= self.beta1 < 1 and 0 <= self.beta2 < 1 and 0 <= self.min_lr_ratio <= 1):
+            raise ValueError("invalid beta or min_lr_ratio")
+        if not 0 <= self.warmup_steps < self.schedule_steps:
+            raise ValueError("require 0 <= warmup_steps < schedule_steps")
+
+
+@dataclass
+class TrainConfig:
+    seed: int = 42
+    device: str = "cpu"
+    precision: str = "fp32"
+    deterministic: bool = True
+    compile: bool = False
+    compile_backend: str = "inductor"
+    max_steps: int = 5000
+    grad_accum_steps: int = 4
+    grad_clip: float = 1.0
+    eval_interval: int = 100
+    eval_batches: int = 20
+    checkpoint_interval: int = 500
+    log_interval: int = 10
+    output_dir: str = "runs/baseline"
+    cpu_threads: int = 1
+
+    def __post_init__(self):
+        _types(self)
+        if self.device not in ("cpu", "cuda") or self.precision not in ("fp32", "bf16"):
+            raise ValueError("device: cpu|cuda; precision: fp32|bf16")
+        if self.precision == "bf16" and self.device != "cuda":
+            raise ValueError("BF16 configuration requires CUDA; use FP32 for CPU tests")
+        for key in ("max_steps", "grad_accum_steps", "eval_interval", "eval_batches",
+                    "checkpoint_interval", "log_interval", "cpu_threads"):
+            if getattr(self, key) <= 0:
+                raise ValueError(f"train.{key} must be positive")
+        if self.grad_clip <= 0 or self.seed < 0 or self.seed >= 2**32:
+            raise ValueError("grad_clip must be positive and seed must fit uint32")
+
+
+def _types(obj):
+    for name, expected in get_type_hints(type(obj)).items():
+        value = getattr(obj, name)
+        valid = type(value) is expected
+        if expected is float:
+            valid = type(value) in (float, int) and math.isfinite(value)
+        if not valid:
+            raise ValueError(f"{type(obj).__name__}.{name}: expected {expected.__name__}")
+
+
+@dataclass
+class ExperimentConfig:
+    model: ModelConfig = field(default_factory=ModelConfig)
+    data: DataConfig = field(default_factory=DataConfig)
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    train: TrainConfig = field(default_factory=TrainConfig)
+
+    def __post_init__(self):
+        if self.data.seq_len > self.model.max_seq_len:
+            raise ValueError("data.seq_len exceeds model.max_seq_len")
+        if self.train.max_steps > self.optimizer.schedule_steps:
+            raise ValueError("max_steps exceeds fixed schedule_steps")
+
+    def to_dict(self):
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, raw):
+        if not isinstance(raw, dict):
+            raise ValueError("configuration must be a mapping")
+        constructors = {"model": ModelConfig, "data": DataConfig,
+                        "optimizer": OptimizerConfig, "train": TrainConfig}
+        unknown = set(raw) - constructors.keys()
+        if unknown:
+            raise ValueError(f"unknown configuration sections: {sorted(unknown)}")
+        values = {}
+        for name, constructor in constructors.items():
+            section = raw.get(name, {})
+            if not isinstance(section, dict):
+                raise ValueError(f"{name} must be a mapping")
+            unknown = set(section) - {f.name for f in fields(constructor)}
+            if unknown:
+                raise ValueError(f"unknown {name} keys: {sorted(unknown)}")
+            values[name] = constructor(**section)
+        return cls(**values)
+
+
+def load_config(path):
+    path = Path(path).resolve()
+    config = ExperimentConfig.from_dict(yaml.safe_load(path.read_text(encoding="utf-8")))
+    config.data.path = str((path.parent / config.data.path).resolve())
+    config.train.output_dir = str((path.parent / config.train.output_dir).resolve())
+    return config
+
