@@ -1,15 +1,37 @@
-# LLM2-Lab — infraestrutura e pesquisa V2
+# LLM2-Lab — O Estudo da "IA 2" (Infraestrutura e Pesquisa V2)
 
-Infraestrutura Python/PyTorch para experimentos controlados com modelos de linguagem.
-Inclui um Transformer decoder-only inicializado do zero, pipeline offline de dados,
-treino, validação, geração, TensorBoard e checkpoints completos. O plano e os critérios
-de aceitação estão em [PLAN.md](PLAN.md); resultados executados estão em [VALIDATION.md](VALIDATION.md).
+Infraestrutura Python/PyTorch para experimentos controlados com a próxima fronteira dos
+modelos neurais de raciocínio. Inclui um Transformer decoder-only inicializado do zero,
+pipeline offline de dados, treino, validação, geração, TensorBoard e checkpoints completos.
+O plano e os critérios de aceitação estão em [PLAN.md](PLAN.md); resultados executados
+estão em [VALIDATION.md](VALIDATION.md).
 
-O baseline da etapa 1 foi preservado. A V2 adiciona recursão causal compartilhada, objetivo
-preditivo inspirado em JEPA, refinamento contínuo, MTP opcional e currículo procedural externo.
+> 📖 **Leia o documento conceitual completo:** [**docs/IA2_MANIFESTO.md**](docs/IA2_MANIFESTO.md) — *Além do Próximo Token: Por que e como construir a IA 2.*
+
+O baseline da etapa 1 (Transformer causal clássico) foi preservado. A V2 expande o paradigma
+para a pesquisa de **"IA 2"**: substitui a computação estática de próximo token por
+**recursão causal em estados latentes contínuos (LRM)**, **objetivo preditivo inspirado em JEPA**
+(para representação abstrata anti-colapso), **recorrência fractal multi-escala (FLRM)**,
+**MTP (Multi-Token Prediction)** e um **currículo procedural determinístico** para testes de
+raciocínio simbólico fora de distribuição (OOD).
+
 FLRM fica isolado em `experiment/fractal-lrm`, no worktree vizinho `LLM 2-fractal-lrm`.
 São hipóteses experimentais próprias, não reproduções integrais de TRM/HRM/Coconut/DeepSeek.
 Não há evidência de superioridade ou redução de ordens de grandeza; NCM permanece futuro.
+
+## A Ideia da "IA 2" em Resumo
+
+A **IA 1** (Transformers tradicionais) atingiu limites conhecidos: computação estática por token,
+"raciocínio" forçado via verbalização de tokens discretos (CoT) e miopia de erro superficial.
+
+A **IA 2** investigada neste repositório apoia-se em cinco pilares fundamentais:
+1. **LRM (Latent Recursive Model):** Raciocínio recorrente contínuo ($z_t \in \mathbb{R}^D$) que permite ao modelo "pensar" por $N$ iterações no espaço latente antes de emitir a linguagem.
+2. **JEPA (Joint Embedding Predictive Architecture):** Aprendizado de representações de estados futuros sem colapso, usando professor causal (EMA), parada de gradiente e regularização de variância dimensional.
+3. **FLRM (Fractal Latent Recursive Model):** Hierarquia temporal fractal (resolução local, blocos intermediários e prefixo causal global) com compartilhamento e modulação FiLM.
+4. **MTP (Multi-Token Prediction):** Cabeças preditivas simultâneas para forçar planejamento de longo horizonte.
+5. **Currículo Procedural & Verificadores:** Motor determinístico com 9 geradores simbólicos para avaliação exata de generalização OOD sem risco de memorização.
+
+Consulte o [Manifesto da IA 2](docs/IA2_MANIFESTO.md) para detalhes teóricos completos.
 
 ## Começar na V2
 
@@ -40,6 +62,7 @@ no mesmo destino (ou escolha outro `--output-dir` para derivar uma execução).
 
 Documentos da V2:
 
+- [Manifesto conceitual da IA 2](docs/IA2_MANIFESTO.md).
 - [Auditoria e plano](docs/RESEARCH_V2_PLAN.md), [roadmap e limites](docs/RESEARCH_ROADMAP.md).
 - [LRM/JEPA/MTP](docs/ARCHITECTURE_LRM.md) e [FLRM](docs/ARCHITECTURE_FLRM.md).
 - [Currículo e isolamento dos dados](docs/CURRICULUM.md).
