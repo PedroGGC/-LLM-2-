@@ -82,3 +82,35 @@ def test_fractal_resume_jepa_and_checkpointing(training_config, tmp_path):
         assert trainer.train_step()["training_loss"] == expected_loss
         assert_nested_equal(expected, (trainer.model.state_dict(), trainer.objective.state_dict(),
                                        trainer.optimizer.state_dict(), trainer.sampler.state_dict()))
+
+
+def test_fractal_adaptive_curriculum_resume(training_config, tmp_path):
+    cfg = training_config
+    cfg.model.max_seq_len = cfg.data.seq_len = 128
+    cfg.research = ResearchConfig(architecture="fractal", iterations=2, jepa_weight=0.1,
+                                  curriculum="adaptive", max_difficulty=1, curriculum_interval=1, probe_examples=1)
+    with Trainer(cfg) as trainer:
+        trainer.fit(until_step=2)
+        path = trainer.last_checkpoint
+        expected_metrics = trainer.train_step()
+        expected = copy.deepcopy((trainer.model.state_dict(), trainer.objective.state_dict(),
+                                  trainer.optimizer.state_dict(), trainer.sampler.state_dict()))
+    cfg.train.output_dir = str(tmp_path / "fractal-curriculum-resume")
+    with Trainer(cfg, resume=path) as trainer:
+        assert trainer.train_step()["training_loss"] == expected_metrics["training_loss"]
+        assert_nested_equal(expected, (trainer.model.state_dict(), trainer.objective.state_dict(),
+                                       trainer.optimizer.state_dict(), trainer.sampler.state_dict()))
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
+def test_fractal_cuda_bf16(training_config):
+    if not torch.cuda.is_bf16_supported():
+        pytest.skip("BF16 unavailable")
+    cfg = training_config
+    cfg.train.device, cfg.train.precision, cfg.train.deterministic = "cuda", "bf16", False
+    cfg.research = ResearchConfig(architecture="fractal", jepa_weight=0.1)
+    with Trainer(cfg) as trainer:
+        metrics = trainer.train_step()
+        assert metrics["peak_vram_allocated_bytes"] > 0
+        assert all(torch.isfinite(p).all() for p in trainer.model.parameters())
