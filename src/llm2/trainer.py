@@ -21,6 +21,7 @@ from .objectives import CausalLanguageModeling
 from .optim import build_optimizer, build_scheduler
 from .runtime import (attention_context, autocast_context, capture_rng, environment,
                       restore_rng, save_source_snapshot, setup_runtime, source_provenance)
+from .research.factory import build_backbone, build_objective
 
 
 class Trainer:
@@ -38,9 +39,9 @@ class Trainer:
         if min(len(x) for x in self.data.arrays.values()) <= cfg.data.seq_len:
             raise ValueError("both splits need at least seq_len + 1 tokens")
         if model is None:
-            model = model_factory() if model_factory is not None else TransformerLM(cfg.model)
+            model = model_factory() if model_factory is not None else build_backbone(cfg)
         if objective is None:
-            objective = objective_factory() if objective_factory is not None else CausalLanguageModeling()
+            objective = objective_factory() if objective_factory is not None else build_objective(cfg, model)
         self.model, self.objective = model.to(self.device), objective.to(self.device)
         if isinstance(self.model, TransformerLM) and self.model.config != cfg.model:
             raise ValueError("Transformer instance and experiment model configuration disagree")
@@ -54,6 +55,10 @@ class Trainer:
                                                        for p in module.parameters()}.values())
         if flops_estimator is None and type(self.model) is TransformerLM and type(self.objective) is CausalLanguageModeling:
             flops_estimator = lambda: estimate_transformer_flops(cfg.model, cfg.data.seq_len)
+        if flops_estimator is None and cfg.research is not None:
+            from .research.accounting import estimate_research_flops
+            flops_estimator = lambda: estimate_research_flops(self.model, self.objective, cfg.data.seq_len)
+        self._flops_estimator = flops_estimator
         estimate = flops_estimator() if flops_estimator is not None else None
         self.flops = asdict(estimate) if estimate is not None else None
         self.environment_info = environment()
@@ -152,6 +157,9 @@ class Trainer:
         started = time.perf_counter()
         self.optimizer.zero_grad(set_to_none=True)
         loss_sum, tokens, sequences = 0.0, 0, 0
+        auxiliary_metrics = {}
+        estimate = self._flops_estimator() if self._flops_estimator else None
+        step_flops = asdict(estimate) if estimate is not None else None
         with attention_context(cfg.train.deterministic):
             for _ in range(cfg.train.grad_accum_steps):
                 batch = self.sampler.next(self.device)
@@ -163,11 +171,17 @@ class Trainer:
                 loss_sum += float(result.loss.detach()) * result.token_count
                 tokens += result.token_count
                 sequences += batch["input_ids"].shape[0]
+                for name, value in result.metrics.items():
+                    auxiliary_metrics[name] = auxiliary_metrics.get(name, 0.0) + value / cfg.train.grad_accum_steps
             grad_norm = torch.nn.utils.clip_grad_norm_(self.parameters, cfg.train.grad_clip,
                                                       error_if_nonfinite=True)
             lr_used = self.optimizer.param_groups[0]["lr"]
             self.optimizer.step()
             self.scheduler.step()
+            if hasattr(self.model, "set_training_step"):
+                self.model.set_training_step(self.counters["step"] + 1)
+            if hasattr(self.objective, "after_optimizer_step"):
+                self.objective.after_optimizer_step(self.model)
         self.optimizer.zero_grad(set_to_none=True)
         if self.device.type == "cuda":
             end_event.record()
@@ -178,11 +192,15 @@ class Trainer:
         self.counters["tokens_processed"] += tokens
         self.counters["sequences_processed"] += sequences
         self.counters["train_wall_seconds"] += elapsed
-        if self.flops is not None:
-            self.counters["training_flops_estimate"] += self.flops["training_per_sequence"] * sequences
+        if step_flops is not None:
+            self.counters["training_flops_estimate"] += step_flops["training_per_sequence"] * sequences
         self._update_peak_memory()
         self._at_step_boundary = True
         return {"training_loss": loss_sum / tokens, "lr": lr_used, "grad_norm": float(grad_norm),
+                **auxiliary_metrics,
+                "step_flops_estimate": step_flops["training_per_sequence"] * sequences if step_flops else None,
+                "step_forward_flops_estimate": step_flops["forward_per_sequence"] * sequences if step_flops else None,
+                "step_backward_flops_estimate": (step_flops.get("backward_per_sequence", 2*step_flops["forward_per_sequence"]) * sequences) if step_flops else None,
                 "step_tokens": tokens, "step_train_wall_seconds": elapsed,
                 "step_tokens_per_second": tokens / elapsed,
                 "tokens_per_second": self.counters["tokens_processed"] / self.counters["train_wall_seconds"],

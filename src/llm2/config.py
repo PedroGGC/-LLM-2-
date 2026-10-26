@@ -108,32 +108,109 @@ def _types(obj):
 
 
 @dataclass
+class ResearchConfig:
+    architecture: str = "transformer"
+    iterations: int = 2
+    core_layers: int = 1
+    share_weights: bool = True
+    latent_steps: int = 0
+    latent_warmup_steps: int = 0
+    detach_every: int = 0
+    gradient_checkpointing: bool = False
+    record_states: bool = False
+    lm_weight: float = 1.0
+    jepa_weight: float = 0.0
+    jepa_offset: int = 1
+    ema_decay: float = 0.99
+    use_ema: bool = True
+    variance_weight: float = 0.1
+    variance_target: float = 0.5
+    intermediate_weight: float = 0.0
+    mtp_weight: float = 0.0
+    mtp_tokens: int = 0
+    curriculum: str = "off"
+    text_fraction: float = 0.5
+    exploration: float = 0.1
+    max_difficulty: int = 3
+    curriculum_interval: int = 20
+    probe_examples: int = 2
+    fixed_curriculum_steps: int = 100
+    max_seconds: float = 0.0
+    shutdown_reserve_seconds: float = 30.0
+    max_tokens: int = 0
+    max_train_flops: int = 0
+    scales: list = field(default_factory=lambda: [1, 4, 0])
+    share_scales: bool = True
+    scale_conditioning: bool = True
+
+    def __post_init__(self):
+        _types(self)
+        if self.architecture not in ("transformer", "recursive", "untied", "fractal"):
+            raise ValueError("unknown research architecture")
+        for name in ("iterations", "core_layers", "jepa_offset", "max_difficulty", "curriculum_interval",
+                     "probe_examples", "fixed_curriculum_steps"):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"research.{name} must be positive")
+        for name in ("latent_steps", "latent_warmup_steps", "detach_every", "mtp_tokens", "max_tokens", "max_train_flops"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"research.{name} must be nonnegative")
+        for name in ("jepa_weight", "variance_weight", "intermediate_weight", "mtp_weight", "max_seconds", "shutdown_reserve_seconds"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"research.{name} must be nonnegative")
+        if self.lm_weight <= 0 or self.variance_target <= 0 or not 0 <= self.ema_decay < 1:
+            raise ValueError("LM must remain active; invalid EMA/variance settings")
+        if not 0 <= self.text_fraction <= 1 or not 0 < self.exploration <= 1:
+            raise ValueError("invalid text fraction or exploration floor")
+        if self.curriculum not in ("off", "uniform", "fixed", "adaptive"):
+            raise ValueError("curriculum must be off|uniform|fixed|adaptive")
+        if (self.mtp_tokens > 0) != (self.mtp_weight > 0):
+            raise ValueError("MTP requires both mtp_tokens and mtp_weight > 0")
+        if not self.scales or self.scales[0] != 1 or len(set(self.scales)) != len(self.scales):
+            raise ValueError("scales must be unique and start with local scale 1")
+        if any(type(s) is not int or s < 0 for s in self.scales):
+            raise ValueError("scales are nonnegative integers; 0 denotes the full causal prefix")
+
+
+@dataclass
 class ExperimentConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     data: DataConfig = field(default_factory=DataConfig)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
+    research: ResearchConfig | None = None
 
     def __post_init__(self):
         if self.data.seq_len > self.model.max_seq_len:
             raise ValueError("data.seq_len exceeds model.max_seq_len")
         if self.train.max_steps > self.optimizer.schedule_steps:
             raise ValueError("max_steps exceeds fixed schedule_steps")
+        if self.research is not None:
+            if max(self.research.jepa_offset if self.research.jepa_weight else 0,
+                   self.research.mtp_tokens) >= self.data.seq_len:
+                raise ValueError("auxiliary prediction offsets must be shorter than seq_len")
+            if self.research.curriculum != "off" and self.data.seq_len < 128:
+                raise ValueError("procedural curriculum requires seq_len >= 128 to preserve complete problems")
 
     def to_dict(self):
-        return asdict(self)
+        raw = asdict(self)
+        if self.research is None:
+            raw.pop("research")  # Preserve the original YAML/checkpoint contract exactly.
+        return raw
 
     @classmethod
     def from_dict(cls, raw):
         if not isinstance(raw, dict):
             raise ValueError("configuration must be a mapping")
         constructors = {"model": ModelConfig, "data": DataConfig,
-                        "optimizer": OptimizerConfig, "train": TrainConfig}
+                        "optimizer": OptimizerConfig, "train": TrainConfig, "research": ResearchConfig}
         unknown = set(raw) - constructors.keys()
         if unknown:
             raise ValueError(f"unknown configuration sections: {sorted(unknown)}")
         values = {}
         for name, constructor in constructors.items():
+            if name == "research" and raw.get(name) is None:
+                values[name] = None
+                continue
             section = raw.get(name, {})
             if not isinstance(section, dict):
                 raise ValueError(f"{name} must be a mapping")

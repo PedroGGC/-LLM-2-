@@ -14,6 +14,7 @@ def evaluate(model, objective, batches, *, device="cpu", precision="fp32", deter
     model.eval()
     objective.eval()
     loss_sum, tokens, num_batches = 0.0, 0, 0
+    lm_sum = 0.0
     try:
         with autocast_context(device, precision), attention_context(deterministic):
             for batch in batches:
@@ -22,6 +23,7 @@ def evaluate(model, objective, batches, *, device="cpu", precision="fp32", deter
                 if not math.isfinite(value) or result.token_count <= 0:
                     raise FloatingPointError("invalid validation loss or token count")
                 loss_sum += value * result.token_count
+                lm_sum += result.metrics.get("lm_loss", value) * result.token_count
                 tokens += result.token_count
                 num_batches += 1
     finally:
@@ -30,6 +32,8 @@ def evaluate(model, objective, batches, *, device="cpu", precision="fp32", deter
         restore_rng(rng)
     if tokens == 0:
         raise ValueError("empty validation iterator")
-    return {"validation_loss": loss_sum / tokens, "validation_tokens": tokens,
+    lm_loss = lm_sum / tokens
+    return {"validation_loss": lm_loss, "validation_objective_loss": loss_sum / tokens,
+            "validation_perplexity": math.exp(lm_loss) if lm_loss < 700 else None, "validation_tokens": tokens,
             "validation_batches": num_batches}
 

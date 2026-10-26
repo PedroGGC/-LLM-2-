@@ -1,5 +1,16 @@
 # Validação executada — etapa 1
 
+## V2 — registro incremental em 25/10/2026
+
+- Auditoria antes de alterações: **29 passed, 1 skipped**, 22,80 s, CPU.
+- Infraestrutura comum após hooks/factories/contabilidade: suíte original **29 passed,
+  1 skipped**, 18,01 s; nenhuma atualização de PyTorch ou criação de venv.
+- Recursão/JEPA/LRM: `pytest tests/test_recursive.py tests/test_predictive.py -q`:
+  **18 passed**, 6,90 s. Inclui causalidade adversarial, profundidades 1/2/4, comparação
+  compartilhado/não compartilhado, BPTT/checkpointing/truncamento, memorização, geração,
+  teacher congelado/EMA, alinhamento MTP e retomada exata com progressão latente.
+- Os resultados V1 abaixo são preservados como histórico. CUDA/A100 seguem não validados.
+
 Data: 22/10/2026 (America/Sao_Paulo). Os resultados abaixo são testes de infraestrutura,
 não benchmarks de qualidade ou comparação de desempenho entre arquiteturas.
 

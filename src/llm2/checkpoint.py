@@ -35,6 +35,10 @@ def save_checkpoint(path, *, model, objective, optimizer, scheduler, sampler, co
     temporary = Path(tempfile.mkdtemp(prefix=f".{path.name}-", dir=path.parent))
     try:
         save_model(model, str(temporary / "model.safetensors"), metadata={"format": "pt"})
+        weight_files = ["model.safetensors", "training_state.pt"]
+        if objective.state_dict():
+            save_model(objective, str(temporary / "objective.safetensors"), metadata={"format": "pt"})
+            weight_files.append("objective.safetensors")
         state = {"schema_version": 1, "objective": objective.state_dict(),
                  "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(),
                  "sampler": sampler.state_dict(), "rng": capture_rng(), "counters": counters.copy()}
@@ -44,7 +48,7 @@ def save_checkpoint(path, *, model, objective, optimizer, scheduler, sampler, co
                     "model_class": class_name(model), "objective_class": class_name(objective),
                     "environment": environment_info, "provenance": provenance, "flops": flops,
                     "files": {name: sha256_file(temporary / name)
-                              for name in ("model.safetensors", "training_state.pt")}}
+                              for name in weight_files}}
         write_json(temporary / "metadata.json", metadata)
         temporary.rename(path)
     except BaseException:
@@ -61,7 +65,9 @@ def read_checkpoint_metadata(path):
     metadata = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
     if metadata["schema_version"] != 1:
         raise ValueError("unsupported checkpoint schema")
-    for name in ("model.safetensors", "training_state.pt"):
+    for name in metadata["files"]:
+        if name not in ("model.safetensors", "training_state.pt", "objective.safetensors"):
+            raise ValueError("unexpected checkpoint artifact")
         if sha256_file(path / name) != metadata["files"][name]:
             raise ValueError(f"checkpoint checksum mismatch: {name}")
     return metadata

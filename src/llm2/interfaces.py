@@ -12,6 +12,7 @@ class ModelOutput:
     logits: Tensor | None = None
     hidden_states: Tensor | None = None
     state: Any = None
+    intermediate_states: tuple[Tensor, ...] = ()
 
 
 @dataclass
@@ -34,6 +35,9 @@ class AttentionKernel(nn.Module, ABC):
 
 
 class Objective(nn.Module, ABC):
+    def after_optimizer_step(self, model: nn.Module):
+        """Optional update of frozen targets; called once per completed optimizer step."""
+
     @abstractmethod
     def forward(self, model: nn.Module, batch: dict[str, Tensor]) -> ObjectiveOutput:
         """Own model invocation and loss; trainer does not assume autoregression."""

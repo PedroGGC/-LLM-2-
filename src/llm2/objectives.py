@@ -15,5 +15,5 @@ class CausalLanguageModeling(Objective):
             raise ValueError("logits and shifted targets have incompatible shapes")
         # Dense packed data has no padding; every shifted target is supervised.
         loss = F.cross_entropy(output.logits.float().flatten(0, 1), targets.flatten())
-        return ObjectiveOutput(loss=loss, token_count=targets.numel())
+        return ObjectiveOutput(loss=loss, token_count=int((targets != -100).sum()))
 

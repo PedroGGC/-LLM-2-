@@ -91,10 +91,10 @@ def source_provenance():
                "diff": _git(["diff", "HEAD", "--", "src", "configs", "pyproject.toml"], root)}
     except FileNotFoundError:
         git = {"commit": None, "status": None, "diff": None}
-    configs = sorted((root / "configs").glob("*.yaml")) if (root / "configs").exists() else []
+    configs = sorted((root / "configs").rglob("*.yaml")) if (root / "configs").exists() else []
     return {"git": git, "source_sha256": {str(p.relative_to(root)).replace("\\", "/"): sha256_file(p)
                                            for p in paths},
-            "versioned_configs_sha256": {p.name: sha256_file(p) for p in configs}}
+            "versioned_configs_sha256": {p.relative_to(root / "configs").as_posix(): sha256_file(p) for p in configs}}
 
 
 def save_source_snapshot(path, provenance):
