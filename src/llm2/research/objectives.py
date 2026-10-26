@@ -59,8 +59,12 @@ class PredictiveObjective(Objective):
             online = hidden[:, :-r.jepa_offset].float()
             predicted = self.predictor(online)
             predicted = F.layer_norm(predicted.float(), (predicted.shape[-1],))
-            predictive = F.mse_loss(predicted, target.detach())
-            std = torch.sqrt(online.flatten(0, 1).var(0, unbiased=False) + 1e-4)
+            mask = batch["targets"][:, r.jepa_offset:] != -100
+            predictive = F.mse_loss(predicted[mask], target.detach()[mask]) if mask.any() else predicted.sum()*0
+            selected = online[mask]
+            if selected.shape[0] == 0:
+                selected = online.flatten(0, 1)[:1]
+            std = torch.sqrt(selected.var(0, unbiased=False) + 1e-4)
             variance_penalty = F.relu(r.variance_target - std).mean()
             auxiliary = predictive + r.variance_weight * variance_penalty
             loss = loss + r.jepa_weight * auxiliary

@@ -57,7 +57,8 @@ class LatentRecursiveModel(Backbone):
     def active_iterations(self):
         extra = self.research.latent_steps
         if self.training and self.research.latent_warmup_steps:
-            extra = min(extra, int(self.training_step) // self.research.latent_warmup_steps)
+            step = 0 if self.training_step.device.type == "meta" else int(self.training_step)
+            extra = min(extra, step // self.research.latent_warmup_steps)
         return self.research.iterations + extra
 
     def set_training_step(self, step):

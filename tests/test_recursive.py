@@ -9,6 +9,7 @@ from llm2.generation import generate
 from llm2.model import count_parameters
 from llm2.objectives import CausalLanguageModeling
 from llm2.research.accounting import estimate_research_flops
+from llm2.research.objectives import PredictiveObjective
 from llm2.trainer import Trainer
 from test_training import training_config, assert_nested_equal
 
@@ -77,29 +78,34 @@ def test_checkpointing_and_truncation_explicit(tiny_config):
     assert not torch.equal(truncated.core.gate.grad, plain.core.gate.grad)
 
 
-@pytest.mark.parametrize("architecture", ["recursive", "untied"])
-def test_recursive_memorization_and_generation(tiny_config, architecture):
-    model = LatentRecursiveModel(tiny_config, ResearchConfig(architecture=architecture, iterations=2))
-    objective = CausalLanguageModeling()
+@pytest.mark.parametrize("architecture,jepa", [("recursive", 0.0), ("untied", 0.0), ("recursive", 0.1)])
+def test_recursive_memorization_and_generation(tiny_config, architecture, jepa):
+    r = ResearchConfig(architecture=architecture, iterations=2, jepa_weight=jepa,
+                       latent_steps=1 if jepa else 0, intermediate_weight=0.1 if jepa else 0)
+    model = LatentRecursiveModel(tiny_config, r)
+    objective = PredictiveObjective(model, r) if jepa else CausalLanguageModeling()
     ids = torch.arange(12).repeat(2, 1)
     batch = {"input_ids": ids[:, :-1], "targets": ids[:, 1:]}
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
+    optimizer = torch.optim.AdamW(list(model.parameters()) + [p for p in objective.parameters() if p.requires_grad], lr=0.01)
     initial = objective(model, batch).loss.item()
     for _ in range(80):
         optimizer.zero_grad(set_to_none=True)
         loss = objective(model, batch).loss
         loss.backward()
         optimizer.step()
+        objective.after_optimizer_step(model)
     assert objective(model, batch).loss.item() < initial / 15
     out = generate(model, ids[:1, :2], max_seq_len=16, max_new_tokens=4, temperature=0)
     assert out.shape == (1, 6)
 
 
 @pytest.mark.parametrize("jepa", [0.0, 0.2])
-def test_recursive_exact_resume(training_config, tmp_path, jepa):
+@pytest.mark.parametrize("architecture", ["recursive", "transformer"])
+def test_recursive_exact_resume(training_config, tmp_path, jepa, architecture):
     cfg = training_config
-    cfg.research = ResearchConfig(architecture="recursive", iterations=2, jepa_weight=jepa,
-                                  latent_steps=1, latent_warmup_steps=1, gradient_checkpointing=True)
+    cfg.research = ResearchConfig(architecture=architecture, iterations=2, jepa_weight=jepa,
+                                  latent_steps=1 if architecture == "recursive" else 0,
+                                  latent_warmup_steps=1, gradient_checkpointing=architecture == "recursive")
     with Trainer(cfg) as trainer:
         trainer.fit(until_step=2)
         checkpoint = trainer.last_checkpoint

@@ -10,6 +10,18 @@
   compartilhado/não compartilhado, BPTT/checkpointing/truncamento, memorização, geração,
   teacher congelado/EMA, alinhamento MTP e retomada exata com progressão latente.
 - Os resultados V1 abaixo são preservados como histórico. CUDA/A100 seguem não validados.
+- Fractal isolado em `experiment/fractal-lrm`: **7 passed**, 5,92 s, CPU. F1–F4,
+  pooling causal de referência, memorização, custos por recursão e checkpoint com JEPA.
+- Harness curricular/orçamentos: **10 passed**, 12,82 s. DAG, verificadores, splits,
+  exploração/dificuldade, respostas completas, mistura e retomada em Transformer/LRM.
+- Integração principal após currículo: **57 passed, 1 skipped**, 37,91 s.
+- Ferramentas de benchmark/profiler/relatório: **4 passed**, 5,33 s; traces reais e SVGs.
+- Configs/perfis e notebook: **7 passed**, 6,49 s. O primeiro teste meta encontrou leitura
+  indevida de Tensor.item(); corrigido para representar explicitamente a etapa inicial 0.
+- Suíte principal ampliada: **66 passed, 3 skipped**, 59,75 s. Os três skips são testes
+  CUDA/BF16 (baseline, Transformer+auxiliares, LRM+auxiliares); nenhum crédito GPU foi gasto.
+- Perfis contados por código, sem alocar o futuro modelo: 352.359.936 parâmetros no perfil
+  planning_only; a referência continua exatamente 33.990.144. Estimativas não são benchmarks.
 
 Data: 22/10/2026 (America/Sao_Paulo). Os resultados abaixo são testes de infraestrutura,
 não benchmarks de qualidade ou comparação de desempenho entre arquiteturas.

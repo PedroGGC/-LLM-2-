@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "llm2-lab"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reproducible experimental infrastructure for language model research"
 requires-python = ">=3.10"
 dependencies = [
@@ -14,6 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
+research = ["matplotlib>=3.8,<4"]
 
 [project.scripts]
 llm2 = "llm2.cli:main"

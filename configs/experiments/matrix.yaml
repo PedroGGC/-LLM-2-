@@ -1,0 +1,59 @@
+# Opt-in engineering configuration; no scientific performance result.
+version: 1
+recommended_seeds:
+- 17
+- 42
+- 123
+execution: individual_configs_only; never auto-launch a campaign
+experiments:
+  e0_baseline:
+    config: e0_baseline.yaml
+    branch: feature/llm2-research-v2
+  e1_jepa:
+    config: e1_jepa.yaml
+    branch: feature/llm2-research-v2
+  e2_recursive:
+    config: e2_recursive.yaml
+    branch: feature/llm2-research-v2
+  e2_untied_control:
+    config: e2_untied_control.yaml
+    branch: feature/llm2-research-v2
+  e3_lrm:
+    config: e3_lrm.yaml
+    branch: feature/llm2-research-v2
+  e4_continuous:
+    config: e4_continuous.yaml
+    branch: feature/llm2-research-v2
+  e5_mtp:
+    config: e5_mtp.yaml
+    branch: feature/llm2-research-v2
+  c0_transformer_uniform:
+    config: c0_transformer_uniform.yaml
+    branch: feature/llm2-research-v2
+  c1_transformer_fixed:
+    config: c1_transformer_fixed.yaml
+    branch: feature/llm2-research-v2
+  c2_transformer_adaptive:
+    config: c2_transformer_adaptive.yaml
+    branch: feature/llm2-research-v2
+  c3_lrm_uniform:
+    config: c3_lrm_uniform.yaml
+    branch: feature/llm2-research-v2
+  c4_lrm_adaptive:
+    config: c4_lrm_adaptive.yaml
+    branch: feature/llm2-research-v2
+  combined:
+    config: combined.yaml
+    branch: feature/llm2-research-v2
+fractal_branch: experiment/fractal-lrm
+fractal_experiments:
+- f0_lrm
+- f1_multiscale_unshared
+- f2_multiscale_shared
+- f3_conditioned
+- f4_deeper
+- c5_flrm_uniform
+- c6_flrm_adaptive
+controls: same corpus/tokenizer/seed/context and recorded compute ceilings; model
+  and training-only parameter counts differ. Match budgets/parameters explicitly before
+  an efficiency claim.

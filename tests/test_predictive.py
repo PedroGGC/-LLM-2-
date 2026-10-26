@@ -9,6 +9,8 @@ from llm2.model import TransformerLM
 from llm2.research.objectives import PredictiveObjective
 from llm2.research.accounting import estimate_research_flops
 from llm2.config import ExperimentConfig
+from llm2.trainer import Trainer
+from test_training import training_config
 
 
 @pytest.mark.parametrize("jepa,mtp", [(0.2, 0), (0.0, 2), (0.2, 2)])
@@ -68,3 +70,19 @@ def test_legacy_config_stays_legacy():
         ResearchConfig(mtp_tokens=1)
     with pytest.raises(ValueError):
         ResearchConfig(architecture="unknown")
+
+
+@pytest.mark.cuda
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
+@pytest.mark.parametrize("architecture", ["transformer", "recursive"])
+def test_research_cuda_bf16(training_config, architecture):
+    if not torch.cuda.is_bf16_supported():
+        pytest.skip("BF16 unavailable")
+    cfg = training_config
+    cfg.train.device, cfg.train.precision, cfg.train.deterministic = "cuda", "bf16", False
+    cfg.research = ResearchConfig(architecture=architecture, jepa_weight=0.1, mtp_tokens=1, mtp_weight=0.1)
+    with Trainer(cfg) as trainer:
+        metrics = trainer.train_step()
+        assert metrics["gpu_time_seconds"] > 0
+        assert metrics["peak_vram_allocated_bytes"] > 0
+        assert all(torch.isfinite(p).all() for p in trainer.model.parameters())

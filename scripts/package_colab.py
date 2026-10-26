@@ -8,7 +8,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     destination = root / "dist" / "llm2-lab-colab.zip"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    paths = [p for folder in ("src", "tests", "configs", "scripts", "notebooks")
+    paths = [p for folder in ("src", "tests", "configs", "scripts", "notebooks", "docs", "requirements")
              for p in (root / folder).rglob("*") if p.is_file()
              and "__pycache__" not in p.parts and ".egg-info" not in str(p)]
     paths += [root / name for name in ("pyproject.toml", "README.md", "AGENTS.md", "PLAN.md", "VALIDATION.md")

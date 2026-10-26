@@ -15,6 +15,7 @@ def evaluate(model, objective, batches, *, device="cpu", precision="fp32", deter
     objective.eval()
     loss_sum, tokens, num_batches = 0.0, 0, 0
     lm_sum = 0.0
+    sequences = 0
     try:
         with autocast_context(device, precision), attention_context(deterministic):
             for batch in batches:
@@ -26,6 +27,7 @@ def evaluate(model, objective, batches, *, device="cpu", precision="fp32", deter
                 lm_sum += result.metrics.get("lm_loss", value) * result.token_count
                 tokens += result.token_count
                 num_batches += 1
+                sequences += batch["input_ids"].shape[0]
     finally:
         for module, mode in modes:
             module.training = mode
@@ -35,5 +37,6 @@ def evaluate(model, objective, batches, *, device="cpu", precision="fp32", deter
     lm_loss = lm_sum / tokens
     return {"validation_loss": lm_loss, "validation_objective_loss": loss_sum / tokens,
             "validation_perplexity": math.exp(lm_loss) if lm_loss < 700 else None, "validation_tokens": tokens,
+            "validation_sequences": sequences,
             "validation_batches": num_batches}
 
