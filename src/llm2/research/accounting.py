@@ -39,6 +39,10 @@ def backbone_cost(model, seq_len):
 
 
 def estimate_research_flops(model, objective, seq_len):
+    from ..objectives import CausalLanguageModeling
+    from .objectives import PredictiveObjective
+    if type(objective) not in (CausalLanguageModeling, PredictiveObjective):
+        return None
     cost = backbone_cost(model, seq_len)
     if cost is None:
         return None

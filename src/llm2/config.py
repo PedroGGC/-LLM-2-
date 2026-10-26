@@ -109,6 +109,7 @@ def _types(obj):
 
 @dataclass
 class ResearchConfig:
+    planning_only: bool = False
     architecture: str = "transformer"
     iterations: int = 2
     core_layers: int = 1
@@ -165,10 +166,10 @@ class ResearchConfig:
             raise ValueError("curriculum must be off|uniform|fixed|adaptive")
         if (self.mtp_tokens > 0) != (self.mtp_weight > 0):
             raise ValueError("MTP requires both mtp_tokens and mtp_weight > 0")
-        if not self.scales or self.scales[0] != 1 or len(set(self.scales)) != len(self.scales):
-            raise ValueError("scales must be unique and start with local scale 1")
         if any(type(s) is not int or s < 0 for s in self.scales):
             raise ValueError("scales are nonnegative integers; 0 denotes the full causal prefix")
+        if not self.scales or self.scales[0] != 1 or len(set(self.scales)) != len(self.scales):
+            raise ValueError("scales must be unique and start with local scale 1")
 
 
 @dataclass
@@ -190,6 +191,8 @@ class ExperimentConfig:
                 raise ValueError("auxiliary prediction offsets must be shorter than seq_len")
             if self.research.curriculum != "off" and self.data.seq_len < 128:
                 raise ValueError("procedural curriculum requires seq_len >= 128 to preserve complete problems")
+            if self.research.architecture == "transformer" and self.research.intermediate_weight:
+                raise ValueError("intermediate supervision requires a recursive backbone")
 
     def to_dict(self):
         raw = asdict(self)

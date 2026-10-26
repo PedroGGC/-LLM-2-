@@ -27,9 +27,12 @@ from .research.factory import build_backbone, build_objective
 class Trainer:
     def __init__(self, config, *, model=None, objective=None, data=None, resume=None,
                  flops_estimator=None, model_factory=None, objective_factory=None):
+        self._experiment_started = time.perf_counter()
         # Revalidate even when a caller has mutated a dataclass programmatically.
         self.config = ExperimentConfig.from_dict(config.to_dict())
         cfg = self.config
+        if cfg.research is not None and cfg.research.planning_only:
+            raise ValueError("planning_only profile cannot train; review and version a new executable profile first")
         self.device = setup_runtime(cfg.train)
         if (model is not None and model_factory is not None) or (objective is not None and objective_factory is not None):
             raise ValueError("provide an instance or a factory, not both")
@@ -49,6 +52,9 @@ class Trainer:
         self.scheduler = build_scheduler(self.optimizer, cfg.optimizer)
         self.sampler = RandomBatchStream(self.data.arrays["train"], cfg.data.seq_len,
                                         cfg.data.batch_size, cfg.train.seed + 1)
+        if cfg.research is not None and cfg.research.curriculum != "off":
+            from .curriculum.stream import MixedCurriculumStream
+            self.sampler = MixedCurriculumStream(self.sampler, self.data.tokenizer, cfg.research, cfg.train.seed+2)
         self.parameters = [p for group in self.optimizer.param_groups for p in group["params"]]
         self.model_parameters = count_parameters(self.model)
         self.total_parameters = sum(p.numel() for p in {id(p): p for module in (self.model, self.objective)
@@ -64,6 +70,9 @@ class Trainer:
         self.environment_info = environment()
         self.provenance = source_provenance()
         self.counters = {"step": 0, "tokens_processed": 0, "sequences_processed": 0,
+                         "input_tokens_processed": 0, "experiment_wall_seconds": 0.0,
+                         "curriculum_probe_flops_estimate": 0 if self.flops else None,
+                         "validation_flops_estimate": 0 if self.flops else None,
                          "training_flops_estimate": 0 if self.flops is not None else None,
                          "train_wall_seconds": 0.0,
                          "gpu_time_seconds": 0.0 if self.device.type == "cuda" else None,
@@ -87,16 +96,20 @@ class Trainer:
             if self.output_dir.exists() and any(self.output_dir.iterdir()):
                 raise FileExistsError("output_dir is not empty; resume or choose a new directory")
             self.output_dir.mkdir(parents=True, exist_ok=True)
+        self._previous_wall_seconds = self.counters.get("experiment_wall_seconds", 0.0)
         saved_rng = capture_rng()
         run_metadata = {"created_at_utc": datetime.now(timezone.utc).isoformat(),
                         "config": cfg.to_dict(), "dataset_sha256": self.data.fingerprint,
                         "environment": self.environment_info, "provenance": self.provenance,
                         "model_parameters_calculated": self.model_parameters,
+                        "model_weight_bytes_calculated": sum(p.numel()*p.element_size() for p in self.model.parameters()),
+                        "frozen_parameters_calculated": sum(p.numel() for p in self.objective.parameters() if not p.requires_grad),
                         "total_parameters_calculated": self.total_parameters,
                         "trainable_parameters_calculated": sum(p.numel() for p in self.parameters),
                         "flops_estimate": self.flops,
                         "resume_from": str(resume) if resume else None,
                         "start_step": self.counters["step"]}
+        run_metadata["architecture_version"] = getattr(self.model, "architecture_version", 1)
         name = "run.json" if resume is None else f"resume-{uuid.uuid4().hex}.json"
         write_json(self.output_dir / name, run_metadata)
         (self.output_dir / name.replace(".json", ".yaml")).write_text(
@@ -141,6 +154,47 @@ class Trainer:
                 key = f"peak_vram_{name}_bytes"
                 self.counters[key] = max(self.counters[key], getter(self.device))
 
+    def _update_experiment_wall(self):
+        self.counters["experiment_wall_seconds"] = self._previous_wall_seconds + time.perf_counter() - self._experiment_started
+
+    def _evaluation_cost(self, backbone_only=False):
+        if self.flops is None:
+            return None
+        from .research.accounting import backbone_cost, estimate_research_flops
+        modules = [(m, m.training) for root in (self.model, self.objective) for m in root.modules()]
+        self.model.eval()
+        self.objective.eval()
+        try:
+            if backbone_only:
+                cost = backbone_cost(self.model, self.config.data.seq_len)
+                return cost[0] if cost else None
+            cost = estimate_research_flops(self.model, self.objective, self.config.data.seq_len)
+            return cost.forward_per_sequence if cost else None
+        finally:
+            for module, mode in modules:
+                module.training = mode
+
+    def _budget_stop_reason(self):
+        r = self.config.research
+        if r is None:
+            return None
+        elapsed = self._previous_wall_seconds + time.perf_counter() - self._experiment_started
+        if r.max_seconds and elapsed >= max(0, r.max_seconds-r.shutdown_reserve_seconds):
+            return "time_budget"
+        next_inputs = self.config.data.batch_size*self.config.data.seq_len*self.config.train.grad_accum_steps
+        if r.max_tokens and self.counters["input_tokens_processed"] + next_inputs > r.max_tokens:
+            return "token_budget"
+        if r.max_train_flops:
+            estimate = self._flops_estimator() if self._flops_estimator else None
+            if estimate is None:
+                raise ValueError("a FLOP budget requires an estimator for the selected components")
+            next_cost = estimate.training_per_sequence*self.config.data.batch_size*self.config.train.grad_accum_steps
+            if hasattr(self.sampler, "probe") and (self.counters["step"]+1) % r.curriculum_interval == 0:
+                next_cost += self._evaluation_cost(True)*len(self.sampler.controller.cells)*r.probe_examples
+            if self.counters["training_flops_estimate"] + self.counters["curriculum_probe_flops_estimate"] + next_cost > r.max_train_flops:
+                return "learning_flop_budget"
+        return None
+
     def train_step(self):
         cfg = self.config
         if not self._at_step_boundary:
@@ -160,6 +214,9 @@ class Trainer:
         auxiliary_metrics = {}
         estimate = self._flops_estimator() if self._flops_estimator else None
         step_flops = asdict(estimate) if estimate is not None else None
+        active_parameters = self.total_parameters - (
+            sum(p.numel() for core in self.model.cores[self.model.active_iterations():] for p in core.parameters())
+            if hasattr(self.model, "cores") and hasattr(self.model, "active_iterations") else 0)
         with attention_context(cfg.train.deterministic):
             for _ in range(cfg.train.grad_accum_steps):
                 batch = self.sampler.next(self.device)
@@ -191,9 +248,24 @@ class Trainer:
         self.counters["step"] += 1
         self.counters["tokens_processed"] += tokens
         self.counters["sequences_processed"] += sequences
+        self.counters["input_tokens_processed"] += sequences*cfg.data.seq_len
         self.counters["train_wall_seconds"] += elapsed
         if step_flops is not None:
             self.counters["training_flops_estimate"] += step_flops["training_per_sequence"] * sequences
+        if hasattr(self.sampler, "probe"):
+            r = cfg.research
+            if self.counters["step"] % r.curriculum_interval == 0:
+                probe_cost = self._evaluation_cost(True)
+                probe = self.sampler.probe(self.model, self.device, cfg.train.precision, cfg.train.deterministic)
+                if probe_cost is not None:
+                    self.counters["curriculum_probe_flops_estimate"] += probe_cost*probe["probe_sequences"]
+                auxiliary_metrics.update(probe)
+            counts = self.sampler.counts
+            auxiliary_metrics.update(counts)
+            auxiliary_metrics["effective_text_example_fraction"] = counts["text_examples"]/(counts["text_examples"]+counts["procedural_examples"])
+            for (skill, level), probability in self.sampler.controller.distribution().items():
+                auxiliary_metrics[f"curriculum_probability/{skill}/{level}"] = probability
+        self._update_experiment_wall()
         self._update_peak_memory()
         self._at_step_boundary = True
         return {"training_loss": loss_sum / tokens, "lr": lr_used, "grad_norm": float(grad_norm),
@@ -206,15 +278,22 @@ class Trainer:
                 "tokens_per_second": self.counters["tokens_processed"] / self.counters["train_wall_seconds"],
                 "model_parameters_calculated": self.model_parameters,
                 "total_parameters_calculated": self.total_parameters,
+                "active_parameters_calculated": active_parameters,
+                "internal_iterations": step_flops.get("internal_iterations", 1) if step_flops else None,
+                "step_auxiliary_flops_estimate": ((3*step_flops.get("auxiliary_forward", 0)+step_flops.get("target_forward", 0))*sequences) if step_flops else None,
                 **{k: v for k, v in self.counters.items() if k != "step"}}
 
     def validate(self, max_batches=None):
         cfg = self.config
+        cost = self._evaluation_cost()
         result = evaluate(self.model, self.objective,
                           validation_batches(self.data.arrays["val"], cfg.data.seq_len,
                                              cfg.data.eval_batch_size, max_batches, self.device),
                           device=self.device, precision=cfg.train.precision,
                           deterministic=cfg.train.deterministic)
+        if cost is not None:
+            self.counters["validation_flops_estimate"] += cost*result["validation_sequences"]
+        self._update_experiment_wall()
         self._update_peak_memory()
         return result
 
@@ -239,22 +318,34 @@ class Trainer:
         if not self.counters["step"] <= target <= self.config.train.max_steps:
             raise ValueError("invalid stopping step")
         latest = None
+        last_evaluated_step = None
+        self.stop_reason = "max_steps" if target == self.config.train.max_steps else "requested_step"
         while self.counters["step"] < target:
+            reason = self._budget_stop_reason()
+            if reason:
+                self.stop_reason = reason
+                break
             metrics = self.train_step()
             step = self.counters["step"]
             should_eval = step % self.config.train.eval_interval == 0 or step == target
             if should_eval:
                 metrics.update(self.validate(self.config.train.eval_batches))
-                metrics.update({k: v for k, v in self.counters.items() if k.startswith("peak_vram")})
+                metrics.update({k: v for k, v in self.counters.items() if k != "step"})
                 latest = metrics
+                last_evaluated_step = step
             if step % self.config.train.log_interval == 0 or should_eval:
                 self.logger.log(step, **metrics)
             if step % self.config.train.checkpoint_interval == 0 or step == target:
                 self.save()
-        if latest is None:
-            latest = self.validate(self.config.train.eval_batches)
+            latest = metrics
+        if last_evaluated_step != self.counters["step"]:
+            latest = {**(latest or {}), **self.validate(self.config.train.eval_batches)}
             self.logger.log(self.counters["step"], **latest)
+        self.save()
+        if hasattr(self.sampler, "recent_problems"):
+            write_json(self.output_dir / "procedural_seen.json", self.sampler.recent_problems)
         write_json(self.output_dir / "summary.json", {**latest, **self.counters,
+                                                     "stop_reason": self.stop_reason,
                                                      "checkpoint": str(self.last_checkpoint)})
         return latest
 

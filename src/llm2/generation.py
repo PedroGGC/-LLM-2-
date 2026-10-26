@@ -1,6 +1,7 @@
 """Simple autoregressive sampling for baseline inspection; no inference server or KV cache."""
 
 import math
+import time
 
 import torch
 
@@ -9,7 +10,8 @@ from .runtime import attention_context, autocast_context
 
 @torch.no_grad()
 def generate(model, input_ids, *, max_seq_len, max_new_tokens=64, temperature=1.0,
-             top_k=None, eos_id=None, vocab_size=None, seed=42, precision="fp32", deterministic=True):
+             top_k=None, eos_id=None, vocab_size=None, seed=42, precision="fp32", deterministic=True,
+             timings=None, iterations=None):
     if input_ids.ndim != 2 or input_ids.shape[0] != 1 or input_ids.shape[1] == 0:
         raise ValueError("generation expects one nonempty prompt [1, time]")
     if max_new_tokens < 0 or max_seq_len <= 0 or temperature < 0 or not math.isfinite(temperature):
@@ -20,10 +22,17 @@ def generate(model, input_ids, *, max_seq_len, max_new_tokens=64, temperature=1.
     modes = [(module, module.training) for module in model.modules()]
     model.eval()
     ids = input_ids.clone()
+    def synchronize():
+        if ids.device.type == "cuda":
+            torch.cuda.synchronize(ids.device)
+    if timings is not None:
+        synchronize()
+        started = time.perf_counter()
     try:
         with autocast_context(ids.device, precision), attention_context(deterministic):
             for _ in range(max_new_tokens):
-                logits = model(ids[:, -max_seq_len:]).logits[:, -1].float()
+                kwargs = {} if iterations is None else {"iterations": iterations}
+                logits = model(ids[:, -max_seq_len:], **kwargs).logits[:, -1].float()
                 if vocab_size is not None:
                     if not 0 < vocab_size <= logits.shape[-1]:
                         raise ValueError("invalid tokenizer vocabulary size")
@@ -39,9 +48,18 @@ def generate(model, input_ids, *, max_seq_len, max_new_tokens=64, temperature=1.
                         logits.masked_fill_(logits < threshold, -float("inf"))
                     token = torch.multinomial(logits.softmax(-1), 1, generator=rng)
                 ids = torch.cat((ids, token), dim=1)
+                if timings is not None and ids.shape[1] == input_ids.shape[1] + 1:
+                    synchronize()
+                    timings["time_to_first_token_seconds"] = time.perf_counter() - started
                 if eos_id is not None and token.item() == eos_id:
                     break
     finally:
+        if timings is not None:
+            synchronize()
+            elapsed = time.perf_counter() - started
+            tokens = ids.shape[1] - input_ids.shape[1]
+            timings.update(total_latency_seconds=elapsed, generated_tokens=tokens,
+                           tokens_per_second=tokens/elapsed if elapsed else None)
         for module, mode in modes:
             module.training = mode
     return ids

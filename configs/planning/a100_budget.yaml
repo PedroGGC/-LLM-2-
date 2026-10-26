@@ -1,0 +1,5 @@
+# Opt-in engineering configuration; no scientific performance result.
+credits: 200.0
+credits_per_hour: 5.3
+safety_fraction: 0.2
+session_minutes: 30.0

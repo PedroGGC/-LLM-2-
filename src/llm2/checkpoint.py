@@ -23,6 +23,9 @@ def resume_contract(config):
     for field in ("output_dir", "max_steps", "eval_interval", "eval_batches",
                   "checkpoint_interval", "log_interval"):
         raw["train"].pop(field)
+    if "research" in raw:
+        for name in ("max_seconds", "shutdown_reserve_seconds", "max_tokens", "max_train_flops"):
+            raw["research"].pop(name)
     return raw
 
 
@@ -46,6 +49,7 @@ def save_checkpoint(path, *, model, objective, optimizer, scheduler, sampler, co
         metadata = {"schema_version": 1, "config": config.to_dict(),
                     "resume_contract": resume_contract(config), "dataset_sha256": data_fingerprint,
                     "model_class": class_name(model), "objective_class": class_name(objective),
+                    "architecture_version": getattr(model, "architecture_version", 1),
                     "environment": environment_info, "provenance": provenance, "flops": flops,
                     "files": {name: sha256_file(temporary / name)
                               for name in weight_files}}
@@ -82,6 +86,8 @@ def load_checkpoint(path, *, model, objective, optimizer, scheduler, sampler, co
         raise ValueError("dataset fingerprint changed")
     if metadata["model_class"] != class_name(model) or metadata["objective_class"] != class_name(objective):
         raise ValueError("model/objective implementation changed")
+    if metadata.get("architecture_version", 1) != getattr(model, "architecture_version", 1):
+        raise ValueError("architecture version changed")
     if metadata["environment"] != environment_info:
         raise ValueError("environment changed; exact resume requires the same runtime")
     if metadata["provenance"]["source_sha256"] != provenance["source_sha256"]:

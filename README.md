@@ -1,12 +1,57 @@
-# LLM2-Lab — etapa 1
+# LLM2-Lab — infraestrutura e pesquisa V2
 
 Infraestrutura Python/PyTorch para experimentos controlados com modelos de linguagem.
 Inclui um Transformer decoder-only inicializado do zero, pipeline offline de dados,
 treino, validação, geração, TensorBoard e checkpoints completos. O plano e os critérios
 de aceitação estão em [PLAN.md](PLAN.md); resultados executados estão em [VALIDATION.md](VALIDATION.md).
 
-JEPA, estados recursivos, TRM/Coconut e NCM são direções futuras. Esta etapa fornece contratos
-de extensão, sem implementar esses mecanismos. Não há aplicação web ou servidor de inferência.
+O baseline da etapa 1 foi preservado. A V2 adiciona recursão causal compartilhada, objetivo
+preditivo inspirado em JEPA, refinamento contínuo, MTP opcional e currículo procedural externo.
+FLRM fica isolado em `experiment/fractal-lrm`, no worktree vizinho `LLM 2-fractal-lrm`.
+São hipóteses experimentais próprias, não reproduções integrais de TRM/HRM/Coconut/DeepSeek.
+Não há evidência de superioridade ou redução de ordens de grandeza; NCM permanece futuro.
+
+## Começar na V2
+
+Instalação direta no Python local: `python -m pip install -e ".[dev,research]"`.
+O PyTorch existente não precisa ser trocado. Os YAMLs e comandos V1 continuam válidos para
+novas execuções; resultados e datasets antigos não foram sobrescritos.
+
+```powershell
+python -m pytest -q
+python -m llm2 inspect --config configs/experiments/e3_lrm.yaml --meta
+python -m llm2 experiment --config configs/experiments/combined.yaml
+python -m llm2 train --config configs/experiments/e3_lrm.yaml --data data/processed-byte --output-dir runs/my-lrm
+python -m llm2 train --config configs/experiments/e3_lrm.yaml --data data/processed-byte --output-dir runs/my-lrm --resume runs/my-lrm/checkpoints/step-00000002
+python -m llm2 evaluate --checkpoint runs/my-lrm/checkpoints/step-00000004
+python -m llm2 benchmark --checkpoint runs/my-lrm/checkpoints/step-00000004 --output runs/my-lrm/benchmark.json
+python -m llm2 reasoning --checkpoint runs/my-lrm/checkpoints/step-00000004 --examples 1 --max-new-tokens 8 --output runs/my-lrm/reasoning.json
+python -m llm2 report --runs runs/my-lrm --output runs/my-lrm-report
+python -m llm2 plan-budget --config configs/planning/a100_budget.yaml
+python -m llm2 profile --config configs/experiments/e3_lrm.yaml --output runs/my-profile
+```
+
+`experiment` e `profile` só executam com `--execute`. `train` é uma solicitação explícita
+de treino de **uma** configuração. Nada inicia campanhas E/F/C automaticamente. As configs
+de experimentos são smoke tests CPU de quatro passos; os perfis A100 são configurações para
+campanhas futuras. `--seed` permite repetir um experimento com outras sementes. Use diretórios
+novos; o exemplo de retomada requer que o checkpoint 2 já exista e não haja checkpoint posterior
+no mesmo destino (ou escolha outro `--output-dir` para derivar uma execução).
+
+Documentos da V2:
+
+- [Auditoria e plano](docs/RESEARCH_V2_PLAN.md), [roadmap e limites](docs/RESEARCH_ROADMAP.md).
+- [LRM/JEPA/MTP](docs/ARCHITECTURE_LRM.md) e [FLRM](docs/ARCHITECTURE_FLRM.md).
+- [Currículo e isolamento dos dados](docs/CURRICULUM.md).
+- [Matriz de experimentos](docs/EXPERIMENT_MATRIX.md), [A100/créditos](docs/A100_EXECUTION_PLAN.md).
+- [Modelo de relatório](docs/RESULTS_TEMPLATE.md), [referências](docs/REFERENCES.md).
+
+Configurações antigas não ganham uma seção research implicitamente. Pesos V1 safetensors
+continuam legíveis para avaliação; retomada exata V1 exige os bytes de código do respectivo
+`source.zip` e o ambiente registrado. A V2 não desativa o bloqueio por hash nem migra o estado
+silenciosamente. O commit inicial preserva a etapa 1; extrair o snapshot original em outra pasta
+e usar seu `src` via `PYTHONPATH` preserva também os finais de linha exigidos pelo hash.
+Não sobrescreva o checkout atual para recuperar código histórico.
 
 ## Instalação local, sem ambiente virtual
 
@@ -242,9 +287,9 @@ estado recorrente e o Trainer não propaga estado entre janelas. Uma extensão f
 definir esse protocolo no objetivo/backbone antes de usá-lo. `attention_factory` no Transformer
 injeta um `AttentionKernel` por camada; o kernel é responsável por sua causalidade. Coloque
 extensões em `src/llm2/` para que sejam incluídas nos hashes e snapshots. A CLI de inferência
-é específica do baseline; os contratos Python são o ponto de extensão.
+reconhece o baseline e os backbones registrados da V2; modelos externos usam os contratos Python.
 
 Geração é para inspeção, com greedy (`temperature=0`) ou amostragem/top-k e generator local.
 Sem KV cache: a janela é recalculada e posições RoPE reiniciam ao truncar o contexto.
 Há testes CPU em CI e testes condicionais CUDA/BF16. DDP, FP16/scaler, streaming de corpus
-maior que RAM e arquiteturas experimentais ficam fora desta etapa.
+maior que RAM, NCM completo e treinamento de 300M–500M ficam fora desta entrega.
