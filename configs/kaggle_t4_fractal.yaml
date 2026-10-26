@@ -1,0 +1,40 @@
+# LLM2-Lab — Versão Fractal Multi-Escala (FLRM) para Kaggle T4 x2
+# Modelo da IA 2 em GPU CUDA FP32 com codificador causal de 3 escalas e FiLM.
+model:
+  vocab_size: 257
+  d_model: 128
+  n_layers: 4
+  n_heads: 4
+  hidden_dim: 384
+  max_seq_len: 128
+  dropout: 0.1
+data:
+  path: ../data/processed-byte
+  seq_len: 128
+  batch_size: 4
+  eval_batch_size: 4
+optimizer:
+  lr: 0.0005
+  warmup_steps: 10
+  schedule_steps: 100
+train:
+  seed: 42
+  device: cuda
+  precision: fp32
+  deterministic: false
+  compile: false
+  max_steps: 50
+  grad_accum_steps: 2
+  grad_clip: 1.0
+  eval_interval: 10
+  eval_batches: 4
+  checkpoint_interval: 25
+  log_interval: 5
+  output_dir: ../runs/kaggle-t4-fractal
+  cpu_threads: 2
+research:
+  architecture: fractal
+  iterations: 1
+  jepa_weight: 0.1
+  share_scales: true
+  scale_conditioning: true
