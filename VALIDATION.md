@@ -23,6 +23,31 @@
 - Perfis contados por código, sem alocar o futuro modelo: 352.359.936 parâmetros no perfil
   planning_only; a referência continua exatamente 33.990.144. Estimativas não são benchmarks.
 
+### Fechamento integrado em 26/10/2026
+
+- Branch comum: **66 passed, 3 skipped**, 68,16 s; log `runs/v2-main-final-pytest.log`.
+- Worktree fractal: **74 passed, 4 skipped**, 73,48 s; log
+  `../LLM 2-fractal-lrm/runs/v2-fractal-final-pytest.log`. Inclui os sete YAMLs F0–F4/C5/C6,
+  retomada FLRM+JEPA+currículo adaptativo e causalidade nas fronteiras das janelas.
+- Todos os skips são CUDA/BF16; nenhuma execução CUDA, Inductor ou A100 foi feita.
+- CLI em processos separados: E0, E3, combined e F3 chegaram a quatro optimizer-steps.
+  C6 parou corretamente no passo 2 por `learning_flop_budget`, antes de exceder 2 bilhões
+  de FLOPs estimados de aprendizado (treino mais probes), preservando checkpoint completo.
+- E3 retomado 2+2 versus quatro passos ininterruptos: igualdade **exata** dos tensores do
+  modelo/objetivo/teacher, otimizador, scheduler, sampler, RNG e contadores sem temporização.
+  Artefato `runs/v2-20261026/resume-equivalence.json`. Dropout 0,1 ativo; acumulação 1 nesse
+  smoke externo, e acumulação 2 nos testes estritos da suíte. Safetensors pode mudar a ordem
+  das chaves JSON de metadados; igualdade de estado não requer bytes serializados idênticos.
+- Pesos V1 avaliados na CLI V2: checkpoint CPU etapa 20, um batch, validation loss
+  **4,0527744293**. Não houve migração silenciosa nem retomada V1 usando código V2.
+- Benchmarks de inferência e avaliações por respostas geradas executados para os cinco
+  smokes; relatórios JSON/CSV/Markdown/SVG exportados. Exact match no test foi 0 nos cinco
+  casos. Modelos tão pequenos e com tão poucas atualizações não validam as hipóteses.
+- Resultados, comandos e limitações: [RESULTS_CPU_SMOKE.md](docs/RESULTS_CPU_SMOKE.md).
+  Datasets e execuções da etapa 1 permanecem preservados; somente CPU local foi utilizada.
+- Após os ajustes finais de documentação/notebook: **3 passed**, 2,98 s, nas verificações de
+  notebook e configs; `compileall` e `git diff --check` sem erros.
+
 Data: 22/10/2026 (America/Sao_Paulo). Os resultados abaixo são testes de infraestrutura,
 não benchmarks de qualidade ou comparação de desempenho entre arquiteturas.
 

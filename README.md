@@ -21,7 +21,7 @@ novas execuções; resultados e datasets antigos não foram sobrescritos.
 python -m pytest -q
 python -m llm2 inspect --config configs/experiments/e3_lrm.yaml --meta
 python -m llm2 experiment --config configs/experiments/combined.yaml
-python -m llm2 train --config configs/experiments/e3_lrm.yaml --data data/processed-byte --output-dir runs/my-lrm
+python -m llm2 train --config configs/experiments/e3_lrm.yaml --data data/processed-byte --output-dir runs/my-lrm --until-step 2
 python -m llm2 train --config configs/experiments/e3_lrm.yaml --data data/processed-byte --output-dir runs/my-lrm --resume runs/my-lrm/checkpoints/step-00000002
 python -m llm2 evaluate --checkpoint runs/my-lrm/checkpoints/step-00000004
 python -m llm2 benchmark --checkpoint runs/my-lrm/checkpoints/step-00000004 --output runs/my-lrm/benchmark.json
@@ -45,6 +45,7 @@ Documentos da V2:
 - [Currículo e isolamento dos dados](docs/CURRICULUM.md).
 - [Matriz de experimentos](docs/EXPERIMENT_MATRIX.md), [A100/créditos](docs/A100_EXECUTION_PLAN.md).
 - [Modelo de relatório](docs/RESULTS_TEMPLATE.md), [referências](docs/REFERENCES.md).
+- [Resultados CPU executados e reprodução](docs/RESULTS_CPU_SMOKE.md).
 
 Configurações antigas não ganham uma seção research implicitamente. Pesos V1 safetensors
 continuam legíveis para avaliação; retomada exata V1 exige os bytes de código do respectivo
@@ -142,7 +143,8 @@ na A100. Não foram medidos ganhos nem escolhido um batch por benchmark de hardw
 
 ## Google Colab A100
 
-1. Execute `python scripts/package_colab.py` para criar `dist/llm2-lab-colab.zip`.
+1. Execute `python scripts/package_colab.py --output dist/llm2-lab-v2-colab.zip`.
+   Arquivos existentes são preservados; escolha outro nome para um novo pacote.
 2. Abra `notebooks/colab_a100.ipynb` no Colab e selecione runtime GPU A100.
 3. Execute as células: elas verificam A100/BF16, recebem o ZIP, preservam o Torch CUDA
    instalado, instalam o pacote, executam os testes e demonstram treino e retomada.

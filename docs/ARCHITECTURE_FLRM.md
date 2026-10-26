@@ -36,6 +36,27 @@ causalidade e retomada com teacher EMA/progressão/checkpointing. A suíte integ
 e seus resultados finais estão em VALIDATION.md. F0–F4 e C5/C6 são configs executáveis
 individualmente nessa branch. Nenhuma campanha ou ganho foi demonstrado.
 
+## Executar no worktree isolado
+
+Uma instalação editável aponta para um único checkout. Para usar o código experimental
+sem trocar a instalação local da branch comum, selecione `src` no processo:
+
+```powershell
+Set-Location '../LLM 2-fractal-lrm'
+$previousPythonPath = $env:PYTHONPATH
+try {
+    $env:PYTHONPATH = (Resolve-Path ./src).Path
+    python -m pytest -q
+    python -m llm2 inspect --config configs/experiments/f3_conditioned.yaml --meta
+    python -m llm2 train --config configs/experiments/c6_flrm_adaptive.yaml --data '../LLM 2/data/processed-byte' --output-dir runs/my-flrm
+} finally {
+    $env:PYTHONPATH = $previousPythonPath
+}
+```
+
+Esses comandos de treino executam somente a configuração indicada; a suíte usa dados
+temporários e não depende do corpus preparado na branch comum.
+
 Futuro: escalas realmente comprimidas com máscaras corretas, NCM discreto, memória entre
 escalas, DeltaNet/Mamba, DEQ, parada aprendida, profundidade dinâmica e kernels Triton.
 Nenhum desses componentes foi implementado nesta entrega.
