@@ -9,7 +9,8 @@ MODEL_NAMES = {
     "flrm_reference": "FLRM sequencial", "flrm_batched": "FLRM agrupado",
     "flrm_compressed": "FLRM comprimido",
     "flrm_compressed_native": "FLRM comprimido — projeção nativa",
-    "flrm_compressed_grouped": "FLRM comprimido — projeção nativa + escalas agrupadas",
+    "flrm_compressed_grouped": "FLRM comprimido agrupado + JEPA",
+    "flrm_compressed_grouped_no_jepa": "FLRM comprimido agrupado sem JEPA",
     "flrm_no_jepa": "FLRM sem JEPA",
 }
 

@@ -2,7 +2,57 @@
 
 Esta entrega implementa P01–P06. GPU é executada **no notebook do Kaggle pelo navegador**. Não é preciso instalar nada no computador pessoal. Localmente foram/serão feitos testes CPU; os testes CUDA deste pacote só confirmam suporte quando executados no Kaggle.
 
-## Etapa atual: desempenho do FLRM comprimido × Transformer (27/10/2026)
+## Etapa atual: FLRM agrupado com/sem JEPA × Transformer (27/10/2026)
+
+A campanha 8b8ac432c0ea selecionou o agrupamento como candidato de velocidade,
+com ganho moderado e aumento de VRAM. O próximo ensaio isola o JEPA dentro dessa
+mesma arquitetura. A célula fixada no novo commit deve usar:
+
+```python
+LLM2_SETTINGS = {
+    "mode": "treinar",
+    "steps": 2000,
+    "seeds": [42],
+    "models": ["flrm_compressed_grouped_no_jepa",
+               "flrm_compressed_grouped", "baseline_small"],
+    "iterations": 2,
+    "progress_interval": 500,
+    "profile": True,
+    "profile_warmup_steps": 10,
+    "profile_measure_steps": 30,
+}
+```
+
+- **Sem JEPA:** FLRM `compressed_grouped`, K=2, somente loss de próximo token.
+  Não constrói teacher/preditor. No perfil D=384/H=1024/vocab=257, tem 2.168.076
+  parâmetros backbone/total de treino.
+- **Com JEPA:** mesma arquitetura, K=2, JEPA .1/teacher EMA como no teste anterior;
+  2.168.076 backbone/4.631.064 total de treino. Mantém escalas, FiLM e compressão.
+- **Transformer pequeno:** referência K=1/sem JEPA, 2.164.224 parâmetros backbone/total.
+
+Nessa ordem e com seed única, a GPU 0 recebe o FLRM sem JEPA e depois o Transformer;
+a GPU 1 recebe o FLRM com JEPA. As duas placas treinam em paralelo. A distribuição
+busca aproveitar a expectativa de treino mais curto sem teacher; medir tempo real.
+Avaliação completa, geração e perfis continuam sequenciais na mesma GPU 0.
+
+As configs dos FLRMs diferem somente em jepa_weight e diretório de saída. Testes
+conferem pesos iniciais do backbone e o primeiro batch iguais com a mesma seed.
+O consumo de RNG pelo preditor muda sorteios posteriores de dropout; não se promete
+trajetória estocástica idêntica. Igual quantidade de tokens não significa igual
+computação. A ablação do JEPA é o par FLRM; a comparação com Transformer é de pacotes.
+
+Loss completa **menor = melhor**, velocidades **maior = melhor**, tempo **menor =
+melhor**, VRAM menor = menor consumo para a mesma tarefa. A perda total de treino
+com JEPA inclui termo auxiliar e não deve ser ordenada contra a loss LM pura.
+Teacher não participa da geração; não presumir aceleração de inferência sem JEPA.
+Seed 42 é triagem; se o efeito for relevante, repetir depois com 42/43/44.
+
+O identificador histórico `flrm_no_jepa` continua selecionando o FLRM não
+comprimido. Use **flrm_compressed_grouped_no_jepa** nesta comparação. Cada campanha
+cria novos diretórios; mantenha checkpoints anteriores e salve versão com outputs.
+O ZIP de análise não contém os pesos. GPU real continua sendo executada no Kaggle.
+
+## Etapa anterior: desempenho do FLRM comprimido × Transformer (27/10/2026)
 
 O foco atual usa somente as famílias Transformer e FLRM. Para medir esta etapa,
 use a célula fornecida na entrega com estes ajustes:

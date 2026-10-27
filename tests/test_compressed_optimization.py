@@ -99,12 +99,13 @@ def _state(trainer):
 
 
 @pytest.mark.parametrize("mode", MODES)
-def test_compressed_exact_resume_dropout_ema_accumulation(training_config, tmp_path, mode):
+@pytest.mark.parametrize("jepa_weight", [0., .1])
+def test_compressed_exact_resume_dropout_ema_accumulation(training_config, tmp_path, mode, jepa_weight):
     cfg = training_config
     cfg.model.max_seq_len = cfg.data.seq_len = 17
     cfg.train.accumulation_weighting = "tokens"
     cfg.research = ResearchConfig(architecture="fractal", scale_execution=mode,
-        iterations=2, gradient_checkpointing=True, jepa_weight=.1)
+        iterations=2, gradient_checkpointing=True, jepa_weight=jepa_weight)
     assert cfg.model.dropout > 0 and cfg.train.grad_accum_steps > 1
     with Trainer(cfg) as trainer:
         trainer.fit(until_step=2)
@@ -182,11 +183,12 @@ def test_compressed_cuda_fp32_equivalence(tiny_config):
 @pytest.mark.cuda
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable")
 @pytest.mark.parametrize("mode", MODES)
-def test_compressed_cuda_fp32_save_continue(training_config, tmp_path, mode):
+@pytest.mark.parametrize("jepa_weight", [0., .1])
+def test_compressed_cuda_fp32_save_continue(training_config, tmp_path, mode, jepa_weight):
     cfg = training_config
     cfg.model.max_seq_len = cfg.data.seq_len = 17
     cfg.train.device, cfg.train.precision, cfg.train.deterministic = "cuda", "fp32", False
-    cfg.research = ResearchConfig(architecture="fractal", scale_execution=mode, iterations=2, jepa_weight=.1)
+    cfg.research = ResearchConfig(architecture="fractal", scale_execution=mode, iterations=2, jepa_weight=jepa_weight)
     with Trainer(cfg) as trainer:
         metrics = trainer.train_step()
         assert metrics["peak_vram_allocated_bytes"] > 0

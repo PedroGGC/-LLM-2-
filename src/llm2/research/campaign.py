@@ -31,7 +31,9 @@ from .presentation import MODEL_NAMES, comparison_text, legend, number, progress
 
 MODELS = ("baseline", "baseline_small", "baseline_jepa", "lrm", "lrm_no_jepa",
           "flrm_reference", "flrm_batched", "flrm_compressed", "flrm_compressed_native",
-          "flrm_compressed_grouped", "flrm_no_jepa")
+          "flrm_compressed_grouped", "flrm_compressed_grouped_no_jepa", "flrm_no_jepa")
+
+DEFAULT_MODELS = ["flrm_compressed_grouped_no_jepa", "flrm_compressed_grouped", "baseline_small"]
 
 
 def worker_environment(root, gpu=None):
@@ -70,8 +72,11 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
     cfg.train.accumulation_weighting = "tokens"
     cfg.train.checkpoint_interval = max(1, min(500, steps))
     architecture = "transformer" if model.startswith("baseline") else "recursive" if model.startswith("lrm") else "fractal"
-    jepa = 0.1 if model in ("baseline_jepa", "lrm", "flrm_reference", "flrm_batched") or model.startswith("flrm_compressed") else 0
-    scale_exec = model.removeprefix("flrm_") if model.startswith("flrm_compressed") else "batched" if model == "flrm_batched" else "reference"
+    variant = model.removesuffix("_no_jepa")
+    uses_jepa = not model.endswith("_no_jepa") and (
+        model in ("baseline_jepa", "lrm", "flrm_reference", "flrm_batched") or model.startswith("flrm_compressed"))
+    jepa = 0.1 if uses_jepa else 0.
+    scale_exec = variant.removeprefix("flrm_") if variant.startswith("flrm_compressed") else "batched" if model == "flrm_batched" else "reference"
     cfg.research = ResearchConfig(architecture=architecture, iterations=iterations,
         latent_steps=0, jepa_weight=jepa, scale_execution=scale_exec,
         max_seconds=max_seconds, shutdown_reserve_seconds=min(30., max_seconds/10) if max_seconds else 0.)
@@ -283,7 +288,7 @@ def parser():
     result.add_argument("--input", nargs="+", help="raw UTF-8 files; prepare new byte data inside this campaign")
     result.add_argument("--output", help="new campaign directory")
     result.add_argument("--models", nargs="+", choices=MODELS,
-                        default=["baseline_small", "flrm_compressed_native"])
+                        default=DEFAULT_MODELS)
     result.add_argument("--progress-interval", type=int, default=500)
     result.add_argument("--seeds", nargs="+", type=int, default=[42])
     result.add_argument("--steps", type=int, default=2000)

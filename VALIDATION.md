@@ -352,3 +352,47 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
   FLRM agrupado com/sem JEPA; `flrm_no_jepa` existente usa o modelo não comprimido
   e não serve para essa ablação. Nenhuma implementação de treino alterada nesta
   análise; catálogo Argon continua como ideias futuras.
+
+### Preparação da ablação JEPA agrupada — 27/10/2026
+
+- Pedido do usuário: preparar o script Transformer pequeno × mesmo FLRM agrupado
+  com/sem JEPA, para execução posterior no Kaggle. Plano prévio, riscos e
+  critérios em `docs/PLAN_JEPA_ABLATION.md`. Novo identificador explícito
+  `flrm_compressed_grouped_no_jepa`; arquitetura `compressed_grouped`, jepa_weight=0.
+  O existente `flrm_compressed_grouped` preserva JEPA .1. Sem alterações no
+  backbone, Trainer, algoritmos de checkpoint ou fontes dos dados.
+- Defaults/célula selecionam sem JEPA, com JEPA, Transformer, seed 42, 2.000
+  passos, K=2 nos FLRMs. Filas existentes: sem JEPA e depois Transformer na GPU 0;
+  com JEPA na GPU 1. Espera-se melhor distribuição do trabalho, sem garantir
+  durações. Perfis/avaliações/geração continuam sequenciais na mesma GPU.
+- Teste do par confere configs iguais exceto jepa_weight/output_dir, pesos iniciais
+  do backbone idênticos e mesmo primeiro batch. Sem JEPA constrói
+  CausalLanguageModeling, sem target/predictor; com JEPA constrói PredictiveObjective.
+  Sampler tem RNG próprio, mas a inicialização do preditor muda RNG de dropout;
+  não prometer mesmos sorteios de dropout durante as duas trajetórias.
+- Enumeração local do perfil completo D=384/H=1024/vocab=257, conferindo fórmula
+  dos backbones fractais: sem JEPA **2.168.076 backbone/total**; com JEPA
+  **2.168.076 backbone/4.631.064 total**; Transformer pequeno **2.164.224
+  backbone/total**. Log `runs/jepa-ablation-parameters.log`, sem treino desse perfil.
+- Direcionados: **43 passed, 7 skipped**, 27,85 s,
+  `runs/jepa-ablation-targeted-tests.log`. Inclui retomada CPU FP32/math SDPA
+  com dropout, acumulação e checkpointing ativos, agora também sem JEPA nos
+  três modos comprimidos; compara próxima atualização e estados determinísticos.
+  Memorização e causalidade do mesmo backbone continuam na suíte.
+- `python -m pytest -q`: **137 passed, 15 skipped**, 114,72 s,
+  `runs/jepa-ablation-full-tests.log`, Python 3.12.2/Torch 2.14.1+cpu. Os skips são
+  CUDA indisponível. Novos casos CUDA FP32 de save/continuação sem JEPA estão
+  coletados, mas não executados localmente. Evidência Kaggle anterior valida
+  os modos com JEPA, não a nova combinação sem JEPA. A próxima célula executa
+  o seletor CUDA FP32 antes dos treinos reais.
+- Integração CPU real de três processos de treino e processos separados de
+  avaliação/geração/diagnóstico/perfis, D=16/H=32, contexto 17, dropout .1,
+  acumulação 2, K=2, um optimizer-step: **complete**. Os três modelos avaliaram
+  1.003 alvos cada e geraram três perfis com 1 warmup/2 amostras/1 trace, relatório
+  e ZIP. Log `runs/jepa-ablation-smoke.log`; artefatos descartáveis em
+  `runs/jepa-ablation-smoke-1bf1771d1a/campaign`. Sem benchmark de GPU ou resultado
+  de qualidade científica desta ablação antes da execução do usuário.
+- Célula publicada usa novos diretórios e não retoma arquivos antigos. K=2,
+  objetivos puros sem MTP/currículo e mesmo orçamento de alvos. Comparar qualidade
+  pela loss LM completa (menor = melhor); velocidade maior = melhor; VRAM menor =
+  menor consumo. Uma seed é triagem, não evidência de superioridade consistente.

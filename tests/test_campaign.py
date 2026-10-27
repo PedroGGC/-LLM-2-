@@ -1,3 +1,4 @@
+import copy
 import json
 from pathlib import Path
 import sys
@@ -11,6 +12,9 @@ from llm2.research.campaign import Campaign, campaign_config, export_campaign, p
 from llm2.research.diagnostics import diagnose_model, linear_cka
 from llm2.model import TransformerLM
 from llm2.runtime import capture_rng
+from llm2.objectives import CausalLanguageModeling
+from llm2.research.objectives import PredictiveObjective
+from llm2.trainer import Trainer
 from test_training import training_config, assert_nested_equal
 
 
@@ -136,15 +140,16 @@ def test_profiles_include_baseline_and_all_compressed_modes_once(training_config
     root = Path(__file__).resolve().parents[1]
     campaign = Campaign(root, tmp_path / "profile-campaign", device="cpu", gpus=[])
     (campaign.output / "configs").mkdir()
-    models = ["baseline_small", "flrm_compressed", "flrm_compressed_native", "flrm_compressed_grouped"]
+    models = ["baseline_small", "flrm_compressed", "flrm_compressed_native", "flrm_compressed_grouped",
+              "flrm_compressed_grouped_no_jepa"]
     jobs, commands = [], []
     for seed in [42, 43]:
         for model in models:
             cfg = campaign_config(training_config, model, training_config.data.path,
                 tmp_path / f"{model}-{seed}", seed=seed, steps=2, device="cpu", max_seconds=0, iterations=2)
             if model.startswith("flrm"):
-                assert cfg.research.scale_execution == model.removeprefix("flrm_")
-                assert cfg.research.jepa_weight == .1
+                assert cfg.research.scale_execution == model.removeprefix("flrm_").removesuffix("_no_jepa")
+                assert cfg.research.jepa_weight == (0. if model.endswith("_no_jepa") else .1)
             path = campaign.output / "configs" / f"{model}-{seed}.yaml"
             path.write_text(yaml.safe_dump(cfg.to_dict()), encoding="utf-8")
             jobs.append({"id": f"{model}-{seed}", "model": model, "config": str(path)})
@@ -161,4 +166,41 @@ def test_profiles_include_baseline_and_all_compressed_modes_once(training_config
     assert all(str(args[args.index("--measure-steps")+1]) == "30" for args, _ in commands)
     assert all("profile" in job for job in jobs[:len(models)])
     assert all("profile" not in job for job in jobs[len(models):])
-    assert parser().parse_args([]).models == ["baseline_small", "flrm_compressed_native"]
+    assert parser().parse_args([]).models == ["flrm_compressed_grouped_no_jepa", "flrm_compressed_grouped", "baseline_small"]
+
+
+def test_grouped_jepa_ablation_changes_only_objective_and_preserves_initial_student(training_config, tmp_path):
+    configs = [campaign_config(training_config, model, training_config.data.path,
+        tmp_path / model, seed=42, steps=2, device="cpu", max_seconds=0, iterations=2)
+        for model in ("flrm_compressed_grouped_no_jepa", "flrm_compressed_grouped")]
+    resolved = []
+    for cfg in configs:
+        raw = cfg.to_dict()
+        raw["train"].pop("output_dir")
+        raw["research"].pop("jepa_weight")
+        resolved.append(raw)
+        assert cfg.research.iterations+cfg.research.latent_steps == 2
+        assert cfg.research.scale_execution == "compressed_grouped"
+        assert cfg.research.mtp_weight == cfg.research.intermediate_weight == 0
+    assert resolved[0] == resolved[1]
+    with Trainer(configs[0]) as trainer:
+        assert type(trainer.objective) is CausalLanguageModeling
+        assert not hasattr(trainer.objective, "target") and not hasattr(trainer.objective, "predictor")
+        assert trainer.total_parameters == trainer.model_parameters
+        student = copy.deepcopy(trainer.model.state_dict())
+        batch = trainer.sampler.next()
+        backbone_count = trainer.model_parameters
+    with Trainer(configs[1]) as trainer:
+        assert type(trainer.objective) is PredictiveObjective
+        assert hasattr(trainer.objective, "target") and hasattr(trainer.objective, "predictor")
+        assert trainer.model_parameters == backbone_count < trainer.total_parameters
+        assert_nested_equal(student, trainer.model.state_dict())
+        assert_nested_equal(batch, trainer.sampler.next())
+
+
+def test_legacy_no_jepa_identifiers_keep_original_architectures(training_config, tmp_path):
+    for model, architecture in [("flrm_no_jepa", "fractal"), ("lrm_no_jepa", "recursive")]:
+        cfg = campaign_config(training_config, model, training_config.data.path,
+            tmp_path / model, seed=42, steps=2, device="cpu", max_seconds=0)
+        assert cfg.research.architecture == architecture
+        assert cfg.research.scale_execution == "reference" and cfg.research.jepa_weight == 0
