@@ -23,6 +23,9 @@ if not WORK.is_dir():
 import torch
 if not torch.cuda.is_available() or torch.cuda.device_count() < 2:
     raise RuntimeError("In Kaggle Settings select GPU T4 x2; this campaign requires two visible CUDA GPUs.")
+torch_release = tuple(int(part) for part in str(torch.__version__).split("+")[0].split(".")[:2])
+if not (torch_release[0] == 2 and torch_release[1] >= 5):
+    raise RuntimeError("Use a Kaggle image with CUDA PyTorch >=2.5,<3; this bootstrap will not replace Torch automatically.")
 print("GPUs:", [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())])
 
 REPO = WORK / f"llm2-{PIN[:12]}"
