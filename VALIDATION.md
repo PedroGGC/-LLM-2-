@@ -247,3 +247,54 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
 - Pontos para revisão futura, sem alteração de treino nesta análise: `profile_runs` não seleciona `flrm_compressed`; o estimador de interação conta uma projeção em T, mas o forward executa três; CKA trunca contagens sem alinhar âncoras temporais; fatores 4/16 são fixos enquanto `research.scales` permanece [1,4,0].
 - A rota de upsample causal seguida de compress desloca um bloco: com prior zero, [10,20,30,40] vira [0,10,20,30]. Isso requer explicitar a semântica do estado recorrente, não prova vazamento nem invalida automaticamente o resultado. Otimização equivalente e mudança dessa dinâmica devem ser experimentos separados.
 - Foco recomendado: perfil/testes/estimativas do modo comprimido; interação em resoluções nativas; controles JEPA/K com seeds adicionais e orçamento explícito; cache de geração e resumos aprendidos como etapas posteriores. Recursão fixa/JEPA EMA já existem; DEQ/ACT/NCM/Fibonacci/fatoração de pesos não foram implementados por esta análise.
+
+### Etapa 1 — otimizações do FLRM comprimido, 27/10/2026
+
+- Plano prévio, riscos e aceitação em `docs/PLAN_COMPRESSED_OPTIMIZATION.md`.
+  Trabalho somente na branch experimental. O controle `compressed` conserva seu
+  forward; dois modos explícitos adicionam projeção após pooling e agrupamento
+  opcional apenas das escalas curtas. Mesmo conjunto de pesos e contagem de
+  parâmetros. Nenhuma transferência de pesos ou relaxamento de checkpoint.
+- `python -m pytest -q`: **132 passed, 12 skipped**, Python 3.12.2 /
+  Torch 2.14.1+cpu. Os skips são CUDA indisponível, não aprovações de GPU.
+  `compileall` dos fontes/scripts/testes alterados e `git diff --check` passaram.
+- Testes novos: equivalência de logits/hidden/gradientes CPU FP32/math SDPA com
+  mistura/FiLM/priors não triviais, K=1/2, comprimentos 1/4/15/16/17/31/32/33/65;
+  invariância futura exata e equivalência de prefixo com tolerância em 32 cortes.
+  Retomada exata antes e depois da próxima atualização nas três variantes com
+  dropout .2, acumulação 2, EMA e checkpointing ativos; compara modelo, objetivo,
+  otimizador, scheduler, sampler, RNG e contadores determinísticos. Tempos e picos
+  de memória são observações, não invariantes determinísticos. Memorização de
+  minibatch reduz loss para menos de 1/15 da inicial em cada modo.
+- A primeira rodada direcionada teve 13 aprovações/3 falhas/3 skips: o teste de
+  formas solicitava 33 posições com max_seq_len=32. Corrigido o fixture para 33,
+  sem alterar o limite do modelo. Rodada direcionada seguinte: 37 aprovações,
+  3 skips. A suíte completa acima inclui também diagnósticos e novo teste CUDA
+  de equivalência. Os quatro casos CUDA novos serão executados pelo seletor
+  `cuda and fp32` do notebook; ainda não foram executados em hardware real.
+- Estimativa v3 corrige as três projeções no controle e contabiliza padding do
+  agrupamento. Fórmula, convenções e exclusões em `docs/ARCHITECTURE_FLRM.md`.
+  Não comparar totais v2/v3 como ganho medido. CKA entre escalas comprimidas agora
+  é null por falta de alinhamento temporal; não atribuir especialização a esse
+  diagnóstico. Nenhuma mudança na loss/otimização do Trainer.
+- Campanha/perfis: todas as variantes solicitadas selecionadas, uma seed por
+  modelo, mesma GPU e sem concorrência nos perfis. Notebook expõe warmup e amostras
+  (10/30 por padrão); console mostra alvos/s isolados. Teste do seletor inclui
+  Transformer e as três variantes comprimidas e evita repetir seeds.
+- A célula de triagem mantém K=2 e seed 42, comparando Transformer pequeno,
+  comprimido controle, projeção nativa e projeção nativa com agrupamento. LRM sai
+  dos modelos padrão. Ganhos de velocidade/VRAM e manutenção da qualidade após
+  2.000 passos continuam pendentes da execução Kaggle T4. Não foi medido ganho GPU
+  nem implementado cache de geração, adaptação de K ou nova arquitetura nesta etapa.
+- Integração CPU descartável `runs/stage1_smoke.py`: quatro variantes em processos
+  separados, D=16/H=32, contexto 17, dropout .1, acumulação 2, K=2, um optimizer-step;
+  avaliação completa de 1.003 alvos por modelo, benchmark/geração/diagnósticos,
+  quatro perfis reais (1 warmup/2 amostras/1 trace) e ZIP concluídos. Log:
+  `runs/stage1-smoke-final.log`; campanha `runs/stage1-smoke-f65c58cff2/campaign`.
+  Diretórios temporários e pesos ficam ignorados pelo Git. Não usar os tempos
+  desse smoke como benchmark nem a loss de um passo como resultado científico.
+- `python -m pytest -q -m cuda`: **12 skipped, 132 deselected**, 0,35 s, log
+  `runs/stage1-cuda-unavailable.log`; confirma somente a coleta dos testes CUDA,
+  sem execução local. Reforço posterior da comparação de contadores determinísticos
+  verificado novamente na suíte direcionada do modo comprimido: **17 passed,
+  4 skipped**, 18,10 s, log `runs/stage1-compressed-tests.log`.

@@ -8,6 +8,8 @@ MODEL_NAMES = {
     "baseline_jepa": "Transformer + JEPA", "lrm": "LRM", "lrm_no_jepa": "LRM sem JEPA",
     "flrm_reference": "FLRM sequencial", "flrm_batched": "FLRM agrupado",
     "flrm_compressed": "FLRM comprimido",
+    "flrm_compressed_native": "FLRM comprimido — projeção nativa",
+    "flrm_compressed_grouped": "FLRM comprimido — projeção nativa + escalas agrupadas",
     "flrm_no_jepa": "FLRM sem JEPA",
 }
 

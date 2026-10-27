@@ -8,8 +8,7 @@ from ..runtime import capture_rng, restore_rng, attention_context, autocast_cont
 def linear_cka(x, y):
     """Centered linear CKA; undefined for a constant representation."""
     if x.shape[0] != y.shape[0]:
-        n = min(x.shape[0], y.shape[0])
-        x, y = x[:n], y[:n]
+        return None  # Unequal native resolutions have no aligned sample correspondence.
     x, y = x.double()-x.double().mean(0), y.double()-y.double().mean(0)
     a, b = x @ x.T, y @ y.T
     denominator = torch.linalg.vector_norm(a)*torch.linalg.vector_norm(b)
@@ -60,6 +59,7 @@ def diagnose_model(model, input_ids, *, max_samples=128, precision="fp32", deter
         if not snapshots:
             snapshots.append((output.hidden_states.detach().float().flatten(0, 1)[:max_samples].cpu(),))
         final = snapshots[-1]
+        compressed = getattr(getattr(model, "research", None), "scale_execution", "").startswith("compressed")
         if any(not torch.isfinite(value).all() for value in final):
             raise FloatingPointError("non-finite diagnostic states")
         history = []
@@ -72,13 +72,14 @@ def diagnose_model(model, input_ids, *, max_samples=128, precision="fp32", deter
                                 for x, old in zip(values, previous)] if previous is not None else None})
             previous = values
         result = {"scales": [representation_stats(value) for value in final],
-                  "linear_cka": [[linear_cka(x, y) for y in final] for x in final],
+                  "linear_cka": [[linear_cka(x, y) if i == j or not compressed else None
+                      for j, y in enumerate(final)] for i, x in enumerate(final)],
                   "iterations": history,
                   "gates": {name: parameter.sigmoid().detach().cpu().tolist()
                             for name, parameter in model.named_parameters()
                             if name.endswith("gate")},
                   "max_samples": max_samples, "device": str(input_ids.device), "precision": precision,
-                  "limitations": "Bounded states from one fixed validation batch; raw recurrent states for LRM/FLRM, final hidden for Transformer. CKA/rank are descriptive, not proof of semantic specialization or quality. No training gradients or benchmark timing are included."}
+                  "limitations": "Bounded states from one fixed validation batch; raw recurrent states for LRM/FLRM, final hidden for Transformer. Cross-scale CKA is null for compressed modes until temporal anchors are aligned; raw ranks with different sample counts are not directly comparable. CKA/rank are descriptive, not proof of semantic specialization or quality. No training gradients or benchmark timing are included."}
         if hasattr(model, "block"):
             result["cross_scale_mixing"] = model.block.interaction.mixing.softmax(-1).cpu().tolist()
             if model.block.conditioning is not None:

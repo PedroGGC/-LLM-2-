@@ -85,7 +85,7 @@ else:
                "--max-seconds", str(SETTINGS.get("max_seconds", 1800)),
                "--progress-interval", str(SETTINGS.get("progress_interval", 500)),
                "--iterations", str(SETTINGS.get("iterations", 2)),
-               "--models", *SETTINGS.get("models", ["baseline", "lrm", "flrm_reference", "flrm_batched"]),
+               "--models", *SETTINGS.get("models", ["baseline_small", "flrm_compressed_native"]),
                "--seeds", *map(str, SETTINGS.get("seeds", [42]))]
 
     data = SETTINGS.get("data")
@@ -115,7 +115,8 @@ else:
         print("Corpus de demonstração:", provenance)
 
     if SETTINGS.get("profile", True):
-        command += ["--profile"]
+        command += ["--profile", "--warmup-steps", str(SETTINGS.get("profile_warmup_steps", 10)),
+                    "--measure-steps", str(SETTINGS.get("profile_measure_steps", 30))]
     if SETTINGS.get("cpu_tests", True):
         command += ["--cpu-tests"]
     if SETTINGS.get("cuda_tests", True):

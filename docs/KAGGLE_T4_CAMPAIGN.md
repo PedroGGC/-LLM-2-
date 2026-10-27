@@ -2,7 +2,52 @@
 
 Esta entrega implementa P01–P06. GPU é executada **no notebook do Kaggle pelo navegador**. Não é preciso instalar nada no computador pessoal. Localmente foram/serão feitos testes CPU; os testes CUDA deste pacote só confirmam suporte quando executados no Kaggle.
 
-## Próximo passo recomendado: comparar checkpoints já salvos
+## Etapa atual: desempenho do FLRM comprimido × Transformer (27/10/2026)
+
+O foco atual usa somente as famílias Transformer e FLRM. Para medir esta etapa,
+use a célula fornecida na entrega com estes ajustes:
+
+```python
+LLM2_SETTINGS = {
+    "mode": "treinar",
+    "steps": 2000,
+    "seeds": [42],
+    "models": ["baseline_small", "flrm_compressed",
+               "flrm_compressed_native", "flrm_compressed_grouped"],
+    "iterations": 2,
+    "progress_interval": 500,
+    "profile": True,
+    "profile_warmup_steps": 10,
+    "profile_measure_steps": 30,
+}
+```
+
+São quatro execuções: Transformer pequeno, FLRM comprimido anterior como controle,
+FLRM com projeção em resolução nativa e a mesma projeção com escalas curtas agrupadas.
+Todas as variantes FLRM têm os mesmos pesos em quantidade, K=2 e objetivos.
+O Transformer tem K=1/sem JEPA; a comparação entre famílias é de pacotes completos.
+Não é uma ablação isolada do benefício do JEPA ou da recursão.
+O LRM permanece no histórico e pode ser selecionado explicitamente, mas sai do padrão.
+
+O treino é distribuído entre as duas T4. Depois, avaliação/geração e perfis são
+sequenciais na GPU 0. O perfil agora inclui **todos** os modelos solicitados,
+uma seed por variante, com 10 passos de aquecimento, 30 amostras sem profiler e
+um passo separado instrumentado. Os perfis usam treinos descartáveis novos,
+não retomam nem alteram os checkpoints finais. O console informa alvos/s isolados;
+o ZIP inclui `profiles/<modelo-seed>/profile.json` e `trace.json`.
+
+Loss completa **menor = melhor**; treino em alvos/s e geração em tokens/s
+**maior = melhor**; tempo **menor = melhor**; VRAM menor = menor consumo para
+a mesma tarefa. FLOPs são estimativas v3 corrigidas, não medidas de tempo.
+Uma seed é triagem; não concluir superioridade consistente com esse ensaio.
+Para a ablação posterior de K, repetir em campanha nova mudando apenas
+`iterations` para 1, mantendo as mesmas variantes, dados e demais ajustes.
+
+Os novos testes CUDA FP32 rodam antes do treino; uma falha interrompe a campanha.
+Os testes locais são CPU; o suporte real das otimizações nas T4 ainda precisa
+desta execução. Os diretórios e checkpoints anteriores são preservados.
+
+## Fluxo disponível: comparar checkpoints já salvos
 
 Esse modo não inicia treino. Compara a qualidade dos checkpoints de 500, 1.000, 1.500 e 2.000 passos, mantendo os pesos e dados originais. Loss de validação **menor = melhor** previsão dos próximos tokens. Não mede novamente velocidade.
 

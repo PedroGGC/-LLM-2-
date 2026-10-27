@@ -11,7 +11,8 @@ podem favorecer reutilização composicional. Não atribuimos automaticamente pa
 ## Componentes implementados no experimento
 
 - `FractalScaleEncoder`: escala local (janela 1), intermediária (janela 4) e global causal
-  (0 = prefixo completo). Todas as grades retêm T posições; não há compressão de sequência.
+  (0 = prefixo completo). Nos modos `reference`/`batched`, todas retêm T posições.
+  Os modos `compressed*` usam o compressor de blocos descrito abaixo.
 - `SharedFractalCore`: reutiliza a operação comum de refinamento causal; uma instância por
   escala em F1 ou uma instância compartilhada em F2/F3/F4.
 - `ScaleConditioning`: FiLM com gamma limitado por tanh e beta, inicializados em zero.
@@ -58,9 +59,63 @@ try {
 Esses comandos de treino executam somente a configuração indicada; a suíte usa dados
 temporários e não depende do corpus preparado na branch comum.
 
-Futuro: escalas realmente comprimidas com máscaras corretas, NCM discreto, memória entre
+Futuro: NCM discreto, memória entre
 escalas, DeltaNet/Mamba, DEQ, parada aprendida, profundidade dinâmica e kernels Triton.
 Nenhum desses componentes foi implementado nesta entrega.
+
+## Compressão real e otimizações de execução — etapa 1, 27/10/2026
+
+`compressed`, introduzido em `a668af73`, usa grades T, ceil(T/4), ceil(T/16),
+pooling por média e dois priors aprendidos. Cada leitura grossa na grade fina é
+atrasada um bloco: o bloco ainda incompleto não pode influenciar seus tokens.
+O estado interno conserva a mesma dinâmica compress(upsample(...)) do controle.
+A escala fina mantém atenção densa; a complexidade total continua quadrática.
+`research.scales` deve ser [1,4,0] nesses modos por compatibilidade com o schema
+existente; os fatores efetivos são fixos 1/4/16, e 0 não indica prefixo global aqui.
+
+Há três modos comprimidos com o mesmo state_dict e **2.168.076** parâmetros de
+backbone no perfil D=384/H=1024/vocab=257/core_layers=1:
+
+| scale_execution / modelo da campanha | Núcleos por iteração | Comprimentos das projeções da interação |
+|---|---|---|
+| compressed / flrm_compressed | T, ceil(T/4), ceil(T/16) separados | T, T, T |
+| compressed_native / flrm_compressed_native | mesmos núcleos separados | T, ceil(T/4), ceil(T/16) |
+| compressed_grouped / flrm_compressed_grouped | T separado, duas escalas curtas agrupadas em 2B × ceil(T/4) | T, ceil(T/4), ceil(T/16) |
+
+Se U_j são as leituras causais na grade fina, a saída grossa original é
+P_i(U_i + g_i W Σ_j a_ij U_j). Como média P_i e projeção W são lineares, a
+interação nativa calcula P_i(U_i) + g_i W Σ_j a_ij P_i(U_j). Isso inclui as caudas
+parciais e gradientes dos priors. Não muda a janela causal nem adiciona pesos.
+Arredondamento FP32 pode diferir; não se promete trajetória de treino idêntica.
+
+Agrupar somente as escalas curtas reduz três chamadas de núcleo para duas, mas
+faz a escala de fator 16 processar padding à direita até o comprimento da de
+fator 4. Consultas válidas não leem posições futuras; saídas de padding são
+descartadas. O consumo de RNG/dropout muda. É uma ablação experimental até medir
+tempo/VRAM na T4, não um modo presumidamente mais rápido.
+
+O estimador v3 soma por comprimento n do núcleo:
+`core_layers × (8 n D² + 6 n D H + 4 n² D) + 2 n D²`.
+A interação acrescenta `2 D² × (3T)` no controle, ou
+`2 D² × (T + ceil(T/4) + ceil(T/16))` nos modos nativos. O modo agrupado contabiliza
+os dois núcleos curtos no comprimento com padding. Logits acrescentam `2 T D V`.
+FMA conta duas operações; atenção usa a convenção quadrada densa. Backward é
+aproximado por duas vezes o forward diferenciável; teacher sem gradiente e
+recomputação são contabilizados à parte. Pooling, mistura elementar, FiLM,
+normalizações, RoPE, softmax, loss e optimizer são excluídos. A versão anterior
+subcontava as projeções do controle comprimido; não comparar totais v2 e v3
+como evidência de ganho computacional medido.
+
+Testes em `test_compressed_optimization.py`: saídas/gradientes CPU FP32/math SDPA
+com os mesmos pesos e tolerâncias, K=1/2, limites 4/16 e comprimentos não múltiplos;
+causalidade em todos os cortes de 33 tokens; contagem única, memorização, retomada
+exata dentro de cada modo com dropout/EMA/checkpointing/acumulação ativos.
+CUDA FP32 tem equivalência e save/continue próprios para rodar no Kaggle.
+
+CKA entre escalas comprimidas fica null até haver alinhamento temporal adequado.
+Ranks brutos com diferentes números de amostras não são comparáveis diretamente.
+Geração continua recalculando o prefixo, sem KV cache. Checkpoints antigos devem
+ser avaliados com sua fonte original; nenhuma checagem de compatibilidade foi relaxada.
 
 ## Execução agrupada P01–P06
 

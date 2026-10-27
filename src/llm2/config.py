@@ -154,10 +154,12 @@ class ResearchConfig:
         _types(self)
         if self.architecture not in ("transformer", "recursive", "untied", "fractal"):
             raise ValueError("unknown research architecture")
-        if self.scale_execution not in ("reference", "batched", "compressed"):
-            raise ValueError("scale_execution must be reference|batched")
+        if self.scale_execution not in ("reference", "batched", "compressed", "compressed_native", "compressed_grouped"):
+            raise ValueError("unknown scale_execution")
         if self.scale_execution != "reference" and (self.architecture != "fractal" or not self.share_scales):
-            raise ValueError("batched scales require a fractal model with shared scale weights")
+            raise ValueError("non-reference scales require a fractal model with shared scale weights")
+        if self.scale_execution.startswith("compressed") and self.scales != [1, 4, 0]:
+            raise ValueError("compressed modes require scales=[1,4,0]; native block factors are fixed at 1,4,16")
         for name in ("iterations", "core_layers", "jepa_offset", "max_difficulty", "curriculum_interval",
                      "probe_examples", "fixed_curriculum_steps"):
             if getattr(self, name) <= 0:

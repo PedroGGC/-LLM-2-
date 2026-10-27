@@ -30,7 +30,8 @@ from .presentation import MODEL_NAMES, comparison_text, legend, number, progress
 
 
 MODELS = ("baseline", "baseline_small", "baseline_jepa", "lrm", "lrm_no_jepa",
-          "flrm_reference", "flrm_batched", "flrm_compressed", "flrm_no_jepa")
+          "flrm_reference", "flrm_batched", "flrm_compressed", "flrm_compressed_native",
+          "flrm_compressed_grouped", "flrm_no_jepa")
 
 
 def worker_environment(root, gpu=None):
@@ -69,8 +70,8 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
     cfg.train.accumulation_weighting = "tokens"
     cfg.train.checkpoint_interval = max(1, min(500, steps))
     architecture = "transformer" if model.startswith("baseline") else "recursive" if model.startswith("lrm") else "fractal"
-    jepa = 0.1 if model in ("baseline_jepa", "lrm", "flrm_reference", "flrm_batched", "flrm_compressed") else 0
-    scale_exec = "compressed" if model == "flrm_compressed" else "batched" if model == "flrm_batched" else "reference"
+    jepa = 0.1 if model in ("baseline_jepa", "lrm", "flrm_reference", "flrm_batched") or model.startswith("flrm_compressed") else 0
+    scale_exec = model.removeprefix("flrm_") if model.startswith("flrm_compressed") else "batched" if model == "flrm_batched" else "reference"
     cfg.research = ResearchConfig(architecture=architecture, iterations=iterations,
         latent_steps=0, jepa_weight=jepa, scale_execution=scale_exec,
         max_seconds=max_seconds, shutdown_reserve_seconds=min(30., max_seconds/10) if max_seconds else 0.)
@@ -247,9 +248,7 @@ class Campaign:
         self.save()
 
     def profile_runs(self, jobs, warmup, measured):
-        selected = [j for j in jobs if j["model"] in ("flrm_reference", "flrm_batched")]
-        if not selected:
-            selected = jobs[:1]
+        selected = jobs
         # One seed per execution mode, and never overlapping GPU profiles.
         seen = set()
         for job in selected:
@@ -267,6 +266,13 @@ class Campaign:
                           "--output", self.output / "profiles" / job["id"], "--execute",
                           "--warmup-steps", str(warmup), "--measure-steps", str(measured)],
                          f"{job['id']}-profile.log", gpu=self.gpus[0])
+            profile_path = self.output / "profiles" / job["id"] / "profile.json"
+            timing = json.loads(profile_path.read_text(encoding="utf-8"))["timing"]
+            job["profile"] = str(profile_path)
+            self.save()
+            print(f"  {MODEL_NAMES.get(job['model'], job['model'])}: "
+                  f"{number(timing['mean_tokens_per_second'], 0)} alvos/s (maior = melhor); "
+                  f"{measured} amostras isoladas, após {warmup} passos de aquecimento.", flush=True)
 
 
 def parser():
@@ -277,7 +283,7 @@ def parser():
     result.add_argument("--input", nargs="+", help="raw UTF-8 files; prepare new byte data inside this campaign")
     result.add_argument("--output", help="new campaign directory")
     result.add_argument("--models", nargs="+", choices=MODELS,
-                        default=["baseline", "lrm", "flrm_reference", "flrm_batched"])
+                        default=["baseline_small", "flrm_compressed_native"])
     result.add_argument("--progress-interval", type=int, default=500)
     result.add_argument("--seeds", nargs="+", type=int, default=[42])
     result.add_argument("--steps", type=int, default=2000)
@@ -304,6 +310,8 @@ def run_campaign(args):
     root = Path(__file__).resolve().parents[3]
     if args.steps <= 0 or args.max_seconds < 0 or not args.seeds:
         raise ValueError("positive steps, nonnegative time budget and at least one seed required")
+    if args.profile and (args.warmup_steps < 0 or args.measure_steps < 1):
+        raise ValueError("profiling requires nonnegative warmup and at least one measured step")
     if len(set(args.models)) != len(args.models) or len(set(args.seeds)) != len(args.seeds):
         raise ValueError("models and seeds must not contain duplicates")
     if bool(args.data) == bool(args.input):

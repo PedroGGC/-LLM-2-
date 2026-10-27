@@ -130,3 +130,35 @@ def test_gpu_slot_requires_nonnegative_logical_index(monkeypatch, gpu):
 def test_worker_without_gpu_preserves_parent_mask(monkeypatch, visible):
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
     assert worker_environment(Path.cwd())["CUDA_VISIBLE_DEVICES"] == visible
+
+
+def test_profiles_include_baseline_and_all_compressed_modes_once(training_config, tmp_path, monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    campaign = Campaign(root, tmp_path / "profile-campaign", device="cpu", gpus=[])
+    (campaign.output / "configs").mkdir()
+    models = ["baseline_small", "flrm_compressed", "flrm_compressed_native", "flrm_compressed_grouped"]
+    jobs, commands = [], []
+    for seed in [42, 43]:
+        for model in models:
+            cfg = campaign_config(training_config, model, training_config.data.path,
+                tmp_path / f"{model}-{seed}", seed=seed, steps=2, device="cpu", max_seconds=0, iterations=2)
+            if model.startswith("flrm"):
+                assert cfg.research.scale_execution == model.removeprefix("flrm_")
+                assert cfg.research.jepa_weight == .1
+            path = campaign.output / "configs" / f"{model}-{seed}.yaml"
+            path.write_text(yaml.safe_dump(cfg.to_dict()), encoding="utf-8")
+            jobs.append({"id": f"{model}-{seed}", "model": model, "config": str(path)})
+    def command(arguments, log_name, *, gpu=None):
+        commands.append((arguments, gpu))
+        output = Path(arguments[arguments.index("--output")+1])
+        output.mkdir(parents=True)
+        (output / "profile.json").write_text(json.dumps({"timing": {"mean_tokens_per_second": 123.}}))
+    monkeypatch.setattr(campaign, "command", command)
+    campaign.profile_runs(jobs, 10, 30)
+    assert len(commands) == len(models)
+    assert all(gpu is None for _, gpu in commands)
+    assert all(str(args[args.index("--warmup-steps")+1]) == "10" for args, _ in commands)
+    assert all(str(args[args.index("--measure-steps")+1]) == "30" for args, _ in commands)
+    assert all("profile" in job for job in jobs[:len(models)])
+    assert all("profile" not in job for job in jobs[len(models):])
+    assert parser().parse_args([]).models == ["baseline_small", "flrm_compressed_native"]

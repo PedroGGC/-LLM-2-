@@ -16,10 +16,11 @@ class ResearchFlopEstimate:
     target_forward: int
     recomputation_forward: int
     internal_iterations: int
-    method: str = "research_dense_matmuls_v2_hidden_teacher"
+    method: str = "research_dense_matmuls_v3_compressed_projection_lengths"
     is_estimate: bool = True
     exclusions: str = ("elementwise/norms/RoPE/softmax/loss/optimizer; square dense attention; "
-                       "backward=2x differentiable forward, conservative under detach; no compile cost")
+                       "pooling/padding/FiLM/mixing omitted; grouped padding included in dense core lengths; "
+                       "backward=2x differentiable forward, conservative under detach or unused final branches; no compile cost")
 
 
 def backbone_cost(model, seq_len, *, include_logits=True):

@@ -100,6 +100,20 @@ class CrossScaleInteraction(nn.Module):
             mixed = torch.einsum("ij,jbtd->ibtd", weights.float(), states.float()).to(states.dtype)
         return states + self.gate.sigmoid()[:, None, None, None] * self.projection(mixed)
 
+    def forward_native(self, states, compressors):
+        """Pool before each coarse projection, preserving the delayed read semantics.
+
+        Mean(W x) = W mean(x). Pooling each input once per output scale avoids
+        projecting all three outputs at fine resolution; rounding can differ.
+        """
+        weights = self.mixing.softmax(-1)
+        outputs = []
+        for i, compressor in enumerate((None, *compressors)):
+            values = states if compressor is None else tuple(compressor.compress(x) for x in states)
+            mixed = sum(weights[i, j] * value for j, value in enumerate(values))
+            outputs.append(values[i] + self.gate[i].sigmoid() * self.projection(mixed))
+        return tuple(outputs)
+
 
 class SharedFractalCore(SharedRecursiveCore):
     """The exact common recursive operation, reused across scales without duplicate weights."""
@@ -111,18 +125,18 @@ class FractalRecursiveBlock(nn.Module):
         count = len(research.scales)
         self.shared = research.share_scales
         self.execution = research.scale_execution
-        if self.execution in ("batched", "compressed") and not self.shared:
+        if self.execution != "reference" and not self.shared:
             raise ValueError(f"{self.execution} execution requires shared scale cores")
         self.cores = nn.ModuleList([SharedFractalCore(config, research.core_layers)
                                    for _ in range(1 if self.shared else count)])
         self.conditioning = ScaleConditioning(count, config.d_model) if research.scale_conditioning else None
         self.interaction = CrossScaleInteraction(count, config.d_model)
-        if self.execution == "compressed":
+        if self.execution.startswith("compressed"):
             self.comp4 = CausalScaleCompressor(4, config.d_model)
             self.comp16 = CausalScaleCompressor(16, config.d_model)
 
     def forward(self, states, contexts):
-        if self.execution == "compressed":
+        if self.execution.startswith("compressed"):
             s0, s1, s2 = states
             c0, c1, c2 = contexts
             T = c0.shape[1]
@@ -131,10 +145,23 @@ class FractalRecursiveBlock(nn.Module):
                 c1 = self.conditioning(c1, 1)
                 c2 = self.conditioning(c2, 2)
             v0 = self.cores[0](s0, c0)
-            v1 = self.cores[0](s1, c1)
-            v2 = self.cores[0](s2, c2)
+            if self.execution == "compressed_grouped":
+                # Pad only the shorter coarse branch. Causal valid queries cannot
+                # read this right padding. Dropout draws differ from separate calls.
+                length = s1.shape[1]
+                pad = length - s2.shape[1]
+                padded_s2 = torch.nn.functional.pad(s2, (0, 0, 0, pad))
+                padded_c2 = torch.nn.functional.pad(c2, (0, 0, 0, pad))
+                values = self.cores[0](torch.cat((s1, padded_s2)), torch.cat((c1, padded_c2)))
+                v1, v2 = values.chunk(2, dim=0)
+                v2 = v2[:, :s2.shape[1]]
+            else:
+                v1 = self.cores[0](s1, c1)
+                v2 = self.cores[0](s2, c2)
             u1 = self.comp4.upsample_causal(v1, T)
             u2 = self.comp16.upsample_causal(v2, T)
+            if self.execution != "compressed":
+                return self.interaction.forward_native((v0, u1, u2), (self.comp4, self.comp16))
             mixed = self.interaction((v0, u1, u2))
             next_s0 = mixed[0]
             next_s1 = self.comp4.compress(mixed[1])
@@ -187,7 +214,7 @@ class FractalLatentModel(Backbone):
         steps = self.active_iterations() if iterations is None else iterations
         if type(steps) is not int or steps <= 0:
             raise ValueError("iterations must be positive")
-        if self.research.scale_execution == "compressed":
+        if self.research.scale_execution.startswith("compressed"):
             c0 = self.embedding(input_ids)
             c1 = self.block.comp4.compress(c0)
             c2 = self.block.comp16.compress(c0)
@@ -213,12 +240,15 @@ class FractalLatentModel(Backbone):
     def analytical_cost(self, seq_len, *, include_logits=True):
         d, h, s = self.config.d_model, self.config.hidden_dim, seq_len
         count, steps = len(self.research.scales), self.active_iterations()
-        if self.research.scale_execution == "compressed":
+        if self.research.scale_execution.startswith("compressed"):
             s1 = (s + 3) // 4
             s2 = (s + 15) // 16
             lengths = (s, s1, s2)
-            per_iteration = sum(self.research.core_layers*(8*si*d*d + 6*si*d*h + 4*si*si*d) + 2*si*d*d for si in lengths)
-            per_iteration += 2*s*d*d
+            # Grouped mode computes both short branches at ceil(T/4).
+            core_lengths = (s, s1, s1) if self.research.scale_execution == "compressed_grouped" else lengths
+            per_iteration = sum(self.research.core_layers*(8*si*d*d + 6*si*d*h + 4*si*si*d) + 2*si*d*d for si in core_lengths)
+            projection_positions = 3*s if self.research.scale_execution == "compressed" else sum(lengths)
+            per_iteration += 2*projection_positions*d*d
         else:
             per_core = self.research.core_layers*(8*s*d*d + 6*s*d*h + 4*s*s*d) + 2*s*d*d
             per_iteration = count * (per_core + 2*s*d*d)
@@ -230,6 +260,6 @@ class FractalLatentModel(Backbone):
 def fractal_parameter_formula(config, research):
     d, h, n = config.d_model, config.hidden_dim, len(research.scales)
     core = d*d + 2*d + research.core_layers*(4*d*d + 3*d*h + 2*d)
-    extra = 2 * d if research.scale_execution == "compressed" else 0
+    extra = 2 * d if research.scale_execution.startswith("compressed") else 0
     return (config.vocab_size*d + d + (1 if research.share_scales else n)*core
             + d*d + n*n + n + (2*n*d if research.scale_conditioning else 0) + extra)
