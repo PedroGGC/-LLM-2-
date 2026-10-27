@@ -36,6 +36,7 @@ def generate_report(runs, output, *, target_loss=None):
                     raise ValueError(f"stale evaluation artifact: {candidate}")
             return value
         benchmark, quality = artifact("benchmark.json"), artifact("reasoning.json")
+        full_validation = artifact("language.json")
         r = metadata["config"].get("research", {})
         first_target = next((learning_flops(row)
                              for row in rows if target_loss is not None and row.get("validation_loss", float("inf")) <= target_loss), None)
@@ -46,6 +47,7 @@ def generate_report(runs, output, *, target_loss=None):
                   "model_weight_bytes_calculated": metadata.get("model_weight_bytes_calculated", 4*metadata["model_parameters_calculated"]),
                   "dataset_sha256": metadata["dataset_sha256"], "config": metadata["config"],
                   "environment": metadata["environment"], "summary": summary, "benchmark": benchmark, "quality": quality,
+                  "full_validation": full_validation,
                   "first_observed_target_loss_flops_estimate": first_target}
         records.append(record)
         for row in rows:
@@ -68,6 +70,18 @@ def generate_report(runs, output, *, target_loss=None):
                 "target_loss": target_loss,
                 "limitations": "Analytical FLOPs, sparse target crossings are upper bounds. Differing controls prevent a causal efficiency claim. Small smoke runs are not a benchmark campaign."}
     write_json(output / "report.json", {"runs": records, "comparison_controls": controls})
+    with (output / "comparisons.csv").open("w", newline="", encoding="utf-8") as stream:
+        fields = ["run", "seed", "architecture", "model_parameters", "total_parameters",
+                  "validation_loss_full", "validation_tokens_full", "train_wall_seconds",
+                  "tokens_per_second_mean", "peak_vram_allocated_bytes", "training_flops_estimate"]
+        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer.writeheader()
+        for r in records:
+            s, v = r["summary"], r["full_validation"]
+            writer.writerow(dict(zip(fields, [r["run"], r["seed"], r["architecture"],
+                r["model_parameters_calculated"], r["total_parameters_calculated"],
+                v.get("validation_loss"), v.get("validation_tokens"), s.get("train_wall_seconds"),
+                s.get("tokens_per_second"), s.get("peak_vram_allocated_bytes"), s.get("training_flops_estimate")])))
     with (output / "series.csv").open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=["run", "step", "learning_flops_estimate", "training_loss", "validation_loss"])
         writer.writeheader()
@@ -118,6 +132,7 @@ def generate_report(runs, output, *, target_loss=None):
         s = record["summary"]
         lines.append(f"| {record['run']} | {record['seed']} | {record['model_parameters_calculated']} / {record['total_parameters_calculated']} | {s.get('validation_loss')} | {learning_flops(s)} |")
     lines += ["", "## Controls and limitations", "", "```json", json.dumps(controls, indent=2), "```", "",
+              "Full final LM evaluations, when supplied, are in comparisons.csv/report.json; the loss curves above use periodic evaluations and their declared scope.",
               "Exact configuration, software versions, budgets, benchmarks and predictions are preserved in report.json.",
               "![Loss](loss_vs_flops.svg)", "![Quality](quality_vs_flops.svg)", "![Memory](memory.svg)", "![Throughput](throughput.svg)", "![Parameters](parameters.svg)"]
     (output / "report.md").write_text("\n".join(lines), encoding="utf-8")

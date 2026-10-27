@@ -93,6 +93,8 @@ class DecoderBlock(nn.Module):
 
 
 class TransformerLM(Backbone):
+    supports_hidden_only = True
+
     def __init__(self, config: ModelConfig, *, attention_factory=None):
         super().__init__()
         self.config = config
@@ -115,7 +117,7 @@ class TransformerLM(Backbone):
         if isinstance(module, (nn.Linear, nn.Embedding)):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, input_ids, *, state=None):
+    def forward(self, input_ids, *, state=None, return_logits=True):
         if state is not None:
             raise ValueError("Transformer baseline has no recurrent state")
         if input_ids.ndim != 2 or not 0 < input_ids.shape[1] <= self.config.max_seq_len:
@@ -124,7 +126,7 @@ class TransformerLM(Backbone):
         for layer in self.layers:
             x = layer(x)
         x = self.norm(x)
-        return ModelOutput(logits=self.lm_head(x), hidden_states=x)
+        return ModelOutput(logits=self.lm_head(x) if return_logits else None, hidden_states=x)
 
 
 def count_parameters(model):
@@ -135,4 +137,3 @@ def count_parameters(model):
 def transformer_parameter_formula(config):
     d, h, n, v = config.d_model, config.hidden_dim, config.n_layers, config.vocab_size
     return v * d + n * (4 * d * d + 3 * d * h + 2 * d) + d
-

@@ -4,9 +4,11 @@ import argparse
 from dataclasses import asdict
 import glob
 import json
+import os
 from pathlib import Path
 import sys
-from contextlib import nullcontext
+import time
+from contextlib import ExitStack, nullcontext
 
 import torch
 import yaml
@@ -69,13 +71,15 @@ def parser():
     profile.add_argument("--config", required=True)
     profile.add_argument("--output", required=True)
     profile.add_argument("--execute", action="store_true")
+    profile.add_argument("--warmup-steps", type=int, default=2)
+    profile.add_argument("--measure-steps", type=int, default=5)
     experiment = commands.add_parser("experiment", help="inspect one experiment; train only with --execute")
     experiment.add_argument("--config", required=True)
     experiment.add_argument("--execute", action="store_true")
     experiment.add_argument("--output-dir")
     experiment.add_argument("--data")
     experiment.add_argument("--seed", type=int)
-    for name in ("evaluate", "generate", "reasoning", "benchmark"):
+    for name in ("evaluate", "generate", "reasoning", "benchmark", "diagnose"):
         cmd = commands.add_parser(name)
         cmd.add_argument("--checkpoint", required=True)
         cmd.add_argument("--data", help="relocated prepared data; manifest must match checkpoint")
@@ -83,6 +87,8 @@ def parser():
         cmd.add_argument("--precision", choices=("fp32", "bf16"))
         if name == "evaluate":
             cmd.add_argument("--max-batches", type=_positive, help="default: all full validation windows")
+            cmd.add_argument("--output", help="new identified evaluation JSON")
+            cmd.add_argument("--windows-output", help="new JSONL of per-window language losses")
         elif name == "generate":
             cmd.add_argument("--prompt", default="")
             cmd.add_argument("--max-new-tokens", type=_positive, default=64)
@@ -96,6 +102,9 @@ def parser():
             cmd.add_argument("--iterations", type=_positive)
             cmd.add_argument("--seen-examples")
             cmd.add_argument("--seed", type=int, default=42)
+            cmd.add_argument("--output", required=True)
+        elif name == "diagnose":
+            cmd.add_argument("--samples", type=_positive, default=128)
             cmd.add_argument("--output", required=True)
         else:
             cmd.add_argument("--prompt", default="The laboratory")
@@ -120,7 +129,7 @@ def _inference(args):
     if metadata["model_class"] != class_name(model):
         raise ValueError("checkpoint architecture differs from its configuration")
     load_model(model, str(Path(args.checkpoint) / "model.safetensors"), device=str(device))
-    return cfg, model, data, device
+    return cfg, model, data, device, metadata
 
 
 def main(argv=None):
@@ -176,18 +185,53 @@ def main(argv=None):
         elif args.command == "profile":
             if args.execute:
                 from .research.profiling import profile_step
-                result = profile_step(load_config(args.config), args.output)
+                result = profile_step(load_config(args.config), args.output,
+                                      warmup_steps=args.warmup_steps, measure_steps=args.measure_steps)
             else:
                 result = {"execution": "not_started", "config": args.config, "output": args.output,
                           "next_command": "Add --execute to perform one optimizer step and export its trace."}
         else:
-            cfg, model, data, device = _inference(args)
             if args.command == "evaluate":
-                result = evaluate(model, CausalLanguageModeling(),
-                                  validation_batches(data.arrays["val"], cfg.data.seq_len,
-                                                     cfg.data.eval_batch_size, args.max_batches, device),
-                                  device=device, precision=cfg.train.precision,
-                                  deterministic=cfg.train.deterministic)
+                destinations = [Path(p).resolve() for p in (args.output, args.windows_output) if p]
+                if len(set(destinations)) != len(destinations):
+                    raise ValueError("evaluation JSON and window JSONL must have distinct paths")
+                if any(p.exists() for p in destinations):
+                    raise FileExistsError("evaluation output already exists")
+            cfg, model, data, device, metadata = _inference(args)
+            if args.command == "evaluate":
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
+                started = time.perf_counter()
+                with ExitStack() as stack:
+                    callback = None
+                    if args.windows_output:
+                        path = Path(args.windows_output)
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        stream = stack.enter_context(path.open("x", encoding="utf-8"))
+                        def callback(row):
+                            row["target_start_offset"] = row["window_index"] * cfg.data.seq_len + 1
+                            stream.write(json.dumps(row, allow_nan=False) + "\n")
+                    result = evaluate(model, CausalLanguageModeling(),
+                                      validation_batches(data.arrays["val"], cfg.data.seq_len,
+                                                         cfg.data.eval_batch_size, args.max_batches, device),
+                                      device=device, precision=cfg.train.precision,
+                                      deterministic=cfg.train.deterministic, window_callback=callback)
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
+                result.update(evaluation_wall_seconds=time.perf_counter()-started,
+                              validation_scope="all_full_windows" if args.max_batches is None else "first_batches",
+                              checkpoint=str(Path(args.checkpoint).resolve()),
+                              checkpoint_model_sha256=metadata["files"]["model.safetensors"],
+                              dataset_sha256=data.fingerprint, seq_len=cfg.data.seq_len,
+                              precision=cfg.train.precision, device=str(device),
+                              deterministic=cfg.train.deterministic,
+                              cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"),
+                              windows_output=str(Path(args.windows_output).resolve()) if args.windows_output else None)
+                if args.output:
+                    path = Path(args.output)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    with path.open("x", encoding="utf-8") as stream:
+                        json.dump(result, stream, indent=2, ensure_ascii=False, allow_nan=False)
             elif args.command == "generate":
                 ids = data.tokenizer.encode(args.prompt) or [data.tokenizer.eos_id]
                 output = generate(
@@ -209,15 +253,19 @@ def main(argv=None):
                         difficulty=args.difficulty, max_new_tokens=args.max_new_tokens,
                         precision=cfg.train.precision, deterministic=cfg.train.deterministic,
                         seen_examples=seen, iterations=args.iterations)
+                elif args.command == "diagnose":
+                    from .research.diagnostics import diagnose_model
+                    batch = next(validation_batches(data.arrays["val"], cfg.data.seq_len, 1, 1, device))
+                    result = diagnose_model(model, batch["input_ids"], max_samples=args.samples,
+                                            precision=cfg.train.precision, deterministic=cfg.train.deterministic)
                 else:
                     result = benchmark_inference(model, data.tokenizer, args.prompt,
                         max_new_tokens=args.max_new_tokens, warmup_tokens=args.warmup_tokens,
                         precision=cfg.train.precision, deterministic=cfg.train.deterministic)
                 result["checkpoint"] = str(Path(args.checkpoint).resolve())
-                result["checkpoint_model_sha256"] = read_checkpoint_metadata(args.checkpoint)["files"]["model.safetensors"]
+                result["checkpoint_model_sha256"] = metadata["files"]["model.safetensors"]
                 path.parent.mkdir(parents=True, exist_ok=True)
                 write_json(path, result)
         print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
     except (ValueError, FileNotFoundError, FileExistsError, FloatingPointError, RuntimeError) as exc:
         arg_parser.exit(1, f"llm2: {exc}\n")
-
