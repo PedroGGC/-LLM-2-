@@ -1,9 +1,9 @@
-# LLM2-Lab — Versão Fractal Multi-Escala (FLRM) - Treino Real ~10.7M
-# Configuração calibrada para treino de ~30m a 1h em GPU Tesla T4 (FP32).
+# LLM2-Lab — FLRM multi-escala: 2.167.308 parâmetros no backbone deste perfil.
+# Perfil T4 FP32; duração depende dos dados, hardware e limites de passos/tempo.
 model:
   vocab_size: 257
   d_model: 384
-  n_layers: 6
+  n_layers: 6  # Campo do Transformer; no FLRM, a profundidade usa research.core_layers.
   n_heads: 6
   hidden_dim: 1024
   max_seq_len: 256
@@ -36,6 +36,7 @@ train:
   cpu_threads: 2
 research:
   architecture: fractal
+  core_layers: 1  # Padrão anterior, agora explícito; não altera o modelo resolvido.
   iterations: 1
   jepa_weight: 0.1
   share_scales: true

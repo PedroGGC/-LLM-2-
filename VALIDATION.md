@@ -181,6 +181,12 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
 - Corrigidos na revisão o default de inferência para respeitar FP32 do checkpoint, mapeamento de GPUs sob CUDA_VISIBLE_DEVICES e rótulos de avaliação completa/parcial. O runner T4 seleciona testes CUDA FP32; não exige BF16 nativo/emulado.
 - `compileall`, parse do bootstrap e `git diff --check` passaram. Não houve execução CUDA/T4/BF16/Inductor, energia ou confirmação de ganho de velocidade/VRAM. O próximo resultado empírico de GPU virá do Kaggle pelo navegador.
 
+### Esclarecimento de dimensão e recursos — 26/10/2026
+
+- Corrigido o rótulo histórico incorreto de ~10,7M em `kaggle_t4_1h_fractal.yaml`: esse perfil usa 2.167.308 parâmetros no backbone FLRM. `research.core_layers: 1` agora está explícito nas duas configs Kaggle antigas; comentários esclarecem que `model.n_layers` não define a profundidade desse núcleo e que T4x2 não unifica VRAM.
+- Comparação das duas configurações antigas/novas via `ExperimentConfig.from_dict(...).to_dict()` retornou igualdade completa. Registro local: `runs/flrm-config-clarification.json`. Nenhuma mudança de configuração resolvida ou de código de treino; não houve novo treino nem repetição da suíte para essa clarificação.
+- Enumeração de parâmetros em dispositivo `meta`, sem treino ou alocação GPU, conferida com `fractal_parameter_formula`: núcleo 1/iteração 1 = **2.167.308**; núcleo 1/iterações 2 = **2.167.308**; núcleo 2/iteração 1 = **3.937.548**; núcleo 6/iteração 1 = **11.018.508**. Alterar apenas `model.n_layers` de 6 para 12 preservou 2.167.308 no FLRM. São contagens estruturais, não medições de qualidade/velocidade dessas variantes.
+
 ### Notebook amigável e revisão de checkpoints — 26/10/2026
 
 - Plano/riscos/aceitação em `docs/KAGGLE_FRIENDLY_PLAN.md`. Mudanças de apresentação: etapas numeradas, GPU física/modelo/seed, progresso a cada 100 passos com ETA aproximado, loss parcial identificada, geração visível, direções/unidades das métricas e resumo final em português. Não houve alteração de modelos, objetivos, otimizador ou matemática do treino.
