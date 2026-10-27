@@ -211,3 +211,20 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
 - Geração batch 1, 64 tokens, contexto até 256, sem KV cache, mesma T4: Transformer **124,10**; LRM **232,51**; FLRM sequencial **149,32**; agrupado **315,58 tokens/s**. Razão agrupado/sequencial **2,11×**, observação curta sem replicações, não extrapolável a contexto longo.
 - FLRM usou uma iteração e o LRM duas chamadas recursivas. Os diagnósticos FLRM mostram escalas distintas nesta amostra, mas não provam especialização semântica ou benefício causal. Esta campanha não testa Fibonacci, DEQ, Kronecker, contexto longo ou qualidade de raciocínio.
 - O ZIP exclui pesos e estado do optimizer/RNG. A análise verificou consistência dos hashes declarados, sem reexecutar checkpoints. Os tensores precisam ser preservados no Kaggle para avaliar checkpoints intermediários e para retomada. O Transformer tem sinal de sobreajuste na validação parcial após o passo 1.000; a avaliação completa dos intermediários permanece pendente.
+
+### Revisão completa de checkpoints recebida — 9d8a6efd9be9
+
+- Evidência fornecida pelo usuário após executar o modo `avaliar_salvos` no Kaggle. ZIP com 67 arquivos, CRC íntegro, SHA256 `f7ed81da42dc2f4b63c4e80109413fb733328c450fe50a637b5b9a23b9b34e53`. Executor `c9bbb034c81d263c8800aa3635de0ad862aa6a16`; código efetivo das avaliações preservado em `341421a3464fea090d69dc10f897a574ce1428f9`. Nenhum treino novo foi disparado.
+- As 16 avaliações terminaram: 12 novas na GPU e quatro de 2.000 passos reutilizadas, byte a byte idênticas às originais. Todos os metadados dos checkpoints coincidem com os do bundle anterior. Snapshots de executor/avaliador conferem com os respectivos objetos Git; dataset/tokenizer/fingerprint e versões de Python, dependências, CUDA e cuDNN continuam iguais. A nova sessão tem outras T4 físicas; não foram feitas novas medições de performance.
+- Cada resultado usa as mesmas 437 janelas/111.872 alvos, contexto 256, FP32. A maior diferença entre NLL reconstruída dos JSONLs e loss agregada foi 1,11e-8. Loss **menor = melhor** previsão.
+
+| Modelo | 500 passos | 1.000 passos | 1.500 passos | 2.000 passos | Melhor passo salvo |
+|---|---:|---:|---:|---:|---:|
+| Transformer | 1,37577653 | 1,30951297 | 1,32755842 | 1,36585736 | 1.000 |
+| LRM | 1,56969399 | 1,46794103 | 1,42364914 | 1,40629617 | 2.000 |
+| FLRM sequencial | 1,56378443 | 1,46553219 | 1,42437732 | 1,40810997 | 2.000 |
+| FLRM agrupado | 1,56380001 | 1,46433329 | 1,42343905 | 1,40727011 | 2.000 |
+
+- A piora do Transformer depois do passo 1.000, juntamente à redução da loss de treino já registrada, é consistente com sobreajuste. Seu checkpoint final tem perplexidade 5,80% maior (pior) que o melhor checkpoint salvo. Comparando os melhores salvos, a perplexidade do FLRM agrupado é 10,27% maior (pior) que a do Transformer; tamanho/objetivo diferem e a seleção usa validação, não teste independente.
+- LRM e FLRM melhoraram em cada checkpoint salvo, mas isso não garante melhoria com mais passos. LRM continua ligeiramente melhor em loss final; uma seed não demonstra superioridade estatística ou benefício de qualidade das escalas fractais. Permanecem prioritários controle Transformer pequeno, objetivos pareados, múltiplas seeds e ablação de uma/duas iterações.
+- Esta revisão fornece validação empírica do fluxo de avaliação em T4, não de novo treino, BF16, Inductor ou alteração arquitetural. Os ZIPs não contêm os tensores: a análise local verificou identidades declaradas e evidências de execução, sem carregar modelos/pickle. Dados brutos e análise detalhada permanecem fora do Git.
