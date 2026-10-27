@@ -421,3 +421,55 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
 - Nenhuma alteração no backbone, objetivos, Trainer, dados ou checkpointing.
   Nenhum novo resultado GPU ou de qualidade; a ablação JEPA continua pendente
   da execução Kaggle do usuário. `--output` explícito mantém seu comportamento.
+
+### Evidência Kaggle — ablação JEPA, campanha 0001
+
+- ZIP recebido do usuário, `llm2-campaign-0001-results.zip`, 6.481.624 bytes,
+  118 entradas, CRC íntegro, SHA256
+  `f1dbcf713a1a569d84e056efc5de05887f7524cd85a47e965e20cbc1ac0349ba`.
+  Executou `f16765f6e350b343de782f848ee91ed32b258796`, checkout limpo. Código,
+  configurações versionadas e snapshots conferem byte a byte com os objetos Git.
+- Os três treinos terminaram em 2.000 passos/16.384.000 alvos, seed 42, contexto
+  256, FP32/eager. Configs dos dois FLRMs diferem somente em jepa_weight e
+  diretório de saída: mesmo `compressed_grouped`, K=2. Sem JEPA tem 2.168.076
+  parâmetros backbone/total, zero congelados; com JEPA tem mesmo backbone,
+  4.631.064 total/2.168.076 congelados. Transformer pequeno: 2.164.224 total, K=1.
+- Dataset fingerprint original `beed0146113d17994cd94ddd246e8cabecf6c5eceb005c394526884df66a3ef7`;
+  437 janelas completas/111.872 alvos iguais nas avaliações. Loss reconstruída
+  dos JSONLs: erro máximo 3,98e-9. Identidades declaradas dos pesos são iguais
+  entre checkpoint, avaliação e benchmark; tensores ausentes do ZIP e não
+  carregados localmente. Auditoria teve 205 verificações sobre os artefatos.
+- Logs Kaggle: CPU **147 passed, 15 deselected**, 200,74 s; CUDA FP32 **11 passed,
+  151 deselected**, 32,17 s. Incluem os novos casos de save/continuação comprimida
+  sem JEPA, anteriormente pendentes. Ambiente Python 3.13.15/Torch 2.11.0+cu128,
+  CUDA 12.8, T4, FP32/eager. Não valida BF16/Inductor nem retomada bit a bit CUDA.
+- Dois UUIDs T4 distintos: os FLRMs começaram juntos nas GPUs 0/1; Transformer
+  treinou depois na GPU 0. Perfis/geração/avaliação foram sequenciais na GPU 0,
+  com UUID idêntico nos três perfis. Nome numérico e ZIP correspondente funcionaram.
+
+| Modelo | Loss LM completa ↓ | Tempo de passos de treino s ↓ | Treino alvos/s ↑ | VRAM MiB ↓ | Geração tok/s ↑ | Perfil isolado alvos/s ↑ |
+|---|---:|---:|---:|---:|---:|---:|
+| Transformer pequeno | 1,40050306 | 104,99 | 156.055 | 202,16 | 470,78 | 166.224 |
+| FLRM agrupado sem JEPA | 1,39746688 | 314,09 | 52.163 | 408,27 | 90,18 | 55.226 |
+| FLRM agrupado com JEPA | 1,39707956 | 445,15 | 36.805 | 470,00 | 88,79 | 39.447 |
+
+- Loss/tempo menores = melhores; velocidade maior = melhor; VRAM menor = menor
+  consumo para a mesma tarefa. Sem JEPA: throughput de treino +41,73%, isolado
+  +40,00%, tempo −29,44%, VRAM −13,13% e FLOPs estimados −27,13% frente a com JEPA.
+  Com JEPA: loss completa ligeiramente melhor, diferença 0,00038732, redução
+  de perplexidade de apenas 0,03872%. Uma seed, com consumo de RNG/dropout distinto
+  na construção do objetivo, não estabelece melhoria consistente ou dano geral.
+- Console: loss total de treino com JEPA 1,454003 inclui LM 1,393200 e auxiliar
+  ponderado; sem JEPA 1,388974 é só LM. Esses totais não medem o mesmo objetivo.
+  Na validação parcial, sem JEPA ganhou (1,367769 vs 1,369742); o conjunto completo
+  inverte a pequena diferença. Só o checkpoint final foi avaliado completamente.
+- Perfis: 10 warmups/30 amostras consecutivas sem profiler/um passo instrumentado,
+  inicialização nova; não replicações independentes. Geração: observação curta,
+  prompt 14/64 novos tokens/warmup 8/batch 1/sem cache. Variação de 1,56% na
+  geração não demonstra aceleração causada pela retirada do teacher: ele já
+  está ausente na inferência em ambos os modelos.
+- Sem JEPA vs Transformer: perplexidade −0,30316%, mas tempo de treino 2,99×,
+  VRAM 2,02× e geração 5,22× mais lenta. Ainda há custo de eficiência relevante.
+  Recomendação prática: candidato principal sem JEPA, preservar a opção; depois
+  parear K=1/K=2 na mesma arquitetura comprimida e repetir seeds 42/43/44. Esta
+  análise não alterou modelos, algoritmos ou script nem iniciou novo treino local.
