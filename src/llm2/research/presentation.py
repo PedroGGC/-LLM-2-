@@ -39,7 +39,9 @@ def progress(metrics, job, elapsed):
     gpu = job.get("physical_gpu")
     device = f"GPU física {gpu}" if gpu is not None else "CPU"
     label = MODEL_NAMES.get(job["model"], job["model"])
-    fields = [f"[{device} | {label} | seed {job['seed']}] {step}/{total} ({percent:.0f}%)",
+    ckpt_interval = job.get("checkpoint_interval", 500)
+    saved_tag = " | 💾 Checkpoint salvo" if step and (step % ckpt_interval == 0 or step >= total) else ""
+    fields = [f"[{device} | {label} | seed {job['seed']}] {step}/{total} ({percent:.0f}%){saved_tag}",
               f"loss treino={number(metrics.get('training_loss'))} (menor = melhor neste objetivo)",
               f"treino={number(metrics.get('tokens_per_second_mean'), 0)} alvos/s (maior = melhor)"]
     if metrics.get("validation_loss_partial") is not None:

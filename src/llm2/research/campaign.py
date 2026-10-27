@@ -143,7 +143,8 @@ class Campaign:
                             metrics = json.loads(line[6:])
                         except (ValueError, TypeError):
                             continue  # The original line is already preserved in the technical log.
-                        if job and (metrics["step"] % 100 == 0 or metrics["step"] >= job["max_steps"]):
+                        interval = job.get("progress_interval") or 500
+                        if job and (metrics["step"] % interval == 0 or metrics["step"] >= job["max_steps"]):
                             print(progress(metrics, job, time.monotonic()-started), flush=True)
                     elif action == "generate" or re.search(r"\d+ (passed|failed|skipped|deselected)", line):
                         print(line.rstrip(), flush=True)
@@ -277,6 +278,7 @@ def parser():
     result.add_argument("--output", help="new campaign directory")
     result.add_argument("--models", nargs="+", choices=MODELS,
                         default=["baseline", "lrm", "flrm_reference", "flrm_batched"])
+    result.add_argument("--progress-interval", type=int, default=500)
     result.add_argument("--seeds", nargs="+", type=int, default=[42])
     result.add_argument("--steps", type=int, default=2000)
     result.add_argument("--max-seconds", type=float, default=1800.)
@@ -376,7 +378,7 @@ def run_campaign(args):
                 path = output / "configs" / f"{run_id}.yaml"
                 path.write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=True), encoding="utf-8")
                 jobs.append({"id": run_id, "model": model, "seed": seed, "gpu_slot": slot,
-                             "max_steps": cfg.train.max_steps,
+                             "max_steps": cfg.train.max_steps, "checkpoint_interval": cfg.train.checkpoint_interval, "progress_interval": args.progress_interval,
                              "physical_gpu": worker_environment(root, slot).get("CUDA_VISIBLE_DEVICES"),
                              "directory": str(directory), "config": str(path), "status": "pending"})
         campaign.manifest["status"] = "training"
@@ -385,7 +387,7 @@ def run_campaign(args):
         for job in jobs:
             print(f"  {MODEL_NAMES.get(job['model'], job['model'])} / seed {job['seed']} → "
                   f"{'GPU física '+str(job['physical_gpu']) if args.device == 'cuda' else 'CPU'}", flush=True)
-        print("Progresso a cada 100 passos; ETA é aproximado. Loss exibida durante o treino pode ser parcial.", flush=True)
+        print(f"Progresso nos marcos principais (a cada {args.progress_interval} passos, onde os checkpoints são salvos no disco).", flush=True)
         with ThreadPoolExecutor(max_workers=len(campaign.gpus)) as workers:
             futures = [workers.submit(campaign.train_worker, jobs[i::len(campaign.gpus)], gpu)
                        for i, gpu in enumerate(campaign.gpus)]
