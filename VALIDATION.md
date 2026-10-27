@@ -298,3 +298,57 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
   sem execução local. Reforço posterior da comparação de contadores determinísticos
   verificado novamente na suíte direcionada do modo comprimido: **17 passed,
   4 skipped**, 18,10 s, log `runs/stage1-compressed-tests.log`.
+
+### Evidência Kaggle — otimizações comprimidas, campanha 8b8ac432c0ea
+
+- ZIP fornecido pelo usuário em 27/10/2026, 152 arquivos, 10.015.046 bytes, CRC
+  íntegro, SHA256 `206559f7f4792166ae5018639cc5606f529a185aa439e614ee8b5dd63257e4ce`.
+  Executou `0a819dd64c65a633d8b53055121bc0c3aa5e9db5`, checkout limpo. Snapshots,
+  mapas de fontes e configurações conferem byte a byte com Git. Análise local
+  dos artefatos, sem carregar tensores ou executar checkpoints recebidos.
+- Quatro treinos completos de 2.000 passos/16.384.000 alvos, seed 42, contexto
+  256, FP32/eager. Mesmo dataset fingerprint original `beed0146113d17994cd94ddd246e8cabecf6c5eceb005c394526884df66a3ef7`.
+  Avaliação completa em 437 janelas/111.872 alvos; NLL reconstruída dos JSONLs
+  concorda dentro de 1e-6. Identidades declaradas dos pesos coincidem entre
+  treinamento/checkpoint/avaliação/benchmark; o ZIP não contém esses tensores.
+- CPU no Kaggle: **132 passed, 12 deselected**, 158,55 s. CUDA FP32:
+  **8 passed, 136 deselected**, 22,97 s, incluindo equivalência das otimizações
+  comprimidas e save/continuação nos três modos. Esta evidência supera a limitação
+  anterior de GPU ainda pendente para esses testes, somente neste ambiente
+  FP32/eager (Python 3.13.15, Torch 2.11.0+cu128, CUDA 12.8, Tesla T4). Não valida
+  BF16/Inductor nem retomada bit a bit em CUDA.
+- Dois UUIDs T4 distintos confirmam treinos nas GPUs 0/1: Transformer/controle
+  iniciaram juntos, seguidos de nativo/agrupado nas respectivas filas. Perfis,
+  avaliação e geração sequenciais na mesma GPU 0; UUID dos perfis idêntico.
+  Cada perfil tem 10 warmups, 30 amostras sem profiler e um passo separado
+  instrumentado, a partir de inicialização nova, sem alterar os modelos finais.
+
+| Modelo | Loss completa ↓ | Treino alvos/s ↑ | VRAM MiB ↓ | Geração tok/s ↑ | Perfil isolado alvos/s ↑ |
+|---|---:|---:|---:|---:|---:|
+| Transformer pequeno | 1,40050188 | 152.324 | 202,16 | 515,17 | 169.427 |
+| FLRM comprimido controle | 1,39778178 | 34.236 | 443,81 | 82,03 | 36.738 |
+| FLRM nativo | 1,39778174 | 34.937 | 433,80 | 76,95 | 37.434 |
+| FLRM nativo + agrupado | 1,39707953 | 36.000 | 470,00 | 94,13 | 38.769 |
+
+- Loss menor = melhor; velocidade maior = melhor; VRAM menor = menor consumo
+  para a mesma tarefa. Passos de treino: 107,56 / 478,57 / 468,96 / 455,11 s,
+  respectivamente, sem preparação/testes/validação/perfis. Transformer K=1 e sem
+  JEPA; todos os FLRMs K=2 e JEPA .1/teacher EMA, 2.168.076 backbone/4.631.064
+  parâmetros totais de treino versus 2.164.224 backbone/total no Transformer.
+- Contra controle, nativo: throughput isolado +1,90%, VRAM −2,25%, geração
+  −6,20%; loss difere apenas 3,41e-8. Agrupado: throughput isolado +5,53%, geração
+  +14,75%, VRAM +5,90%. Chamadas cudaLaunchKernel instrumentadas: 7.420 controle,
+  7.520 nativo, 5.988 agrupado (−19,30% vs controle). Ganhos observados modestos,
+  30 passos consecutivos não são replicações independentes; sem meta de 60k atingida.
+- Agrupado vs Transformer: perplexidade −0,34165%, mas passos de treino 4,23× mais
+  demorados, VRAM 2,32× e geração 5,47× mais lenta. Uma seed e objetivos/custos
+  diferentes não demonstram superioridade arquitetural ou eficiência global.
+  A pequena melhora de loss do agrupado vs controle também não isola capacidade:
+  agrupamento altera RNG/dropout .05 e arredondamento. No parcial final a ordem
+  das variantes é diferente da validação completa; priorizar a completa.
+- Geração é um benchmark curto, batch 1, prompt 14, 64 tokens novos, warmup 8,
+  sem KV cache. Seleção de checkpoint completo intermediário e replicações de
+  timing/qualidade continuam pendentes. O próximo controle recomendado é o mesmo
+  FLRM agrupado com/sem JEPA; `flrm_no_jepa` existente usa o modelo não comprimido
+  e não serve para essa ablação. Nenhuma implementação de treino alterada nesta
+  análise; catálogo Argon continua como ideias futuras.
