@@ -14,7 +14,8 @@ from llm2.runtime import capture_rng
 from test_training import training_config, assert_nested_equal
 
 
-def test_worker_environment_and_explicit_configs(training_config, tmp_path):
+def test_worker_environment_and_explicit_configs(training_config, tmp_path, monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     root = Path(__file__).resolve().parents[1]
     env = worker_environment(root, "1")
     assert env["CUDA_VISIBLE_DEVICES"] == "1"
@@ -96,3 +97,35 @@ def test_tiny_campaign_end_to_end_in_separate_processes(training_config, tmp_pat
 def test_gpu_slot_respects_outer_visibility(monkeypatch):
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-one,GPU-two")
     assert worker_environment(Path.cwd(), "1")["CUDA_VISIBLE_DEVICES"] == "GPU-two"
+
+
+@pytest.mark.parametrize(("visible", "gpu", "expected"), [
+    ("0", "0", "0"), ("3,7", "1", "7"),
+    (" GPU-one , GPU-two ", "0", "GPU-one"),
+    ("MIG-GPU-one/1/0,MIG-GPU-two/1/0", "1", "MIG-GPU-two/1/0"),
+])
+def test_gpu_slot_maps_parent_mask(monkeypatch, visible, gpu, expected):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
+    assert worker_environment(Path.cwd(), gpu)["CUDA_VISIBLE_DEVICES"] == expected
+
+
+@pytest.mark.parametrize(("visible", "gpu"), [
+    ("0", "1"), ("3,7", "2"), ("", "0"), ("-1", "0"), ("0,", "0"),
+])
+def test_gpu_slot_cannot_escape_parent_mask(monkeypatch, visible, gpu):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
+    with pytest.raises(ValueError, match="unavailable under CUDA_VISIBLE_DEVICES"):
+        worker_environment(Path.cwd(), gpu)
+
+
+@pytest.mark.parametrize("gpu", ["-1", "invalid", "1.5"])
+def test_gpu_slot_requires_nonnegative_logical_index(monkeypatch, gpu):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    with pytest.raises(ValueError, match="nonnegative logical index"):
+        worker_environment(Path.cwd(), gpu)
+
+
+@pytest.mark.parametrize("visible", ["0", "", "-1"])
+def test_worker_without_gpu_preserves_parent_mask(monkeypatch, visible):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
+    assert worker_environment(Path.cwd())["CUDA_VISIBLE_DEVICES"] == visible

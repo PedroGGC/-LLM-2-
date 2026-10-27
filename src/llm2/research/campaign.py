@@ -36,10 +36,20 @@ def worker_environment(root, gpu=None):
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     if gpu is not None:
-        visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-        slots = [slot.strip() for slot in visible.split(",")] if visible else []
+        if not str(gpu).isdecimal():
+            raise ValueError(f"GPU must be a nonnegative logical index, got {gpu!r}")
         index = int(gpu)
-        env["CUDA_VISIBLE_DEVICES"] = slots[index] if slots else str(gpu)
+        visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+        if visible is None:
+            env["CUDA_VISIBLE_DEVICES"] = str(index)
+        else:
+            slots = [slot.strip() for slot in visible.split(",")]
+            if any(not slot or slot == "-1" for slot in slots) or index >= len(slots):
+                raise ValueError(
+                    f"GPU logical index {index} is unavailable under "
+                    f"CUDA_VISIBLE_DEVICES={visible!r}; choose an index within the parent mask"
+                )
+            env["CUDA_VISIBLE_DEVICES"] = slots[index]
     return env
 
 
