@@ -1,6 +1,7 @@
 """Experimental aligned and compressed multiscale recurrence; every aggregation is prefix-causal.
 
-Supports reference, batched and compressed scale execution modes.
+Supports reference, batched and compressed scale execution modes, including asymmetric V-Cycle
+refinement, vectorized FiLM/CrossScale kernel fusion, and Neural Context Memory (NCM) on macro scales.
 """
 
 import torch
@@ -10,6 +11,7 @@ from torch.utils.checkpoint import checkpoint
 from ..interfaces import Backbone, ModelOutput
 from ..model import RMSNorm, TransformerLM
 from .latent_recursive import LatentState, SharedRecursiveCore, LatentRecursiveModel
+from .ncm import NeuralContextMemory
 
 
 class CausalScaleCompressor(nn.Module):
@@ -36,6 +38,13 @@ class CausalScaleCompressor(nn.Module):
         else:
             compressed = chunks.mean(dim=2)
         return compressed
+
+    def compress_stacked(self, x3: torch.Tensor) -> torch.Tensor:
+        """Compress 3 stacked fine-scale tensors (3, B, T, D) in a single batched op."""
+        S, B, T, D = x3.shape
+        flat = x3.reshape(S * B, T, D)
+        comp = self.compress(flat)
+        return comp.reshape(S, B, comp.shape[1], D)
 
     def upsample_causal(self, compressed, target_len):
         B, T_comp, D = compressed.shape
@@ -67,13 +76,26 @@ class FractalScaleEncoder(nn.Module):
 
 
 class ScaleConditioning(nn.Module):
-    def __init__(self, scales, dim):
+    def __init__(self, scales, dim, *, fused=False):
         super().__init__()
         self.film = nn.Parameter(torch.zeros(scales, 2, dim))
+        self.fused = fused
 
     def forward(self, value, index):
         gamma, beta = self.film[index].unbind(0)
+        if self.fused:
+            return torch.addcmul(0.1 * beta, value, 1.0 + 0.1 * gamma.tanh())
         return value * (1 + 0.1 * gamma.tanh()) + 0.1 * beta
+
+    def forward_scales(self, c0, c1, c2):
+        """Condition all 3 scales at once with a single vectorized tanh/gain computation."""
+        gains = 1.0 + 0.1 * self.film[:, 0].tanh()
+        biases = 0.1 * self.film[:, 1]
+        return (
+            torch.addcmul(biases[0], c0, gains[0]),
+            torch.addcmul(biases[1], c1, gains[1]),
+            torch.addcmul(biases[2], c2, gains[2]),
+        )
 
     def forward_batched(self, contexts):
         gamma, beta = self.film.unbind(1)
@@ -81,11 +103,12 @@ class ScaleConditioning(nn.Module):
 
 
 class CrossScaleInteraction(nn.Module):
-    def __init__(self, scales, dim):
+    def __init__(self, scales, dim, *, fused=False):
         super().__init__()
         self.mixing = nn.Parameter(torch.zeros(scales, scales))
         self.projection = nn.Linear(dim, dim, bias=False)
         self.gate = nn.Parameter(torch.full((scales,), -2.0))
+        self.fused = fused
 
     def forward(self, states):
         weights = self.mixing.softmax(-1)
@@ -106,6 +129,29 @@ class CrossScaleInteraction(nn.Module):
         Mean(W x) = W mean(x). Pooling each input once per output scale avoids
         projecting all three outputs at fine resolution; rounding can differ.
         """
+        if self.fused and len(states) == 3 and len(compressors) == 2:
+            s0, s1, s2 = states
+            comp4, comp16 = compressors
+            t0 = s0.shape[1]
+            s_fine = torch.stack((s0, s1, s2), dim=0)
+            c1_3 = comp4.compress_stacked(s_fine)
+            c2_3 = comp16.compress_stacked(s_fine)
+            t1, t2 = c1_3.shape[2], c2_3.shape[2]
+            # Concatenate all 3 scales along time: (3, B, t0 + t1 + t2, D)
+            stacked_all = torch.cat((s_fine, c1_3, c2_3), dim=2)
+            weights = self.mixing.softmax(-1)
+            # Single batched matmul/einsum across all 3 scales instead of 9 scalar muls:
+            mixed_3 = torch.einsum("ij,jbtd->ibtd", weights, stacked_all)
+            packed_mixed = torch.cat((mixed_3[0, :, :t0], mixed_3[1, :, t0:t0 + t1], mixed_3[2, :, t0 + t1:]), dim=1)
+            # Single Linear projection call instead of 3 separate calls:
+            projected = self.projection(packed_mixed)
+            g = self.gate.sigmoid()
+            p0, p1, p2 = projected[:, :t0], projected[:, t0:t0 + t1], projected[:, t0 + t1:]
+            return (
+                torch.addcmul(s0, p0, g[0]),
+                torch.addcmul(c1_3[1], p1, g[1]),
+                torch.addcmul(c2_3[2], p2, g[2]),
+            )
         weights = self.mixing.softmax(-1)
         outputs = []
         for i, compressor in enumerate((None, *compressors)):
@@ -125,26 +171,37 @@ class FractalRecursiveBlock(nn.Module):
         count = len(research.scales)
         self.shared = research.share_scales
         self.execution = research.scale_execution
+        self.v_cycle = research.v_cycle
+        self.fused_film = research.fused_film
         if self.execution != "reference" and not self.shared:
             raise ValueError(f"{self.execution} execution requires shared scale cores")
         self.cores = nn.ModuleList([SharedFractalCore(config, research.core_layers)
                                    for _ in range(1 if self.shared else count)])
-        self.conditioning = ScaleConditioning(count, config.d_model) if research.scale_conditioning else None
-        self.interaction = CrossScaleInteraction(count, config.d_model)
+        self.conditioning = (
+            ScaleConditioning(count, config.d_model, fused=research.fused_film)
+            if research.scale_conditioning
+            else None
+        )
+        self.interaction = CrossScaleInteraction(count, config.d_model, fused=research.fused_film)
         if self.execution.startswith("compressed"):
             self.comp4 = CausalScaleCompressor(4, config.d_model)
             self.comp16 = CausalScaleCompressor(16, config.d_model)
+        self.ncm = NeuralContextMemory(research.ncm_slots, config.d_model) if research.ncm_slots > 0 else None
 
-    def forward(self, states, contexts):
+    def forward(self, states, contexts, step_index: int = 0, preconditioned: bool = False):
         if self.execution.startswith("compressed"):
             s0, s1, s2 = states
             c0, c1, c2 = contexts
             T = c0.shape[1]
-            if self.conditioning is not None:
-                c0 = self.conditioning(c0, 0)
-                c1 = self.conditioning(c1, 1)
-                c2 = self.conditioning(c2, 2)
-            v0 = self.cores[0](s0, c0)
+            if self.conditioning is not None and not preconditioned:
+                if self.fused_film:
+                    c0, c1, c2 = self.conditioning.forward_scales(c0, c1, c2)
+                else:
+                    c0 = self.conditioning(c0, 0)
+                    c1 = self.conditioning(c1, 1)
+                    c2 = self.conditioning(c2, 2)
+            skip_fine_core = self.v_cycle and step_index > 0
+            v0 = s0 if skip_fine_core else self.cores[0](s0, c0)
             if self.execution == "compressed_grouped":
                 # Pad only the shorter coarse branch. Causal valid queries cannot
                 # read this right padding. Dropout draws differ from separate calls.
@@ -152,12 +209,23 @@ class FractalRecursiveBlock(nn.Module):
                 pad = length - s2.shape[1]
                 padded_s2 = torch.nn.functional.pad(s2, (0, 0, 0, pad))
                 padded_c2 = torch.nn.functional.pad(c2, (0, 0, 0, pad))
-                values = self.cores[0](torch.cat((s1, padded_s2)), torch.cat((c1, padded_c2)))
+                grouped_s = torch.cat((s1, padded_s2))
+                grouped_c = torch.cat((c1, padded_c2))
+                if self.ncm is not None:
+                    grouped_c = self.ncm(grouped_c)
+                values = self.cores[0](grouped_s, grouped_c)
+                if self.ncm is not None:
+                    values = self.ncm(values)
                 v1, v2 = values.chunk(2, dim=0)
                 v2 = v2[:, :s2.shape[1]]
             else:
-                v1 = self.cores[0](s1, c1)
-                v2 = self.cores[0](s2, c2)
+                c1_in = self.ncm(c1) if self.ncm is not None else c1
+                c2_in = self.ncm(c2) if self.ncm is not None else c2
+                v1 = self.cores[0](s1, c1_in)
+                v2 = self.cores[0](s2, c2_in)
+                if self.ncm is not None:
+                    v1 = self.ncm(v1)
+                    v2 = self.ncm(v2)
             u1 = self.comp4.upsample_causal(v1, T)
             u2 = self.comp16.upsample_causal(v2, T)
             if self.execution != "compressed":
@@ -214,12 +282,16 @@ class FractalLatentModel(Backbone):
         steps = self.active_iterations() if iterations is None else iterations
         if type(steps) is not int or steps <= 0:
             raise ValueError("iterations must be positive")
+        preconditioned = False
         if self.research.scale_execution.startswith("compressed"):
             c0 = self.embedding(input_ids)
             c1 = self.block.comp4.compress(c0)
             c2 = self.block.comp16.compress(c0)
-            contexts = (c0, c1, c2)
             states = (torch.zeros_like(c0), torch.zeros_like(c1), torch.zeros_like(c2))
+            if self.research.fused_film and self.block.conditioning is not None:
+                c0, c1, c2 = self.block.conditioning.forward_scales(c0, c1, c2)
+                preconditioned = True
+            contexts = (c0, c1, c2)
         else:
             contexts = self.encoder(self.embedding(input_ids))
             states = tuple(torch.zeros_like(context) for context in contexts)
@@ -228,9 +300,17 @@ class FractalLatentModel(Backbone):
             if self.training and self.research.detach_every and index and index % self.research.detach_every == 0:
                 states = tuple(value.detach() for value in states)
             if self.training and self.research.gradient_checkpointing:
-                states = checkpoint(self.block, states, contexts, use_reentrant=False, preserve_rng_state=True)
+                states = checkpoint(
+                    self.block,
+                    states,
+                    contexts,
+                    index,
+                    preconditioned,
+                    use_reentrant=False,
+                    preserve_rng_state=True,
+                )
             else:
-                states = self.block(states, contexts)
+                states = self.block(states, contexts, index, preconditioned)
             if self.research.record_states or self.research.intermediate_weight:
                 history.append(self.norm(states[0]))
         hidden = self.norm(states[0])
@@ -245,13 +325,25 @@ class FractalLatentModel(Backbone):
             s2 = (s + 15) // 16
             lengths = (s, s1, s2)
             # Grouped mode computes both short branches at ceil(T/4).
-            core_lengths = (s, s1, s1) if self.research.scale_execution == "compressed_grouped" else lengths
-            per_iteration = sum(self.research.core_layers*(8*si*d*d + 6*si*d*h + 4*si*si*d) + 2*si*d*d for si in core_lengths)
-            projection_positions = 3*s if self.research.scale_execution == "compressed" else sum(lengths)
-            per_iteration += 2*projection_positions*d*d
-        else:
-            per_core = self.research.core_layers*(8*s*d*d + 6*s*d*h + 4*s*s*d) + 2*s*d*d
-            per_iteration = count * (per_core + 2*s*d*d)
+            full_core_lengths = (s, s1, s1) if self.research.scale_execution == "compressed_grouped" else lengths
+            macro_core_lengths = (s1, s1) if self.research.scale_execution == "compressed_grouped" else (s1, s2)
+            projection_positions = 3 * s if self.research.scale_execution == "compressed" else sum(lengths)
+            projection_flops = 2 * projection_positions * d * d
+            ncm_positions = (2 * s1) if self.research.scale_execution == "compressed_grouped" else (s1 + s2)
+            ncm_flops = 2 * (4 * ncm_positions * self.research.ncm_slots * d) if self.research.ncm_slots > 0 else 0
+            forward_iterations = 0
+            for index in range(steps):
+                active_lengths = macro_core_lengths if (self.research.v_cycle and index > 0) else full_core_lengths
+                core_flops = sum(
+                    self.research.core_layers * (8 * si * d * d + 6 * si * d * h + 4 * si * si * d) + 2 * si * d * d
+                    for si in active_lengths
+                )
+                forward_iterations += core_flops + projection_flops + ncm_flops
+            forward = forward_iterations + (2 * s * d * self.config.vocab_size if include_logits else 0)
+            recompute = forward_iterations if self.training and self.research.gradient_checkpointing else 0
+            return forward, recompute, steps
+        per_core = self.research.core_layers*(8*s*d*d + 6*s*d*h + 4*s*s*d) + 2*s*d*d
+        per_iteration = count * (per_core + 2*s*d*d)
         forward = steps * per_iteration + (2*s*d*self.config.vocab_size if include_logits else 0)
         recompute = steps * per_iteration if self.training and self.research.gradient_checkpointing else 0
         return forward, recompute, steps
@@ -261,5 +353,6 @@ def fractal_parameter_formula(config, research):
     d, h, n = config.d_model, config.hidden_dim, len(research.scales)
     core = d*d + 2*d + research.core_layers*(4*d*d + 3*d*h + 2*d)
     extra = 2 * d if research.scale_execution.startswith("compressed") else 0
+    ncm = research.ncm_slots * d
     return (config.vocab_size*d + d + (1 if research.share_scales else n)*core
-            + d*d + n*n + n + (2*n*d if research.scale_conditioning else 0) + extra)
+            + d*d + n*n + n + (2*n*d if research.scale_conditioning else 0) + extra + ncm)

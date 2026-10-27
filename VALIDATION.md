@@ -612,3 +612,50 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
 - Deduplicação de perfis ajustada: `profile_runs` agora deduplica pela tupla `(model, batch_size, grad_accum_steps)`, permitindo medir com precisão diferentes formatos do mesmo modelo na mesma campanha sem descartes indesejados.
 - Testes locais CPU: suíte completa `python -m pytest -q`: **155 passed, 16 skipped** em 125,16 s. Testes direcionados em `tests/test_batch_profiling.py` cobriram invariância do sampler, validação de argumentos, formatação da tabela de resultados e um teste de fumaça (smoke test) de integração em CPU.
 - Skips locais são exclusivamente testes CUDA indisponíveis no ambiente local sem GPU. O speedup empírico real e o pico de VRAM nas Tesla T4 serão medidos na execução da Campanha 0004 no Kaggle.
+
+### Evidência Kaggle recebida — campanha 0004 (Matriz de Lotes 8×4, 16×2, 32×1), 27/10/2026
+
+- ZIP recebido do usuário (`llm2-campaign-0004-results.zip`), 58 entradas, CRC íntegro, SHA256 `4131be102a55c10599ba1a759a5ae88e86394492585639149d76162ecd23c0a5`. Executou o commit `95fd6bf2100abe6626b04e1c6fe8a03fea9a4840` na branch `experiment/fractal-lrm` em checkout limpo.
+- Dataset fingerprint original `beed0146113d17994cd94ddd246e8cabecf6c5eceb005c394526884df66a3ef7`. Testes na máquina Kaggle antes dos perfis: CPU **155 passed, 16 deselected** (164,87 s); CUDA FP32 **12 passed, 159 deselected** (31,59 s). Ambiente: Python 3.13.15, Torch 2.11.0+cu128, CUDA 12.8, Tesla T4 (GPU 0 isolada).
+- Nove perfis executados sequencialmente na mesma Tesla T4 (10 warmups, 30 amostras cronometradas sem profiler + 1 passo instrumentado com trace), mantendo o lote efetivo fixo em 32 sequências (8.192 alvos supervisionados por passo em $T=256$):
+
+| Modelo | Formato (`B×A`) | Throughput (`alvos/s` ↑) | Tempo/passo (`ms` ↓) | VRAM alocada (`MiB` ↓) | `cudaLaunchKernel` / passo ↓ | GFLOPs analíticos / passo |
+|---|:---:|---:|---:|---:|---:|---:|
+| Transformer pequeno | `8×4` | 158.782 | 51,6 ms | 202,2 MiB | 817 | 115,98 |
+| Transformer pequeno | `16×2` | 179.930 | 45,5 ms | 298,4 MiB | 457 | 115,98 |
+| Transformer pequeno | `32×1` | 188.981 | 43,3 ms | 491,9 MiB | 269 | 115,98 |
+| FLRM agrupado sem JEPA ($K=1$) | `8×4` | 106.040 | 77,3 ms | 259,7 MiB | 2.130 | 166,57 |
+| FLRM agrupado sem JEPA ($K=1$) | `16×2` | 118.299 | 69,2 ms | 412,3 MiB | 1.150 | 166,57 |
+| FLRM agrupado sem JEPA ($K=1$) | `32×1` | 124.732 | 65,7 ms | 717,1 MiB | 642 | 166,57 |
+| FLRM agrupado sem JEPA ($K=2$) | `8×4` | 54.027 | 151,6 ms | 408,3 MiB | 4.218 | 328,28 |
+| FLRM agrupado sem JEPA ($K=2$) | `16×2` | 59.983 | 136,6 ms | 700,4 MiB | 2.242 | 328,28 |
+| FLRM agrupado sem JEPA ($K=2$) | `32×1` | 62.456 | 131,2 ms | 1.285,1 MiB | 1.162 | 328,28 |
+
+- Conclusões empíricas da Campanha 0004:
+  - Mudar de `8×4` para `32×1` reduziu os lançamentos de kernel CUDA em **~3,6×** (de 4.218 para 1.162 no FLRM $K=2$), mas acelerou o throughput do FLRM $K=2$ em apenas **+15,6%** (131,2 ms vs 151,6 ms), mantendo a distância para o Transformer em **3,03×** (131,2 ms vs 43,3 ms).
+  - Isso demonstra que no formato `32×1` o gargalo dominante do FLRM $K=2$ é o **volume real de operações na GPU** (328,28 GFLOPs vs 115,98 GFLOPs do Transformer, 2,83× mais FLOPs por reexecutar o `SharedFractalCore` na escala fina $s_0$ na segunda iteração) combinado ao custo de banda de memória de **1.162 kernels** fragmentados (`312` chamadas `aten::mul` consumindo 22,5 ms de GPU e `89` chamadas `aten::mm` consumindo 57,0 ms).
+  - Esta campanha mediu exclusivamente velocidade, VRAM e perfil de operadores; não executou treino de 2.000 passos nem avaliou loss de validação.
+
+## Campanha 0005 — FLRM Ciclo-V Assimétrico + Fusão Vetorizada + NCM Causal, 27/10/2026
+
+- Plano formal, riscos e critérios de aceitação: [PLAN_CAMPAIGN_0005.md](docs/PLAN_CAMPAIGN_0005.md).
+- Mudanças implementadas na branch `experiment/fractal-lrm`:
+  1. **Recursão Assimétrica Ciclo-V (`v_cycle=True` em `ResearchConfig` / `FractalRecursiveBlock`)**:
+     - Na iteração $k=0$ (`step_index == 0`), o `SharedFractalCore` executa sobre a escala fina $s_0$ ($T=256$) e sobre o par agrupado de escalas macro comprimidas $(s_1, s_2)$ ($T/4=64$ e $T/16=16$).
+     - Nas iterações $k \ge 1$ (`step_index > 0`), o modelo preserva $v_0 = s_0$ e executa o `SharedFractalCore` **exclusivamente nas escalas macro comprimidas** ($s_1, s_2$), propagando o refinamento semântico de volta à escala fina $s_0$ via `upsample_causal` + `CrossScaleInteraction.forward_native`.
+     - O bloco continua retornando a 3-tupla `(next_s0, next_s1, next_s2)` em todas as iterações, mantendo compatibilidade total com `diagnose_model`.
+  2. **Fusão e Vetorização de Kernels (`fused_film=True`)**:
+     - Pré-condicionamento FiLM estático fora do laço de iterações $k$ via `ScaleConditioning.forward_scales` com `torch.addcmul`, eliminando recomputações redundantes de `tanh` sobre o contexto estático.
+     - Empacotamento vetorizado em `CrossScaleInteraction.forward_native`: compressão empilhada (`compress_stacked`), mistura $3 \times 3$ em lote único via `torch.einsum`, concatenação temporal das 3 escalas para executar `self.projection` em **1 única chamada `aten::mm`** por iteração (em vez de 3) e aplicação do gate residual via `torch.addcmul`.
+  3. **Banco de Protótipos Causais NCM (`src/llm2/architectures/ncm.py`, `ncm_slots=16`)**:
+     - Módulo `NeuralContextMemory` com matriz aprendível `self.memory` $\in \mathbb{R}^{M \times D}$ ($16 \times 384 = 6.144$ parâmetros, $+0,28\%$), aplicado de forma estritamente ponto a ponto (causal) nas escalas macro comprimidas ($s_1, s_2$).
+  4. **Contabilidade Analítica de Parâmetros e FLOPs**:
+     - `fractal_parameter_formula` atualizada com `+ research.ncm_slots * d` (`flrm_vcycle_k2`: **2.168.076** parâmetros; `flrm_vcycle_ncm_k2`: **2.174.220** parâmetros, conferidos por enumeração e fórmula).
+     - `FractalLatentModel.analytical_cost` atualizado para descontar a escala fina nas iterações $k \ge 1$ quando `v_cycle=True` e somar os FLOPs exatos do NCM quando `ncm_slots > 0`. No lote `32×1` ($T=256$), o custo analítico por optimizer-step cai de **328,28 GFLOPs** (`flrm_compressed_grouped_no_jepa_k2`) para **224,40 GFLOPs** (`flrm_vcycle_k2`, **−31,6%**) e **225,61 GFLOPs** (`flrm_vcycle_ncm_k2`, **−31,3%**).
+- Verificação em CPU com `torch.profiler` ($T=256$):
+  - O total de operadores despachados por passo caiu de **5.320** (`flrm_k2_legacy`) para **4.144** (`flrm_vcycle_k2`, **−1.176 ops**) e **4.551** (`flrm_vcycle_ncm_k2`).
+  - As chamadas `aten::mul` caíram de **302** para **184** (**−39,1%**), e as multiplicações de matriz (`mm`/`bmm`) caíram de **120** para **90** (**−25,0%**).
+- Testes executados localmente (CPU, Python 3.12.2, Torch 2.14.1+cpu):
+  - `python -m pytest tests/test_vcycle_fractal.py -q`: **12 passed, 2 skipped** (testes de contagem e fórmula de parâmetros, equivalência numérica forward/backward da fusão nativa, redução de formas e FLOPs analíticos, causalidade estrita sob mutação futura e truncamento de prefixo, retomada exata bit a bit com dropout/acumulação/checkpointing ativos, memorização com gradiente finito nos slots NCM e diagnósticos).
+  - Suíte completa `python -m pytest -q`: **167 passed, 18 skipped**. Todos os 18 skips são testes marcados com `@pytest.mark.cuda` (GPU ausente localmente; serão executados na etapa 2 da célula Kaggle nas Tesla T4).
+  - Limitações: a redução real de `cudaLaunchKernel` e do tempo por passo em ms na Tesla T4 será verificada empiricamente na triagem rápida (`mode="perfilar_lotes"`, `batch_matrix=["32x1"]`) da Campanha 0005 no Kaggle.

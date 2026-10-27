@@ -149,6 +149,9 @@ class ResearchConfig:
     scale_conditioning: bool = True
     scale_execution: str = "reference"
     jepa_hidden_only: bool = True
+    v_cycle: bool = False
+    ncm_slots: int = 0
+    fused_film: bool = False
 
     def __post_init__(self):
         _types(self)
@@ -160,11 +163,18 @@ class ResearchConfig:
             raise ValueError("non-reference scales require a fractal model with shared scale weights")
         if self.scale_execution.startswith("compressed") and self.scales != [1, 4, 0]:
             raise ValueError("compressed modes require scales=[1,4,0]; native block factors are fixed at 1,4,16")
+        if self.fused_film and self.architecture != "fractal":
+            raise ValueError("fused_film requires a fractal model")
+        if (self.v_cycle or self.ncm_slots > 0) and (
+            self.architecture != "fractal" or not self.scale_execution.startswith("compressed")
+        ):
+            raise ValueError("v_cycle and ncm_slots require a compressed fractal model")
         for name in ("iterations", "core_layers", "jepa_offset", "max_difficulty", "curriculum_interval",
                      "probe_examples", "fixed_curriculum_steps"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"research.{name} must be positive")
-        for name in ("latent_steps", "latent_warmup_steps", "detach_every", "mtp_tokens", "max_tokens", "max_train_flops"):
+        for name in ("latent_steps", "latent_warmup_steps", "detach_every", "mtp_tokens", "max_tokens",
+                     "max_train_flops", "ncm_slots"):
             if getattr(self, name) < 0:
                 raise ValueError(f"research.{name} must be nonnegative")
         for name in ("jepa_weight", "variance_weight", "intermediate_weight", "mtp_weight", "max_seconds", "shutdown_reserve_seconds"):
