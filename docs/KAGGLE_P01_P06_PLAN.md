@@ -24,3 +24,10 @@ Data: 26/10/2026. Autorização: implementar a próxima entrega definida na conv
 - Modo fractal agrupado mantém parâmetros/aliases; não vira default supostamente mais rápido sem medição.
 - Célula Kaggle requer apenas colar/executar com Internet e T4x2; instala com o Python do notebook e exporta resultados.
 - Código experimental permanece em src/llm2 e FLRM na branch experiment/fractal-lrm. Dados/runs/auditoria local bruta não entram no push.
+
+## Correção após a primeira execução Kaggle
+
+- Problema reproduzido: o teste de seleção sem máscara herdou `CUDA_VISIBLE_DEVICES=0` do subprocesso da suíte CPU e pediu o índice lógico 1. A campanha parou antes do treino.
+- Plano: isolar a premissa desse teste; validar índices/máscaras explicitamente no helper; adicionar regressões com máscara unitária, múltipla, UUID e CUDA desativado; repetir a suíte com a mesma máscara do Kaggle e publicar nova revisão experimental.
+- Risco: confundir índice lógico com identificador físico pode escapar da máscara do processo pai. Índices inválidos devem falhar com mensagem clara; nunca selecionar outra GPU como fallback. Não modificar treino, dados ou contratos de checkpoint.
+- Aceitação: reprodução original falha antes da correção; regressões e suíte CPU passam sob `CUDA_VISIBLE_DEVICES=0`; skips CUDA continuam registrados. Nova execução usa diretório próprio e mantém os testes habilitados.
