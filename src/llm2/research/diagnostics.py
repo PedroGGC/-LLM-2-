@@ -7,6 +7,9 @@ from ..runtime import capture_rng, restore_rng, attention_context, autocast_cont
 
 def linear_cka(x, y):
     """Centered linear CKA; undefined for a constant representation."""
+    if x.shape[0] != y.shape[0]:
+        n = min(x.shape[0], y.shape[0])
+        x, y = x[:n], y[:n]
     x, y = x.double()-x.double().mean(0), y.double()-y.double().mean(0)
     a, b = x @ x.T, y @ y.T
     denominator = torch.linalg.vector_norm(a)*torch.linalg.vector_norm(b)
