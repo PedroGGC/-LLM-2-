@@ -159,3 +159,13 @@ python scripts/package_colab.py
 
 Use novos diretórios para repetir a preparação e o treino, ou retome checkpoints com o
 mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmulas.
+
+## P01–P06 — preparação da campanha Kaggle, 26/10/2026
+
+- Branch comum: `python -m pytest -q -r a`: **78 passed, 5 skipped**, 119,54 s, Python local 3.12.2/Torch 2.14.1+cpu. Log local ignorado pelo Git: `runs/p01-p06-common-pytest.log`.
+- Testes direcionados de campanha/CLI/objetivos/perfil: **17 passed, 2 skipped**, 51,04 s; `runs/p01-p06-targeted.log`. Inclui campanha CPU em subprocessos, falha explícita, exportação sem sobrescrita, avaliação por janela, teacher hidden-only, alinhamento JEPA, acumulação CE por tokens sem reponderar auxiliares e retomada exata com dropout/acumulação.
+- Adicionados testes CUDA **FP32** para Transformer/LRM, separados dos testes BF16 existentes. Os cinco skips são CUDA; não houve GPU local, medição T4, energia ou Inductor. O bootstrap executará esses checks no Kaggle.
+- Perfil agora separa warmup, amostras sem profiler e passo instrumentado. Seus FLOPs suportados e agregados de memória não são medições universais.
+- Fonte pequena tinyshakespeare fixada em char-rnn 6f9487a6fe5b420b7ca9afb0d7c078e37c1d1b4e: URL conferida HTTP 200; nenhum corpus grande foi baixado e não houve treino científico local.
+- Não foi afrouxada a retomada de checkpoints antigos. A origem dos dados, configurações, código e pesos permanece verificada; a correção dos objetivos abre execuções novas.
+- Uso no navegador: docs/KAGGLE_T4_CAMPAIGN.md. O código FLRM continua isolado na branch experimental; sua validação será registrada separadamente.

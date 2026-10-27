@@ -1,4 +1,4 @@
-"""Extension contracts only; experimental objectives/states are not implemented."""
+"""Contracts shared by backbones, objectives and the training harness."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -20,6 +20,9 @@ class ObjectiveOutput:
     loss: Tensor
     token_count: int
     metrics: dict[str, float] = field(default_factory=dict)
+    # Weighted LM component, separated so token-normalization never rescales auxiliaries.
+    language_loss: Tensor | None = None
+    token_losses: Tensor | None = None
 
 
 class Backbone(nn.Module, ABC):
@@ -41,4 +44,3 @@ class Objective(nn.Module, ABC):
     @abstractmethod
     def forward(self, model: nn.Module, batch: dict[str, Tensor]) -> ObjectiveOutput:
         """Own model invocation and loss; trainer does not assume autoregression."""
-

@@ -82,6 +82,8 @@ class TrainConfig:
     log_interval: int = 10
     output_dir: str = "runs/baseline"
     cpu_threads: int = 1
+    accumulation_weighting: str = "microbatch"
+    console_progress: bool = False
 
     def __post_init__(self):
         _types(self)
@@ -95,6 +97,8 @@ class TrainConfig:
                 raise ValueError(f"train.{key} must be positive")
         if self.grad_clip <= 0 or self.seed < 0 or self.seed >= 2**32:
             raise ValueError("grad_clip must be positive and seed must fit uint32")
+        if self.accumulation_weighting not in ("microbatch", "tokens"):
+            raise ValueError("accumulation_weighting must be microbatch|tokens")
 
 
 def _types(obj):
@@ -143,11 +147,17 @@ class ResearchConfig:
     scales: list = field(default_factory=lambda: [1, 4, 0])
     share_scales: bool = True
     scale_conditioning: bool = True
+    scale_execution: str = "reference"
+    jepa_hidden_only: bool = True
 
     def __post_init__(self):
         _types(self)
         if self.architecture not in ("transformer", "recursive", "untied", "fractal"):
             raise ValueError("unknown research architecture")
+        if self.scale_execution not in ("reference", "batched"):
+            raise ValueError("scale_execution must be reference|batched")
+        if self.scale_execution != "reference" and (self.architecture != "fractal" or not self.share_scales):
+            raise ValueError("batched scales require a fractal model with shared scale weights")
         for name in ("iterations", "core_layers", "jepa_offset", "max_difficulty", "curriculum_interval",
                      "probe_examples", "fixed_curriculum_steps"):
             if getattr(self, name) <= 0:
@@ -230,4 +240,3 @@ def load_config(path):
     config.data.path = str((path.parent / config.data.path).resolve())
     config.train.output_dir = str((path.parent / config.train.output_dir).resolve())
     return config
-

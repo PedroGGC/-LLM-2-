@@ -37,6 +37,7 @@ class SharedRecursiveCore(nn.Module):
 
 class LatentRecursiveModel(Backbone):
     architecture_version = 1
+    supports_hidden_only = True
 
     def __init__(self, config, research):
         super().__init__()
@@ -64,7 +65,7 @@ class LatentRecursiveModel(Backbone):
     def set_training_step(self, step):
         self.training_step.fill_(step)
 
-    def forward(self, input_ids, *, state=None, iterations=None):
+    def forward(self, input_ids, *, state=None, iterations=None, return_logits=True):
         if state is not None:
             raise ValueError("cross-segment state is unsupported; each independent input starts from zero")
         if input_ids.ndim != 2 or not 0 < input_ids.shape[1] <= self.config.max_seq_len:
@@ -86,5 +87,5 @@ class LatentRecursiveModel(Backbone):
             if self.research.record_states or self.research.intermediate_weight:
                 history.append(self.norm(value))
         hidden = self.norm(value)
-        return ModelOutput(logits=self.lm_head(hidden), hidden_states=hidden,
+        return ModelOutput(logits=self.lm_head(hidden) if return_logits else None, hidden_states=hidden,
                            state=LatentState(value, steps), intermediate_states=tuple(history))

@@ -78,6 +78,11 @@ def environment():
                                                     "yaml" if p == "PyYAML" else p)},
             "cuda_version": torch.version.cuda, "cudnn_version": torch.backends.cudnn.version(),
             "device": torch.cuda.get_device_name() if torch.cuda.is_available() else "cpu",
+            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+            "cuda_devices": [{"logical_index": i, "name": torch.cuda.get_device_name(i),
+                              "total_memory_bytes": torch.cuda.get_device_properties(i).total_memory,
+                              "uuid": str(getattr(torch.cuda.get_device_properties(i), "uuid", "unavailable"))}
+                             for i in range(torch.cuda.device_count())],
             "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG")}
 
 
@@ -104,4 +109,3 @@ def save_source_snapshot(path, provenance):
         names += [f"configs/{name}" for name in provenance["versioned_configs_sha256"]]
         for name in names:
             archive.write(root / name, arcname=name)
-

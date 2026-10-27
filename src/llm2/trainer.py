@@ -102,6 +102,8 @@ class Trainer:
                         "config": cfg.to_dict(), "dataset_sha256": self.data.fingerprint,
                         "environment": self.environment_info, "provenance": self.provenance,
                         "model_parameters_calculated": self.model_parameters,
+                        "embedding_parameters_calculated": (self.model.embedding.weight.numel()
+                            if hasattr(self.model, "embedding") and hasattr(self.model.embedding, "weight") else None),
                         "model_weight_bytes_calculated": sum(p.numel()*p.element_size() for p in self.model.parameters()),
                         "frozen_parameters_calculated": sum(p.numel() for p in self.objective.parameters() if not p.requires_grad),
                         "total_parameters_calculated": self.total_parameters,
@@ -110,8 +112,22 @@ class Trainer:
                         "resume_from": str(resume) if resume else None,
                         "start_step": self.counters["step"]}
         run_metadata["architecture_version"] = getattr(self.model, "architecture_version", 1)
+        embedding_count = run_metadata["embedding_parameters_calculated"]
+        run_metadata["nonembedding_parameters_calculated"] = (
+            self.model_parameters-embedding_count if embedding_count is not None else None)
+        run_metadata["execution"] = {"selected_device": str(self.device),
+                                     "precision": cfg.train.precision,
+                                     "attention_policy": "math" if cfg.train.deterministic else "automatic",
+                                     "actual_attention_backend": "inspect profiler operators; policy alone is not observation",
+                                     "scale_execution": cfg.research.scale_execution if cfg.research else None}
         name = "run.json" if resume is None else f"resume-{uuid.uuid4().hex}.json"
         write_json(self.output_dir / name, run_metadata)
+        if hasattr(self.data, "root"):
+            for source, destination in (("manifest.json", "dataset.manifest.json"),
+                                        ("tokenizer.json", "tokenizer.json")):
+                target = self.output_dir / destination
+                if not target.exists():
+                    target.write_bytes((self.data.root / source).read_bytes())
         (self.output_dir / name.replace(".json", ".yaml")).write_text(
             yaml.safe_dump(cfg.to_dict(), sort_keys=True), encoding="utf-8")
         if not (self.output_dir / "source.zip").exists():
@@ -212,19 +228,35 @@ class Trainer:
         self.optimizer.zero_grad(set_to_none=True)
         loss_sum, tokens, sequences = 0.0, 0, 0
         auxiliary_metrics = {}
+        optimization_loss = 0.0
+        prepared_batches = None
+        if cfg.train.accumulation_weighting == "tokens":
+            prepared_batches = [self.sampler.next(self.device) for _ in range(cfg.train.grad_accum_steps)]
+            total_targets = sum(int((batch["targets"] != -100).sum()) for batch in prepared_batches)
+            if total_targets <= 0:
+                raise ValueError("token-weighted accumulation requires supervised targets")
         estimate = self._flops_estimator() if self._flops_estimator else None
         step_flops = asdict(estimate) if estimate is not None else None
         active_parameters = self.total_parameters - (
             sum(p.numel() for core in self.model.cores[self.model.active_iterations():] for p in core.parameters())
             if hasattr(self.model, "cores") and hasattr(self.model, "active_iterations") else 0)
         with attention_context(cfg.train.deterministic):
-            for _ in range(cfg.train.grad_accum_steps):
-                batch = self.sampler.next(self.device)
+            for microbatch in range(cfg.train.grad_accum_steps):
+                batch = (prepared_batches[microbatch] if prepared_batches is not None
+                         else self.sampler.next(self.device))
                 with autocast_context(self.device, cfg.train.precision):
                     result = self.objective(self.train_model, batch)
                 if result.loss.ndim != 0 or not torch.isfinite(result.loss) or result.token_count <= 0:
                     raise FloatingPointError("non-finite loss, non-scalar loss or invalid token count")
-                (result.loss / cfg.train.grad_accum_steps).backward()
+                backward_loss = result.loss / cfg.train.grad_accum_steps
+                if prepared_batches is not None:
+                    if result.language_loss is None:
+                        raise ValueError("token accumulation requires the objective's separate language_loss")
+                    # Auxiliaries (notably variance) retain equal-microbatch weighting.
+                    backward_loss = backward_loss + result.language_loss * (
+                        result.token_count / total_targets - 1 / cfg.train.grad_accum_steps)
+                backward_loss.backward()
+                optimization_loss += float(backward_loss.detach())
                 loss_sum += float(result.loss.detach()) * result.token_count
                 tokens += result.token_count
                 sequences += batch["input_ids"].shape[0]
@@ -268,7 +300,9 @@ class Trainer:
         self._update_experiment_wall()
         self._update_peak_memory()
         self._at_step_boundary = True
-        return {"training_loss": loss_sum / tokens, "lr": lr_used, "grad_norm": float(grad_norm),
+        return {"training_loss": loss_sum / tokens, "optimization_loss": optimization_loss,
+                "accumulation_weighting": cfg.train.accumulation_weighting,
+                "lr": lr_used, "grad_norm": float(grad_norm),
                 **auxiliary_metrics,
                 "step_flops_estimate": step_flops["training_per_sequence"] * sequences if step_flops else None,
                 "step_forward_flops_estimate": step_flops["forward_per_sequence"] * sequences if step_flops else None,
@@ -291,6 +325,7 @@ class Trainer:
                                              cfg.data.eval_batch_size, max_batches, self.device),
                           device=self.device, precision=cfg.train.precision,
                           deterministic=cfg.train.deterministic)
+        result["validation_scope"] = "all_full_windows" if max_batches is None else "first_batches"
         if cost is not None:
             self.counters["validation_flops_estimate"] += cost*result["validation_sequences"]
         self._update_experiment_wall()
@@ -335,6 +370,10 @@ class Trainer:
                 last_evaluated_step = step
             if step % self.config.train.log_interval == 0 or should_eval:
                 self.logger.log(step, **metrics)
+                if self.config.train.console_progress:
+                    print("TRAIN " + json.dumps({"step": step, "training_loss": metrics["training_loss"],
+                          "tokens_per_second_mean": metrics["tokens_per_second"],
+                          "validation_loss_partial": metrics.get("validation_loss")}), flush=True)
             if step % self.config.train.checkpoint_interval == 0 or step == target:
                 self.save()
             latest = metrics
@@ -359,4 +398,3 @@ class Trainer:
 
     def __exit__(self, *args):
         self.close()
-

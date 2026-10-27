@@ -318,3 +318,7 @@ Geração é para inspeção, com greedy (`temperature=0`) ou amostragem/top-k e
 Sem KV cache: a janela é recalculada e posições RoPE reiniciam ao truncar o contexto.
 Há testes CPU em CI e testes condicionais CUDA/BF16. DDP, FP16/scaler, streaming de corpus
 maior que RAM, NCM completo e treinamento de 300M–500M ficam fora desta entrega.
+
+## Campanha Kaggle T4x2 — execução pelo navegador
+
+O fluxo P01–P06 com commit fixado, logs completos, avaliação final por janela, testes FP32 e comparação FLRM sequencial/agrupado está em [KAGGLE_T4_CAMPAIGN.md](docs/KAGGLE_T4_CAMPAIGN.md). A implementação FLRM permanece na branch `experiment/fractal-lrm`; o bootstrap seleciona um checkout isolado dessa entrega. Não é necessária GPU no computador pessoal.
