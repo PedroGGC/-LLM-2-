@@ -186,3 +186,17 @@ def test_cuda_fp32_checkpoint_and_continue(training_config, tmp_path, architectu
     with Trainer(cfg, resume=checkpoint) as trainer:
         assert torch.isfinite(torch.tensor(trainer.train_step()["training_loss"]))
         assert all(torch.isfinite(p).all() for p in trainer.model.parameters())
+
+
+def test_inference_preserves_checkpoint_fp32_default(training_config, monkeypatch):
+    from llm2.cli import parser, _inference
+    with Trainer(training_config) as trainer:
+        trainer.train_step()
+        checkpoint = trainer.save()
+    args = parser().parse_args(["evaluate", "--checkpoint", str(checkpoint), "--device", "cuda"])
+    def fake_runtime(config):
+        assert config.precision == "fp32"
+        return torch.device("cpu")
+    monkeypatch.setattr("llm2.cli.setup_runtime", fake_runtime)
+    cfg, _, _, _, _ = _inference(args)
+    assert cfg.train.precision == "fp32"

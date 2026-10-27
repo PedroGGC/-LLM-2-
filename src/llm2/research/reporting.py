@@ -37,6 +37,9 @@ def generate_report(runs, output, *, target_loss=None):
             return value
         benchmark, quality = artifact("benchmark.json"), artifact("reasoning.json")
         full_validation = artifact("language.json")
+        if full_validation and (full_validation.get("validation_scope") != "all_full_windows" or
+                                full_validation.get("dataset_sha256") != metadata["dataset_sha256"]):
+            raise ValueError("final language evaluation has a different dataset or incomplete scope")
         r = metadata["config"].get("research", {})
         first_target = next((learning_flops(row)
                              for row in rows if target_loss is not None and row.get("validation_loss", float("inf")) <= target_loss), None)
@@ -63,6 +66,10 @@ def generate_report(runs, output, *, target_loss=None):
                 "same_training_microbatch": len({r["config"]["data"]["batch_size"] for r in records}) == 1,
                 "same_gradient_accumulation": len({r["config"]["train"]["grad_accum_steps"] for r in records}) == 1,
                 "same_training_precision": len({r["config"]["train"]["precision"] for r in records}) == 1,
+                "same_actual_training_tokens": len({r["summary"].get("tokens_processed") for r in records}) == 1,
+                "same_objective_weights": len({tuple(r["config"].get("research", {}).get(key, default)
+                    for key, default in (("lm_weight", 1), ("jepa_weight", 0), ("mtp_weight", 0),
+                                         ("intermediate_weight", 0))) for r in records}) == 1,
                 "same_hardware": len({r["environment"]["device"] for r in records}) == 1,
                 "same_software_packages": len({json.dumps(r["environment"]["packages"], sort_keys=True) for r in records}) == 1,
                 "same_learning_flop_ceiling": len({r["config"].get("research", {}).get("max_train_flops", 0) for r in records}) == 1,
@@ -111,7 +118,7 @@ def generate_report(runs, output, *, target_loss=None):
             axis.legend(fontsize=7)
         else:
             axis.text(0.5, 0.5, "No generated-answer evaluation supplied", ha="center", transform=axis.transAxes)
-    save_chart("loss_vs_flops", "Learning FLOPs (estimate, includes curriculum probes)", "Validation language loss (observed)", loss_chart)
+    save_chart("loss_vs_flops", "Learning FLOPs (estimate, includes curriculum probes)", "Periodic validation LM loss", loss_chart)
     save_chart("quality_vs_flops", "Learning FLOPs (estimate)", "Generated-answer exact match (observed)", quality_chart)
     save_chart("parameters", "Run", "Unique parameters (calculated)",
                lambda a: a.bar([r["run"] for r in records], [r["total_parameters_calculated"] for r in records]))
@@ -127,10 +134,11 @@ def generate_report(runs, output, *, target_loss=None):
                lambda a: a.bar([r["run"] for r in measured], [r["benchmark"]["tokens_per_second"] for r in measured])
                if measured else a.text(0.5, 0.5, "No inference benchmark supplied", ha="center", transform=a.transAxes))
     lines = ["# Research comparison", "", "Observed engineering results; FLOPs are estimates. No superiority claim.", "",
-             "| Run | Seed | Model / total params | Validation loss | Learning FLOPs estimate |", "|---|---:|---:|---:|---:|"]
+             "| Run | Seed | Model / total params | Full LM loss | Full val tokens | Periodic LM loss | Learning FLOPs estimate |", "|---|---:|---:|---:|---:|---:|---:|"]
     for record in records:
         s = record["summary"]
-        lines.append(f"| {record['run']} | {record['seed']} | {record['model_parameters_calculated']} / {record['total_parameters_calculated']} | {s.get('validation_loss')} | {learning_flops(s)} |")
+        v = record["full_validation"]
+        lines.append(f"| {record['run']} | {record['seed']} | {record['model_parameters_calculated']} / {record['total_parameters_calculated']} | {v.get('validation_loss')} | {v.get('validation_tokens')} | {s.get('validation_loss')} | {learning_flops(s)} |")
     lines += ["", "## Controls and limitations", "", "```json", json.dumps(controls, indent=2), "```", "",
               "Full final LM evaluations, when supplied, are in comparisons.csv/report.json; the loss curves above use periodic evaluations and their declared scope.",
               "Exact configuration, software versions, budgets, benchmarks and predictions are preserved in report.json.",

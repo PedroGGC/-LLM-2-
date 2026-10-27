@@ -91,3 +91,8 @@ def test_tiny_campaign_end_to_end_in_separate_processes(training_config, tmp_pat
         assert not any(name.endswith((".pt", ".safetensors", ".bin")) for name in archive.namelist())
     with pytest.raises(FileExistsError):
         run_campaign(args)
+
+
+def test_gpu_slot_respects_outer_visibility(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-one,GPU-two")
+    assert worker_environment(Path.cwd(), "1")["CUDA_VISIBLE_DEVICES"] == "GPU-two"

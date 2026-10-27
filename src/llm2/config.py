@@ -207,7 +207,7 @@ class ExperimentConfig:
     def to_dict(self):
         raw = asdict(self)
         if self.research is None:
-            raw.pop("research")  # Preserve the original YAML/checkpoint contract exactly.
+            raw.pop("research")  # Legacy configs keep their original sections; new fields use defaults.
         return raw
 
     @classmethod

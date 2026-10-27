@@ -36,7 +36,10 @@ def worker_environment(root, gpu=None):
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     if gpu is not None:
-        env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+        visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+        slots = [slot.strip() for slot in visible.split(",")] if visible else []
+        index = int(gpu)
+        env["CUDA_VISIBLE_DEVICES"] = slots[index] if slots else str(gpu)
     return env
 
 
@@ -103,6 +106,7 @@ class Campaign:
         path.parent.mkdir(parents=True, exist_ok=True)
         command = [sys.executable, *map(str, arguments)]
         env = worker_environment(self.root, gpu)
+        print(f"Running {log_name}; full output: {path}", flush=True)
         with path.open("x", encoding="utf-8") as stream:
             stream.write(json.dumps({"command": command, "cwd": str(self.root),
                                      "CUDA_VISIBLE_DEVICES": env.get("CUDA_VISIBLE_DEVICES")})+"\n")
@@ -128,6 +132,7 @@ class Campaign:
             if returncode:
                 tail = "\n".join(path.read_text(encoding="utf-8").splitlines()[-40:])
                 raise RuntimeError(f"command exited {returncode}; complete log: {path}\n{tail}")
+        print(f"Finished {log_name}", flush=True)
 
     def abort(self):
         self.cancelled.set()
@@ -136,15 +141,16 @@ class Campaign:
                 if process.poll() is None:
                     try:
                         process.terminate()
-                    except ProcessLookupError:
+                    except OSError:
                         pass
 
     def train_worker(self, jobs, gpu):
         for job in jobs:
             if self.cancelled.is_set():
                 return
-            job["status"] = "training"
-            self.save()
+            with self.lock:
+                job["status"] = "training"
+                self.save()
             try:
                 self.command(["-m", "llm2", "train", "--config", job["config"]],
                              f"{job['id']}-train.log", gpu=gpu)
@@ -161,13 +167,15 @@ class Campaign:
                     raise ValueError("checkpoint dataset differs from campaign")
                 if metadata["provenance"]["source_sha256"] != self.manifest["provenance"]["source_sha256"]:
                     raise ValueError("worker imported different source code")
-                job.update(status="trained", checkpoint=str(checkpoint), stop_reason=summary["stop_reason"],
-                           step=summary["step"], checkpoint_model_sha256=metadata["files"]["model.safetensors"])
-                self.save()
+                with self.lock:
+                    job.update(status="trained", checkpoint=str(checkpoint), stop_reason=summary["stop_reason"],
+                               step=summary["step"], checkpoint_model_sha256=metadata["files"]["model.safetensors"])
+                    self.save()
                 print(f"Trained {job['id']}: step={summary['step']} reason={summary['stop_reason']}", flush=True)
             except Exception as exc:
-                job.update(status="failed", error=str(exc))
-                self.save()
+                with self.lock:
+                    job.update(status="failed", error=str(exc))
+                    self.save()
                 self.abort()
                 raise
 
@@ -200,7 +208,7 @@ class Campaign:
                          f"{job['id']}-diagnostics.log", gpu=gpu)
         job.update(status="complete", evaluation=str(destination / "language.json"),
                    full_validation_loss=result["validation_loss"], validation_tokens=result["validation_tokens"],
-                   evaluation_physical_gpu=gpu)
+                   evaluation_physical_gpu=worker_environment(self.root, gpu).get("CUDA_VISIBLE_DEVICES"))
         self.save()
 
     def profile_runs(self, jobs, warmup, measured):
@@ -311,7 +319,9 @@ def run_campaign(args):
         if args.cpu_tests:
             campaign.command(["-m", "pytest", "-q", "-m", "not cuda"], "tests-cpu.log", gpu=campaign.gpus[0])
         if args.cuda_tests and args.device == "cuda":
-            campaign.command(["-m", "pytest", "-q", "-m", "cuda"], "tests-cuda.log", gpu=campaign.gpus[0])
+            # This release targets T4 FP32. Do not gate it on BF16 emulation/native availability.
+            campaign.command(["-m", "pytest", "-q", "-m", "cuda", "-k", "fp32"],
+                             "tests-cuda-fp32.log", gpu=campaign.gpus[0])
         (output / "configs").mkdir()
         jobs = campaign.manifest["runs"]
         for seed in args.seeds:
@@ -323,7 +333,8 @@ def run_campaign(args):
                                       device=args.device, max_seconds=args.max_seconds)
                 path = output / "configs" / f"{run_id}.yaml"
                 path.write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=True), encoding="utf-8")
-                jobs.append({"id": run_id, "model": model, "seed": seed, "physical_gpu": slot,
+                jobs.append({"id": run_id, "model": model, "seed": seed, "gpu_slot": slot,
+                             "physical_gpu": worker_environment(root, slot).get("CUDA_VISIBLE_DEVICES"),
                              "directory": str(directory), "config": str(path), "status": "pending"})
         campaign.manifest["status"] = "training"
         campaign.save()
