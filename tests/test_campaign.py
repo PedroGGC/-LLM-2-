@@ -33,14 +33,15 @@ def test_worker_environment_and_explicit_configs(training_config, tmp_path, monk
     assert lrm.research.jepa_weight == 0.1
 
 
-def test_failed_process_keeps_full_error_and_never_selects_old_checkpoint(tmp_path):
+def test_failed_process_keeps_full_error_and_never_selects_old_checkpoint(tmp_path, capsys):
     root = Path(__file__).resolve().parents[1]
     campaign = Campaign(root, tmp_path / "campaign", device="cpu", gpus=[])
     old = tmp_path / "old-run/checkpoints/step-00002000"
     old.mkdir(parents=True)
     with pytest.raises(RuntimeError, match="command exited 7"):
         campaign.command(["-c", "print('unfiltered traceback detail'); raise SystemExit(7)"], "failure.log")
-    assert "unfiltered traceback detail" in (campaign.output / "logs/failure.log").read_text()
+    assert "Etapa concluída" not in capsys.readouterr().out
+    assert "unfiltered traceback detail" in (campaign.output / "logs/failure.log").read_text(encoding="utf-8")
     assert not campaign.manifest["runs"]
     archive = export_campaign(campaign.output)
     with zipfile.ZipFile(archive) as bundle:
@@ -78,11 +79,11 @@ def test_tiny_campaign_end_to_end_in_separate_processes(training_config, tmp_pat
         "--no-benchmark", "--no-diagnostics"])
     result = run_campaign(args)
     assert result["status"] == "complete"
-    manifest = json.loads((output / "campaign.json").read_text())
+    manifest = json.loads((output / "campaign.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "complete"
     job = manifest["runs"][0]
     assert job["status"] == "complete"
-    evaluation = json.loads(Path(job["evaluation"]).read_text())
+    evaluation = json.loads(Path(job["evaluation"]).read_text(encoding="utf-8"))
     assert evaluation["validation_scope"] == "all_full_windows"
     assert evaluation["dataset_sha256"] == manifest["dataset_sha256"]
     assert (output / "report/comparisons.csv").is_file()
