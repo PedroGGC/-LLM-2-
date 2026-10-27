@@ -150,6 +150,7 @@ class ResearchConfig:
     scale_execution: str = "reference"
     jepa_hidden_only: bool = True
     v_cycle: bool = False
+    inv_vcycle: bool = False
     ncm_slots: int = 0
     fused_film: bool = False
 
@@ -165,10 +166,12 @@ class ResearchConfig:
             raise ValueError("compressed modes require scales=[1,4,0]; native block factors are fixed at 1,4,16")
         if self.fused_film and self.architecture != "fractal":
             raise ValueError("fused_film requires a fractal model")
-        if (self.v_cycle or self.ncm_slots > 0) and (
+        if self.v_cycle and self.inv_vcycle:
+            raise ValueError("v_cycle and inv_vcycle are mutually exclusive")
+        if (self.v_cycle or self.inv_vcycle or self.ncm_slots > 0) and (
             self.architecture != "fractal" or not self.scale_execution.startswith("compressed")
         ):
-            raise ValueError("v_cycle and ncm_slots require a compressed fractal model")
+            raise ValueError("v_cycle, inv_vcycle and ncm_slots require a compressed fractal model")
         for name in ("iterations", "core_layers", "jepa_offset", "max_difficulty", "curriculum_interval",
                      "probe_examples", "fixed_curriculum_steps"):
             if getattr(self, name) <= 0:

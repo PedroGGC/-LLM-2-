@@ -659,3 +659,33 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
   - `python -m pytest tests/test_vcycle_fractal.py -q`: **12 passed, 2 skipped** (testes de contagem e fórmula de parâmetros, equivalência numérica forward/backward da fusão nativa, redução de formas e FLOPs analíticos, causalidade estrita sob mutação futura e truncamento de prefixo, retomada exata bit a bit com dropout/acumulação/checkpointing ativos, memorização com gradiente finito nos slots NCM e diagnósticos).
   - Suíte completa `python -m pytest -q`: **167 passed, 18 skipped**. Todos os 18 skips são testes marcados com `@pytest.mark.cuda` (GPU ausente localmente; serão executados na etapa 2 da célula Kaggle nas Tesla T4).
   - Limitações: a redução real de `cudaLaunchKernel` e do tempo por passo em ms na Tesla T4 será verificada empiricamente na triagem rápida (`mode="perfilar_lotes"`, `batch_matrix=["32x1"]`) da Campanha 0005 no Kaggle.
+
+### Evidências Kaggle recebidas — Campanhas 0005 (Triagem 32×1) e 0006 (Treino 2.000 passos), 27/10/2026
+
+- **Campanha 0005 (`llm2-campaign-0005-results.zip`)**: SHA256 `c4b581d091ef7f21a8b911b1fb9d520425b513b72a862f370577506711b701fa` (52 entradas, commit `24545f19f977725653f3578c9d3b3d836784fb24`).
+  - Testes no Kaggle: CPU **167 passed, 18 deselected** (231,66 s); CUDA FP32 **14 passed, 171 deselected** (39,73 s).
+  - Perfil isolado em lote `32×1` na Tesla T4 (GPU 0):
+    - `baseline_small`: **191.417 alvos/s**, **42,8 ms/passo**, **491,9 MiB** VRAM, **269** `cudaLaunchKernel`, **115,98 GFLOPs**.
+    - `flrm_compressed_grouped_no_jepa_k2` (Legado): **63.284 alvos/s**, **129,4 ms/passo**, **1.285,1 MiB** VRAM, **1.162** `cudaLaunchKernel`, **328,28 GFLOPs**.
+    - `flrm_vcycle_k2`: **78.308 alvos/s** (**+23,7%**), **104,6 ms/passo** (**−24,8 ms**), **1.071,0 MiB** VRAM (**−214,1 MiB**), **882** `cudaLaunchKernel` (**−280**), **224,40 GFLOPs** (**−31,6%**).
+    - `flrm_vcycle_ncm_k2`: **76.253 alvos/s** (**+20,5%**), **107,4 ms/passo** (**−22,0 ms**), **1.096,3 MiB** VRAM (**−188,8 MiB**), **961** `cudaLaunchKernel` (**−201**), **225,61 GFLOPs** (**−31,3%**).
+- **Campanha 0006 (`llm2-campaign-0006-results.zip`)**: SHA256 `ef252090ea6c70cca40ca0bcf615b79b667df1903689718324654779615ec886` (118 entradas, mesmo commit `24545f19f977725653f3578c9d3b3d836784fb24`, 2.000 passos / 16.384.000 alvos em lote `32×1`, seed 42):
+  - `baseline_small`: Loss completa **1,39921737**, treino **169.663 alvos/s** (96,57 s), VRAM **491,93 MiB**, geração **415,83 tok/s**.
+  - `flrm_vcycle_k2`: Loss completa **1,40676885**, treino **72.893 alvos/s** (224,77 s, **−28,8%** vs 315,79 s da Campanha 0003), VRAM **1.070,97 MiB**, geração **112,56 tok/s**.
+  - `flrm_vcycle_ncm_k2`: Loss completa **1,40612024**, treino **71.348 alvos/s** (229,64 s), VRAM **1.096,29 MiB**, geração **105,76 tok/s**.
+  - Diagnóstico científico: o NCM-16 melhorou a loss do Ciclo-V (`1,406120` vs `1,406769`), mas pular o `SharedFractalCore` na escala fina $s_0$ na última iteração ($k=1$) limitou a atualização relativa de $s_0$ a apenas `0,1051` (10,5%), contra `4,88` e `5,51` nas escalas macro, impedindo que a escala fina sintetizasse o contexto macro antes da cabeça de linguagem (`lm_head`).
+
+## Campanha 0007 — FLRM Simétrico Fused+NCM vs Ciclo-V Invertido (Macro-First) + Atalho Algébrico Nativo, 27/10/2026
+
+- Plano formal, riscos e critérios de aceitação: [PLAN_CAMPAIGN_0007.md](docs/PLAN_CAMPAIGN_0007.md).
+- Mudanças implementadas na branch `experiment/fractal-lrm`:
+  1. **Ciclo-V Invertido / "Macro-Primeiro" (`inv_vcycle=True` em `ResearchConfig` / `FractalRecursiveBlock`)**:
+     - Na iteração $k=0$ (`step_index == 0`), o modelo salta a escala fina ($v_0 = s_0 = 0$) e roda o `SharedFractalCore` + NCM **exclusivamente nas escalas macro comprimidas** ($s_1, s_2$, apenas $64 + 16 = 80$ posições em $T=256$), injetando o contexto macro causal em `next_s0` via `CrossScaleInteraction.forward_native`.
+     - Na iteração $k=1$ (`step_index > 0`), o `SharedFractalCore` roda em **todas as escalas** ($s_0, s_1, s_2$), garantindo que a escala fina $s_0$ processe Atenção + SwiGLU na última iteração já alimentada pela abstração macro de $k=0$, mantendo exatamente o mesmo orçamento reduzido de FLOPs do Ciclo-V (~225,61 GFLOPs/passo em `32×1`).
+  2. **FLRM Simétrico com Fusão + NCM-16 (`flrm_fused_ncm_k2`)**:
+     - Combina a recursão simétrica completa ($K=2$ em todas as escalas) com `fused_film=True` e `ncm_slots=16` para testar o teto de qualidade em loss e medir o ganho puro da fusão vetorizada sem poda de escala.
+  3. **Atalho Algébrico Exato em `CrossScaleInteraction.forward_native` (`raw_macro`)**:
+     - Em vez de recomprimir em comprimento $T=256$ os tensores `u1 = comp4.upsample_causal(v1, T)` e `u2 = comp16.upsample_causal(v2, T)` nas escalas $T/4$ e $T/16$, utiliza as identidades exatas $\text{comp}_4(\text{upsample}_4(v_1, T)) = \text{shift}_4(v_1)$, $\text{comp}_4(\text{upsample}_{16}(v_2, T)) = \text{repeat\_interleave}(\text{shift}_{16}(v_2), 4)[:T_1]$ e $\text{comp}_{16}(\text{upsample}_{16}(v_2, T)) = \text{shift}_{16}(v_2)$ diretamente nas resoluções comprimidas nativas ($T_1=64, T_2=16$), eliminando 3 compressões redundantes de comprimento $T=256$ por iteração com equivalência numérica exata.
+- Testes executados localmente (CPU, Python 3.12.2, Torch 2.14.1+cpu):
+  - `python -m pytest tests/test_vcycle_fractal.py -q`: **13 passed, 2 skipped** (incluindo equivalência numérica exata do atalho `raw_macro` em comprimentos arbitrários `[1, 4, 15, 16, 17, 31, 32, 33, 65]`, formas `[(4, 9), (2, 33), (4, 9)]` do `inv_vcycle`, causalidade estrita e retomada exata bit a bit).
+  - Suíte completa `python -m pytest -q`: **168 passed, 18 skipped**. Todos os 18 skips são testes `@pytest.mark.cuda`.

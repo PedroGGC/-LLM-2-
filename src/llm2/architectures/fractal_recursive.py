@@ -46,12 +46,13 @@ class CausalScaleCompressor(nn.Module):
         comp = self.compress(flat)
         return comp.reshape(S, B, comp.shape[1], D)
 
+    def shift_causal(self, compressed):
+        B, _, D = compressed.shape
+        return torch.cat([self.prior.expand(B, 1, D), compressed[:, :-1, :]], dim=1)
+
     def upsample_causal(self, compressed, target_len):
-        B, T_comp, D = compressed.shape
-        C = self.factor
-        shifted = torch.cat([self.prior.expand(B, 1, D), compressed[:, :-1, :]], dim=1)
-        upsampled = shifted.repeat_interleave(C, dim=1)[:, :target_len, :]
-        return upsampled
+        shifted = self.shift_causal(compressed)
+        return shifted.repeat_interleave(self.factor, dim=1)[:, :target_len, :]
 
 
 class FractalScaleEncoder(nn.Module):
@@ -123,7 +124,7 @@ class CrossScaleInteraction(nn.Module):
             mixed = torch.einsum("ij,jbtd->ibtd", weights.float(), states.float()).to(states.dtype)
         return states + self.gate.sigmoid()[:, None, None, None] * self.projection(mixed)
 
-    def forward_native(self, states, compressors):
+    def forward_native(self, states, compressors, *, raw_macro=None):
         """Pool before each coarse projection, preserving the delayed read semantics.
 
         Mean(W x) = W mean(x). Pooling each input once per output scale avoids
@@ -134,9 +135,26 @@ class CrossScaleInteraction(nn.Module):
             comp4, comp16 = compressors
             t0 = s0.shape[1]
             s_fine = torch.stack((s0, s1, s2), dim=0)
-            c1_3 = comp4.compress_stacked(s_fine)
-            c2_3 = comp16.compress_stacked(s_fine)
-            t1, t2 = c1_3.shape[2], c2_3.shape[2]
+            if raw_macro is not None:
+                v1, v2 = raw_macro
+                # Exact algebraic shortcut:
+                # comp4(upsample4(v1, T)) == shift_causal(v1)
+                # comp4(upsample16(v2, T)) == repeat_interleave(shift_causal(v2), 4)[:T1]
+                # comp16(upsample16(v2, T)) == shift_causal(v2)
+                c1_v0 = comp4.compress(s0)
+                t1 = c1_v0.shape[1]
+                c1_u1 = comp4.shift_causal(v1)
+                s_v2 = comp16.shift_causal(v2)
+                c1_u2 = s_v2.repeat_interleave(4, dim=1)[:, :t1, :]
+                c1_3 = torch.stack((c1_v0, c1_u1, c1_u2), dim=0)
+                # Only compress (s0, u1) at factor 16 (2 tensors instead of 3), and reuse s_v2 for u2:
+                c2_01 = comp16.compress_stacked(torch.stack((s0, s1), dim=0))
+                t2 = s_v2.shape[1]
+                c2_3 = torch.cat((c2_01, s_v2.unsqueeze(0)), dim=0)
+            else:
+                c1_3 = comp4.compress_stacked(s_fine)
+                c2_3 = comp16.compress_stacked(s_fine)
+                t1, t2 = c1_3.shape[2], c2_3.shape[2]
             # Concatenate all 3 scales along time: (3, B, t0 + t1 + t2, D)
             stacked_all = torch.cat((s_fine, c1_3, c2_3), dim=2)
             weights = self.mixing.softmax(-1)
@@ -172,6 +190,7 @@ class FractalRecursiveBlock(nn.Module):
         self.shared = research.share_scales
         self.execution = research.scale_execution
         self.v_cycle = research.v_cycle
+        self.inv_vcycle = research.inv_vcycle
         self.fused_film = research.fused_film
         if self.execution != "reference" and not self.shared:
             raise ValueError(f"{self.execution} execution requires shared scale cores")
@@ -200,7 +219,7 @@ class FractalRecursiveBlock(nn.Module):
                     c0 = self.conditioning(c0, 0)
                     c1 = self.conditioning(c1, 1)
                     c2 = self.conditioning(c2, 2)
-            skip_fine_core = self.v_cycle and step_index > 0
+            skip_fine_core = (self.v_cycle and step_index > 0) or (self.inv_vcycle and step_index == 0)
             v0 = s0 if skip_fine_core else self.cores[0](s0, c0)
             if self.execution == "compressed_grouped":
                 # Pad only the shorter coarse branch. Causal valid queries cannot
@@ -229,7 +248,7 @@ class FractalRecursiveBlock(nn.Module):
             u1 = self.comp4.upsample_causal(v1, T)
             u2 = self.comp16.upsample_causal(v2, T)
             if self.execution != "compressed":
-                return self.interaction.forward_native((v0, u1, u2), (self.comp4, self.comp16))
+                return self.interaction.forward_native((v0, u1, u2), (self.comp4, self.comp16), raw_macro=(v1, v2))
             mixed = self.interaction((v0, u1, u2))
             next_s0 = mixed[0]
             next_s1 = self.comp4.compress(mixed[1])
@@ -333,7 +352,8 @@ class FractalLatentModel(Backbone):
             ncm_flops = 2 * (4 * ncm_positions * self.research.ncm_slots * d) if self.research.ncm_slots > 0 else 0
             forward_iterations = 0
             for index in range(steps):
-                active_lengths = macro_core_lengths if (self.research.v_cycle and index > 0) else full_core_lengths
+                skip_fine = (self.research.v_cycle and index > 0) or (self.research.inv_vcycle and index == 0)
+                active_lengths = macro_core_lengths if skip_fine else full_core_lengths
                 core_flops = sum(
                     self.research.core_layers * (8 * si * d * d + 6 * si * d * h + 4 * si * si * d) + 2 * si * d * d
                     for si in active_lengths

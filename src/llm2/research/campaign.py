@@ -33,12 +33,14 @@ MODELS = ("baseline", "baseline_small", "baseline_jepa", "lrm", "lrm_no_jepa",
           "flrm_reference", "flrm_batched", "flrm_compressed", "flrm_compressed_native",
           "flrm_compressed_grouped", "flrm_compressed_grouped_no_jepa", "flrm_no_jepa",
           "flrm_compressed_grouped_no_jepa_k1", "flrm_compressed_grouped_no_jepa_k2",
-          "flrm_vcycle_k2", "flrm_vcycle_ncm_k2")
+          "flrm_vcycle_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2")
 
 FIXED_ITERATIONS = {"flrm_compressed_grouped_no_jepa_k1": 1,
                     "flrm_compressed_grouped_no_jepa_k2": 2,
                     "flrm_vcycle_k2": 2,
-                    "flrm_vcycle_ncm_k2": 2}
+                    "flrm_vcycle_ncm_k2": 2,
+                    "flrm_fused_ncm_k2": 2,
+                    "flrm_inv_vcycle_ncm_k2": 2}
 DEFAULT_MODELS = ["flrm_compressed_grouped_no_jepa_k1", "flrm_compressed_grouped_no_jepa_k2", "baseline_small"]
 
 
@@ -91,20 +93,22 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
     selected = model.rsplit("_k", 1)[0] if model in FIXED_ITERATIONS else model
     effective_iterations = 1 if architecture == "transformer" else FIXED_ITERATIONS.get(model, iterations)
     variant = selected.removesuffix("_no_jepa")
+    is_fused_family = model in ("flrm_vcycle_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2")
     is_vcycle = model in ("flrm_vcycle_k2", "flrm_vcycle_ncm_k2")
-    ncm_slots = 16 if model == "flrm_vcycle_ncm_k2" else 0
-    uses_jepa = not is_vcycle and not selected.endswith("_no_jepa") and (
+    is_inv_vcycle = model == "flrm_inv_vcycle_ncm_k2"
+    ncm_slots = 16 if model in ("flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2") else 0
+    uses_jepa = not is_fused_family and not selected.endswith("_no_jepa") and (
         selected in ("baseline_jepa", "lrm", "flrm_reference", "flrm_batched") or selected.startswith("flrm_compressed"))
     jepa = 0.1 if uses_jepa else 0.
     scale_exec = (
-        "compressed_grouped" if is_vcycle
+        "compressed_grouped" if is_fused_family
         else variant.removeprefix("flrm_") if variant.startswith("flrm_compressed")
         else "batched" if model == "flrm_batched"
         else "reference"
     )
     cfg.research = ResearchConfig(architecture=architecture, iterations=effective_iterations,
         latent_steps=0, jepa_weight=jepa, scale_execution=scale_exec,
-        v_cycle=is_vcycle, ncm_slots=ncm_slots, fused_film=is_vcycle,
+        v_cycle=is_vcycle, inv_vcycle=is_inv_vcycle, ncm_slots=ncm_slots, fused_film=is_fused_family,
         max_seconds=max_seconds, shutdown_reserve_seconds=min(30., max_seconds/10) if max_seconds else 0.)
     if model == "baseline_small":
         # At D=384 this is 2,164,224 parameters; inspect the resolved config for other widths.

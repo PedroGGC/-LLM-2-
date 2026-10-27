@@ -252,7 +252,13 @@ def test_vcycle_cuda_fp32_save_continue(training_config, tmp_path, ncm_slots):
 
 def test_campaign_configs_for_vcycle_models(tmp_path):
     base = ExperimentConfig()
-    for name, expected_slots in [("flrm_vcycle_k2", 0), ("flrm_vcycle_ncm_k2", 16)]:
+    cases = [
+        ("flrm_vcycle_k2", 0, True, False),
+        ("flrm_vcycle_ncm_k2", 16, True, False),
+        ("flrm_fused_ncm_k2", 16, False, False),
+        ("flrm_inv_vcycle_ncm_k2", 16, False, True),
+    ]
+    for name, expected_slots, expected_vcycle, expected_inv in cases:
         cfg = campaign_config(
             base,
             name,
@@ -269,8 +275,97 @@ def test_campaign_configs_for_vcycle_models(tmp_path):
         assert cfg.research.scale_execution == "compressed_grouped"
         assert cfg.research.iterations == 2
         assert cfg.research.jepa_weight == 0.0
-        assert cfg.research.v_cycle is True
+        assert cfg.research.v_cycle is expected_vcycle
+        assert cfg.research.inv_vcycle is expected_inv
         assert cfg.research.fused_film is True
         assert cfg.research.ncm_slots == expected_slots
         assert cfg.data.batch_size == 32
         assert cfg.train.grad_accum_steps == 1
+
+
+@attention_context(True)
+def test_inv_vcycle_shapes_cost_causality_and_resume(training_config, tiny_config, tmp_path):
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        ResearchConfig(architecture="fractal", scale_execution="compressed_grouped", v_cycle=True, inv_vcycle=True)
+
+    tiny_config.max_seq_len = 65
+    tiny_config.dropout = 0.0
+    research = ResearchConfig(
+        architecture="fractal",
+        scale_execution="compressed_grouped",
+        iterations=2,
+        inv_vcycle=True,
+        ncm_slots=16,
+        fused_film=True,
+    )
+    model = FractalLatentModel(tiny_config, research)
+    core_shapes = []
+    core_hook = model.block.cores[0].register_forward_pre_hook(lambda m, args: core_shapes.append(args[0].shape[:2]))
+    try:
+        model(torch.zeros(2, 33, dtype=torch.long))
+    finally:
+        core_hook.remove()
+    # Iteration 0 (Macro-First) skips (2, 33) and runs only (4, 9); Iteration 1 runs both (2, 33) and (4, 9)!
+    assert core_shapes == [(4, 9), (2, 33), (4, 9)]
+
+    vcycle_model = FractalLatentModel(
+        tiny_config,
+        ResearchConfig(
+            architecture="fractal",
+            scale_execution="compressed_grouped",
+            iterations=2,
+            v_cycle=True,
+            ncm_slots=16,
+            fused_film=True,
+        ),
+    )
+    assert model.analytical_cost(33) == vcycle_model.analytical_cost(33)
+
+    # Strict prefix causality for inv_vcycle + NCM + raw_macro shortcut
+    with torch.no_grad():
+        model.block.interaction.mixing.normal_(0, 0.3)
+        model.block.interaction.gate.normal_(-1, 0.3)
+        model.block.conditioning.film.normal_(0, 0.2)
+        model.block.comp4.prior.normal_(0, 0.2)
+        model.block.comp16.prior.normal_(0, 0.2)
+        model.block.ncm.memory.normal_(0, 0.1)
+    model.eval()
+    for length in [4, 15, 16, 17, 33, 65]:
+        ids = torch.randint(0, 32, (2, length))
+        with torch.no_grad():
+            original = model(ids).logits
+            for cut in [1, 3, 4, 15, 16, 17, length - 1]:
+                if cut >= length:
+                    continue
+                changed = ids.clone()
+                changed[:, cut:] = (changed[:, cut:] + 7) % 32
+                torch.testing.assert_close(original[:, :cut], model(changed).logits[:, :cut], rtol=0, atol=0)
+                torch.testing.assert_close(original[:, :cut], model(ids[:, :cut]).logits, rtol=3e-5, atol=2e-6)
+
+    # Exact resume equivalence for inv_vcycle + NCM
+    cfg = training_config
+    cfg.model.max_seq_len = cfg.data.seq_len = 17
+    cfg.train.accumulation_weighting = "tokens"
+    cfg.research = ResearchConfig(
+        architecture="fractal",
+        scale_execution="compressed_grouped",
+        iterations=2,
+        inv_vcycle=True,
+        ncm_slots=16,
+        fused_film=True,
+        gradient_checkpointing=True,
+    )
+    with Trainer(cfg) as trainer:
+        trainer.fit(until_step=2)
+        checkpoint = trainer.last_checkpoint
+        before = _state(trainer)
+        metrics = trainer.train_step()
+        expected = _state(trainer)
+    torch.manual_seed(999)
+    cfg.train.output_dir = str(tmp_path / "resume-inv-vcycle")
+    with Trainer(cfg, resume=checkpoint) as trainer:
+        assert_nested_equal(before, _state(trainer))
+        resumed_metrics = trainer.train_step()
+        assert_nested_equal(expected, _state(trainer))
+        for key in ("training_loss", "grad_norm", "lr", "tokens_processed", "training_flops_estimate"):
+            assert metrics[key] == resumed_metrics[key]

@@ -15,6 +15,8 @@ MODEL_NAMES = {
     "flrm_compressed_grouped_no_jepa_k2": "FLRM agrupado sem JEPA (K=2)",
     "flrm_vcycle_k2": "FLRM Ciclo-V + Fusão JIT (K=2)",
     "flrm_vcycle_ncm_k2": "FLRM Ciclo-V + Fusão JIT + NCM-16 (K=2)",
+    "flrm_fused_ncm_k2": "FLRM Simétrico + Fusão + NCM-16 (K=2)",
+    "flrm_inv_vcycle_ncm_k2": "FLRM Ciclo-V Invertido + Fusão + NCM-16 (K=2)",
     "flrm_no_jepa": "FLRM sem JEPA",
 }
 
