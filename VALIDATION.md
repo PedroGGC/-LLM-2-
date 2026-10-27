@@ -169,3 +169,14 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
 - Fonte pequena tinyshakespeare fixada em char-rnn 6f9487a6fe5b420b7ca9afb0d7c078e37c1d1b4e: URL conferida HTTP 200; nenhum corpus grande foi baixado e não houve treino científico local.
 - Não foi afrouxada a retomada de checkpoints antigos. A origem dos dados, configurações, código e pesos permanece verificada; a correção dos objetivos abre execuções novas.
 - Uso no navegador: docs/KAGGLE_T4_CAMPAIGN.md. O código FLRM continua isolado na branch experimental; sua validação será registrada separadamente.
+
+### Fechamento P01–P06
+
+- Suíte comum final: **80 passed, 5 skipped**, 123,86 s; `runs/p01-p06-common-final-pytest.log`. Após revisão: **18 passed, 2 skipped**, 39,86 s nos testes de campanha, objetivos/CLI e ferramentas.
+- Suíte fractal final: **94 passed, 8 skipped**, 143,84 s; `../LLM 2-fractal-lrm/runs/p01-p06-fractal-final-pytest.log`. Direcionados fractal: **14 passed, 3 skipped**, 14,73 s.
+- Paridade sequencial/agrupado validada em CPU FP32 com SDPA math e dropout controlado; comparação de gradientes/parâmetros, causalidade, memorização e retomada exata dentro de cada modo com dropout ativo, acumulação 2, checkpointing, JEPA, MTP e progressão latente.
+- Campanha completa simulada em CPU, em processos separados: Transformer, LRM, FLRM reference e FLRM batched; dois optimizer-steps por modelo, corpus demo preservado, contexto 32. Todos os quatro chegaram a `complete`. Artefatos locais em `../LLM 2-fractal-lrm/runs/p01-p06-integration/` e ZIP de análise correspondente.
+- Cada avaliação completa processou **21.024 alvos em 657 janelas**. Diferença entre média reconstruída dos JSONLs e média agregada <= 5,57e-8. Houve geração, diagnóstico e perfis dos dois modos FLRM, com warmup 1, duas amostras sem profiler e um passo instrumentado.
+- O ZIP de integração passou em `ZipFile.testzip()`, com 112 arquivos e 1.339.174 bytes. Não contém tensores/checkpoints retomáveis. Essa execução e as suítes concorrentes são verificações de engenharia, não benchmarks de throughput/qualidade CPU.
+- Corrigidos na revisão o default de inferência para respeitar FP32 do checkpoint, mapeamento de GPUs sob CUDA_VISIBLE_DEVICES e rótulos de avaliação completa/parcial. O runner T4 seleciona testes CUDA FP32; não exige BF16 nativo/emulado.
+- `compileall`, parse do bootstrap e `git diff --check` passaram. Não houve execução CUDA/T4/BF16/Inductor, energia ou confirmação de ganho de velocidade/VRAM. O próximo resultado empírico de GPU virá do Kaggle pelo navegador.
