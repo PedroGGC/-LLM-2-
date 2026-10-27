@@ -31,9 +31,12 @@ from .naming import numbered_output
 
 MODELS = ("baseline", "baseline_small", "baseline_jepa", "lrm", "lrm_no_jepa",
           "flrm_reference", "flrm_batched", "flrm_compressed", "flrm_compressed_native",
-          "flrm_compressed_grouped", "flrm_compressed_grouped_no_jepa", "flrm_no_jepa")
+          "flrm_compressed_grouped", "flrm_compressed_grouped_no_jepa", "flrm_no_jepa",
+          "flrm_compressed_grouped_no_jepa_k1", "flrm_compressed_grouped_no_jepa_k2")
 
-DEFAULT_MODELS = ["flrm_compressed_grouped_no_jepa", "flrm_compressed_grouped", "baseline_small"]
+FIXED_ITERATIONS = {"flrm_compressed_grouped_no_jepa_k1": 1,
+                    "flrm_compressed_grouped_no_jepa_k2": 2}
+DEFAULT_MODELS = [*FIXED_ITERATIONS, "baseline_small"]
 
 
 def worker_environment(root, gpu=None):
@@ -72,12 +75,15 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
     cfg.train.accumulation_weighting = "tokens"
     cfg.train.checkpoint_interval = max(1, min(500, steps))
     architecture = "transformer" if model.startswith("baseline") else "recursive" if model.startswith("lrm") else "fractal"
-    variant = model.removesuffix("_no_jepa")
-    uses_jepa = not model.endswith("_no_jepa") and (
-        model in ("baseline_jepa", "lrm", "flrm_reference", "flrm_batched") or model.startswith("flrm_compressed"))
+    # Fixed-K aliases remain distinct jobs/reports but share exactly one backbone.
+    selected = model.rsplit("_k", 1)[0] if model in FIXED_ITERATIONS else model
+    effective_iterations = 1 if architecture == "transformer" else FIXED_ITERATIONS.get(model, iterations)
+    variant = selected.removesuffix("_no_jepa")
+    uses_jepa = not selected.endswith("_no_jepa") and (
+        selected in ("baseline_jepa", "lrm", "flrm_reference", "flrm_batched") or selected.startswith("flrm_compressed"))
     jepa = 0.1 if uses_jepa else 0.
     scale_exec = variant.removeprefix("flrm_") if variant.startswith("flrm_compressed") else "batched" if model == "flrm_batched" else "reference"
-    cfg.research = ResearchConfig(architecture=architecture, iterations=iterations,
+    cfg.research = ResearchConfig(architecture=architecture, iterations=effective_iterations,
         latent_steps=0, jepa_weight=jepa, scale_execution=scale_exec,
         max_seconds=max_seconds, shutdown_reserve_seconds=min(30., max_seconds/10) if max_seconds else 0.)
     if model == "baseline_small":
@@ -391,7 +397,8 @@ def run_campaign(args):
                 path = output / "configs" / f"{run_id}.yaml"
                 path.write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=True), encoding="utf-8")
                 jobs.append({"id": run_id, "model": model, "seed": seed, "gpu_slot": slot,
-                             "max_steps": cfg.train.max_steps, "checkpoint_interval": cfg.train.checkpoint_interval, "progress_interval": args.progress_interval, "iterations": args.iterations,
+                             "max_steps": cfg.train.max_steps, "checkpoint_interval": cfg.train.checkpoint_interval, "progress_interval": args.progress_interval,
+                             "iterations": cfg.research.iterations+cfg.research.latent_steps,
                              "physical_gpu": worker_environment(root, slot).get("CUDA_VISIBLE_DEVICES"),
                              "directory": str(directory), "config": str(path), "status": "pending"})
         campaign.manifest["status"] = "training"

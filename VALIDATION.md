@@ -473,3 +473,47 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
   Recomendação prática: candidato principal sem JEPA, preservar a opção; depois
   parear K=1/K=2 na mesma arquitetura comprimida e repetir seeds 42/43/44. Esta
   análise não alterou modelos, algoritmos ou script nem iniciou novo treino local.
+
+### Preparação da ablação K=1/K=2 sem JEPA — 27/10/2026
+
+- Pedido: preparar o próximo teste depois da campanha 0001. Plano prévio e
+  aceitação em `docs/PLAN_K_ABLATION.md`. Aliases explícitos
+  `flrm_compressed_grouped_no_jepa_k1` e `_k2` fixam iterations=1/2, arquitetura
+  `compressed_grouped`, jepa_weight=0 e nenhuma outra perda auxiliar. K do alias
+  prevalece sobre --iterations global; aliases antigos mantêm o controle global.
+- Defaults/célula: K1, K2, Transformer pequeno, seed 42, 2.000 passos. GPU 0
+  recebe K1 e depois Transformer, GPU 1 recebe K2; filas paralelas preservadas.
+  Manifesto registra o K resolvido da configuração, não o argumento global.
+  Transformer declara uma passagem; sua profundidade permanece em n_layers.
+  Perfis/geração/avaliação sequenciais na mesma GPU; labels e perfis distinguem K.
+- Novo teste pareado valida configs iguais exceto iterations/output_dir, mesmo
+  state_dict inicial e primeiro batch, mesmo total de parâmetros e ausência de
+  auxiliares. Também confere override do alias mesmo com iterations global=7,
+  preservação dos aliases antigos e estimativa de operações maior para K=2.
+- Enumeração CPU do perfil completo D=384/H=1024/vocab=257: **2.168.076 backbone/
+  total** em cada FLRM, conferindo fórmula e pesos iniciais idênticos. Transformer
+  pequeno: **2.164.224 backbone/total**. Estimativa de treino por sequência:
+  5.205.196.800 / 10.258.808.832 / 3.624.468.480 FLOPs para K1/K2/Transformer,
+  respectivamente. São estimativas com convenções/exclusões existentes, não
+  medições de velocidade. Log `runs/k-ablation-parameters.log`, sem treino desse perfil.
+- Direcionados: **46 passed, 8 skipped**, 30,56 s,
+  `runs/k-ablation-targeted-tests.log`. Acrescentados memorização K1 e retomada
+  exata CPU FP32/math SDPA K1 agrupado sem JEPA, dropout/acumulação/checkpointing
+  ativos, comparando próximo optimizer-step e todos os estados determinísticos.
+  Causalidade/saídas/gradientes K1/K2 seguem na suíte existente.
+- `python -m pytest -q`: **150 passed, 16 skipped**, 97,88 s,
+  `runs/k-ablation-full-tests.log`, Python 3.12.2/Torch 2.14.1+cpu. Skips são
+  CUDA indisponível. Novo caso CUDA FP32 K1 save/continuação está coletado, ainda
+  não executado localmente; será selecionado pelo notebook antes do treino.
+  Evidência anterior da campanha 0001 cobre K2, não valida empiricamente K1.
+- Integração CPU real: três treinos minúsculos em processos separados, D=16/H=32,
+  contexto 17, dropout .1, acumulação 2, um optimizer-step; avaliação completa de
+  1.003 alvos/modelo, geração/diagnósticos, três perfis com 1 warmup/2 amostras/1
+  trace, relatório e ZIP **complete**. Manifesto e summaries confirmam K=1/2/1;
+  nenhum auxiliar e contagem total igual ao backbone. Artefatos em
+  `runs/k-ablation-smoke-4821197d9c/llm2-campaign-0002`, log `runs/k-ablation-smoke.log`.
+  Nenhuma medição de ganho GPU ou qualidade final antes da execução Kaggle.
+- Compileall e git diff --check passaram. Nenhuma alteração no algoritmo do
+  backbone/Trainer, dados ou verificação de checkpoints. Cada modelo começa do
+  zero; run_number=2 preserva a campanha 0001. Igual orçamento de alvos não é
+  igual computação; K altera consumo de dropout/RNG. Uma seed é triagem.

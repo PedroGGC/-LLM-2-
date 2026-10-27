@@ -25,7 +25,58 @@ Se esse número já existe ou está reservado, a célula para com uma mensagem e
 preserva todos os arquivos. Omitir `run_number` ativa a escolha automática.
 CLI continua aceitando `--output` explícito; sem essa opção, adota nomes numéricos.
 
-## Etapa atual: FLRM agrupado com/sem JEPA × Transformer (27/10/2026)
+## Etapa atual: FLRM sem JEPA K=1/K=2 × Transformer (27/10/2026)
+
+A campanha 0001 mostrou custo adicional importante do JEPA e vantagem muito
+pequena em loss completa nesta seed. O próximo teste mantém JEPA desligado e
+compara uma contra duas iterações da mesma arquitetura comprimida agrupada.
+
+```python
+LLM2_SETTINGS = {
+    "mode": "treinar",
+    "run_number": 2,
+    "steps": 2000,
+    "seeds": [42],
+    "models": ["flrm_compressed_grouped_no_jepa_k1",
+               "flrm_compressed_grouped_no_jepa_k2", "baseline_small"],
+    "max_seconds": 0,
+    "progress_interval": 500,
+    "profile": True,
+    "profile_warmup_steps": 10,
+    "profile_measure_steps": 30,
+}
+```
+
+K=1 e K=2 são fixados pelos aliases e prevalecem sobre `iterations` global.
+As configs resolvidas e o manifesto registram K=1/K=2 respectivamente. Os aliases
+antigos continuam aceitando o `iterations` global; o Transformer declara uma
+passagem e sua profundidade continua em `model.n_layers`, igual à referência.
+Labels, diretórios e perfis distinguem as duas execuções; nenhum perfil é descartado
+por confundir K=1 com K=2 do mesmo backbone.
+
+Os dois FLRMs começam do zero, com os mesmos pesos iniciais e sampler para a seed,
+modelo/otimizador/dados iguais. Diferem só no número de iterações e pasta da execução.
+Ambos têm 2.168.076 parâmetros de backbone/total de treino, sem teacher/preditor;
+Transformer pequeno tem 2.164.224. Mais iterações não acrescentam pesos, mas
+acrescentam operações e mudam o consumo de dropout/RNG. Não prometer trajetória
+estocástica idêntica nem melhoria antecipada na loss.
+
+Cada modelo processa 2.000 passos/16.384.000 alvos com repetição, FP32, contexto
+256, seed 42; `max_seconds=0` desativa corte de treino por orçamento de tempo.
+Igual quantidade de alvos não significa igual custo computacional. Os dados
+continuam sendo o corpus byte de demonstração; uma seed é triagem.
+
+GPU 0: K=1 e depois Transformer. GPU 1: K=2 em paralelo. Perfis isolados, avaliação
+completa e geração usam depois a mesma GPU 0, sem KV cache. Loss completa **menor
+= melhor**, velocidades **maior = melhor**, tempo **menor = melhor**; VRAM menor
+= menor consumo para a mesma tarefa. O ganho de custo/qualidade de K=1 depende da
+medição real no Kaggle; testes novos CUDA de save/continuação K1 rodam antes do treino.
+
+O resultado é `llm2-campaign-0002-results.zip`. Se 0002 estiver ocupado ou
+reservado, escolher outro `run_number` ou omitir para seleção automática; não
+sobrescrever campanha 0001. Guardar pesos salvando uma versão com outputs.
+
+## Etapa anterior: FLRM agrupado com/sem JEPA × Transformer (27/10/2026)
 
 A campanha 8b8ac432c0ea selecionou o agrupamento como candidato de velocidade,
 com ganho moderado e aumento de VRAM. O próximo ensaio isola o JEPA dentro dessa

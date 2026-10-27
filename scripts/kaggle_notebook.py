@@ -88,7 +88,7 @@ else:
                "--max-seconds", str(SETTINGS.get("max_seconds", 1800)),
                "--progress-interval", str(SETTINGS.get("progress_interval", 500)),
                "--iterations", str(SETTINGS.get("iterations", 2)),
-               "--models", *SETTINGS.get("models", ["flrm_compressed_grouped_no_jepa", "flrm_compressed_grouped", "baseline_small"]),
+               "--models", *SETTINGS.get("models", ["flrm_compressed_grouped_no_jepa_k1", "flrm_compressed_grouped_no_jepa_k2", "baseline_small"]),
                "--seeds", *map(str, SETTINGS.get("seeds", [42]))]
 
     data = SETTINGS.get("data")

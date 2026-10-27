@@ -11,6 +11,8 @@ MODEL_NAMES = {
     "flrm_compressed_native": "FLRM comprimido — projeção nativa",
     "flrm_compressed_grouped": "FLRM comprimido agrupado + JEPA",
     "flrm_compressed_grouped_no_jepa": "FLRM comprimido agrupado sem JEPA",
+    "flrm_compressed_grouped_no_jepa_k1": "FLRM agrupado sem JEPA (K=1)",
+    "flrm_compressed_grouped_no_jepa_k2": "FLRM agrupado sem JEPA (K=2)",
     "flrm_no_jepa": "FLRM sem JEPA",
 }
 

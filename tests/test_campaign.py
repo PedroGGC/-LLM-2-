@@ -15,6 +15,8 @@ from llm2.runtime import capture_rng
 from llm2.objectives import CausalLanguageModeling
 from llm2.research.objectives import PredictiveObjective
 from llm2.trainer import Trainer
+from llm2.research.accounting import estimate_research_flops
+from llm2.architectures.fractal_recursive import fractal_parameter_formula
 from test_training import training_config, assert_nested_equal
 
 
@@ -141,15 +143,17 @@ def test_profiles_include_baseline_and_all_compressed_modes_once(training_config
     campaign = Campaign(root, tmp_path / "profile-campaign", device="cpu", gpus=[])
     (campaign.output / "configs").mkdir()
     models = ["baseline_small", "flrm_compressed", "flrm_compressed_native", "flrm_compressed_grouped",
-              "flrm_compressed_grouped_no_jepa"]
+              "flrm_compressed_grouped_no_jepa", "flrm_compressed_grouped_no_jepa_k1",
+              "flrm_compressed_grouped_no_jepa_k2"]
     jobs, commands = [], []
     for seed in [42, 43]:
         for model in models:
             cfg = campaign_config(training_config, model, training_config.data.path,
                 tmp_path / f"{model}-{seed}", seed=seed, steps=2, device="cpu", max_seconds=0, iterations=2)
             if model.startswith("flrm"):
-                assert cfg.research.scale_execution == model.removeprefix("flrm_").removesuffix("_no_jepa")
-                assert cfg.research.jepa_weight == (0. if model.endswith("_no_jepa") else .1)
+                selected = model.rsplit("_k", 1)[0] if model.endswith(("_k1", "_k2")) else model
+                assert cfg.research.scale_execution == selected.removeprefix("flrm_").removesuffix("_no_jepa")
+                assert cfg.research.jepa_weight == (0. if selected.endswith("_no_jepa") else .1)
             path = campaign.output / "configs" / f"{model}-{seed}.yaml"
             path.write_text(yaml.safe_dump(cfg.to_dict()), encoding="utf-8")
             jobs.append({"id": f"{model}-{seed}", "model": model, "config": str(path)})
@@ -166,7 +170,7 @@ def test_profiles_include_baseline_and_all_compressed_modes_once(training_config
     assert all(str(args[args.index("--measure-steps")+1]) == "30" for args, _ in commands)
     assert all("profile" in job for job in jobs[:len(models)])
     assert all("profile" not in job for job in jobs[len(models):])
-    assert parser().parse_args([]).models == ["flrm_compressed_grouped_no_jepa", "flrm_compressed_grouped", "baseline_small"]
+    assert parser().parse_args([]).models == ["flrm_compressed_grouped_no_jepa_k1", "flrm_compressed_grouped_no_jepa_k2", "baseline_small"]
 
 
 def test_grouped_jepa_ablation_changes_only_objective_and_preserves_initial_student(training_config, tmp_path):
@@ -204,3 +208,42 @@ def test_legacy_no_jepa_identifiers_keep_original_architectures(training_config,
             tmp_path / model, seed=42, steps=2, device="cpu", max_seconds=0)
         assert cfg.research.architecture == architecture
         assert cfg.research.scale_execution == "reference" and cfg.research.jepa_weight == 0
+
+
+def test_fixed_k_pair_configs_initialization_sampler_and_parameter_cost(training_config, tmp_path):
+    configs = [campaign_config(training_config, f"flrm_compressed_grouped_no_jepa_k{k}",
+        training_config.data.path, tmp_path / f"k{k}", seed=42, steps=2, device="cpu",
+        max_seconds=0, iterations=7) for k in (1, 2)]
+    # Explicit aliases must override a conflicting global setting.
+    assert [cfg.research.iterations for cfg in configs] == [1, 2]
+    resolved = []
+    for cfg in configs:
+        assert cfg.research.jepa_weight == cfg.research.mtp_weight == cfg.research.intermediate_weight == 0
+        assert cfg.research.scale_execution == "compressed_grouped" and cfg.research.latent_steps == 0
+        raw = cfg.to_dict()
+        raw["research"].pop("iterations")
+        raw["train"].pop("output_dir")
+        resolved.append(raw)
+    assert resolved[0] == resolved[1]
+    with Trainer(configs[0]) as trainer:
+        assert type(trainer.objective) is CausalLanguageModeling
+        initial = copy.deepcopy(trainer.model.state_dict())
+        batch = trainer.sampler.next()
+        parameters = trainer.total_parameters
+        assert parameters == trainer.model_parameters == fractal_parameter_formula(configs[0].model, configs[0].research)
+        first_cost = estimate_research_flops(trainer.model, trainer.objective, 8)
+        assert first_cost.internal_iterations == trainer.model.active_iterations() == 1
+    with Trainer(configs[1]) as trainer:
+        assert type(trainer.objective) is CausalLanguageModeling
+        assert trainer.model_parameters == trainer.total_parameters == parameters
+        assert_nested_equal(initial, trainer.model.state_dict())
+        assert_nested_equal(batch, trainer.sampler.next())
+        second_cost = estimate_research_flops(trainer.model, trainer.objective, 8)
+        assert second_cost.internal_iterations == trainer.model.active_iterations() == 2
+        assert second_cost.training_per_sequence > first_cost.training_per_sequence
+    legacy = campaign_config(training_config, "flrm_compressed_grouped_no_jepa", training_config.data.path,
+        tmp_path / "legacy", seed=42, steps=2, device="cpu", max_seconds=0, iterations=3)
+    assert legacy.research.iterations == 3 and legacy.research.jepa_weight == 0
+    baseline = campaign_config(training_config, "baseline_small", training_config.data.path,
+        tmp_path / "baseline", seed=42, steps=2, device="cpu", max_seconds=0, iterations=7)
+    assert baseline.research.iterations == baseline.model.n_layers == 1
