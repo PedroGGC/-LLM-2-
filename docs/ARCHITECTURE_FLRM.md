@@ -34,7 +34,8 @@ projeções de interação. FiLM/pooling/mistura elementwise são exclusões doc
 Os sete testes iniciais passaram em CPU, incluindo memorização, pooling de referência,
 causalidade e retomada com teacher EMA/progressão/checkpointing. A suíte integrada do worktree
 e seus resultados finais estão em VALIDATION.md. F0–F4 e C5/C6 são configs executáveis
-individualmente nessa branch. Nenhuma campanha ou ganho foi demonstrado.
+individualmente nessa branch. Nesse registro inicial ainda não havia campanha GPU;
+os resultados posteriores e suas limitações estão em VALIDATION.md.
 
 ## Executar no worktree isolado
 
@@ -67,4 +68,51 @@ Nenhum desses componentes foi implementado nesta entrega.
 
 `return_logits=False` fornece hidden-only para teacher/diagnóstico e o estimador omite a cabeça correspondente. Não é KV cache nem memória entre segmentos.
 
-Causalidade, saídas/gradientes CPU FP32 com SDPA math, memorização e retomada exata com dropout/acumulação são verificados por `tests/test_fractal_grouped.py`. CUDA FP32 tem testes separados; T4 será medida no Kaggle. Nenhum speedup ou queda de VRAM do modo agrupado foi presumido. A célula e a campanha estão em KAGGLE_T4_CAMPAIGN.md.
+Causalidade, saídas/gradientes CPU FP32 com SDPA math, memorização e retomada exata com dropout/acumulação são verificados por `tests/test_fractal_grouped.py`. CUDA FP32 tem testes separados. A campanha Kaggle 8f86ba9cc48b mediu os dois modos e a revisão 9d8a6efd9be9 avaliou checkpoints intermediários; resultados, hashes e limites estão em VALIDATION.md. O ganho depende da tarefa, e o agrupamento aumentou VRAM no perfil medido. A célula e a campanha estão em KAGGLE_T4_CAMPAIGN.md.
+
+## O que determina os 2,17 milhões de parâmetros
+
+Esse número é o tamanho estrutural do backbone, não uma quantidade de conhecimento,
+uma geração antiga de pesos ou um limite que o treino precise superar. O treino muda
+os valores dos pesos; não aumenta sua quantidade nesta implementação. A contagem
+inclui embeddings compartilhados uma vez e não inclui o teacher/auxiliares de treino.
+
+O perfil d_model=384, hidden_dim=1024, vocabulário byte de 257 símbolos, três escalas
+compartilhadas e core_layers=1 tem exatamente 2.167.308 parâmetros. Distribuição:
+98.688 embedding, 1.918.464 núcleo, 2.304 FiLM, 147.468 interação, 384 normalização.
+O comentário histórico de ~10,7M na configuração fractal estava incorreto.
+
+`model.n_layers` controla o Transformer convencional. Para FLRM/LRM, a profundidade
+do núcleo usa `research.core_layers`. Repetições usam `iterations + latent_steps`;
+com pesos compartilhados, repetir o núcleo aumenta trabalho e pode aumentar memória
+de ativações, mas não cria novos parâmetros.
+
+| Camadas no núcleo | Iterações | Parâmetros backbone calculados |
+|---:|---:|---:|
+| 1 | 1 | 2.167.308 |
+| 1 | 2 | 2.167.308 |
+| 2 | 1 | 3.937.548 |
+| 6 | 1 | 11.018.508 |
+
+Contagens conferidas por enumeração em meta e fórmula; as variantes maiores não
+foram treinadas/medidas nessa verificação. Mais camadas/iterações não garantem loss
+menor (melhor qualidade); precisam de comparação. Menos parâmetros significa modelo
+menor, não automaticamente mais inteligente ou mais eficiente para a mesma qualidade.
+
+A campanha atual fixa core_layers=1 e iterations=1 para FLRM em seu construtor de
+configuração, mesmo que outro preset-base contenha outros valores. Uma próxima matriz
+de profundidade precisa expor e registrar essa escolha explicitamente no executor.
+
+O FLRM atual é um núcleo de Transformer compartilhado entre três representações de
+contexto (token, média causal de janela 4 e média do prefixo), condicionado por FiLM
+e combinado por interação aprendida. Todas as escalas conservam T posições; não há
+compressão real da sequência nem evidência de propriedade fractal matemática. Com
+uma iteração, só a escala 0 é lida para a saída e não há segunda rodada de feedback
+entre escalas. Isso limita a hipótese testada, sem invalidar causalidade ou o código.
+
+Próxima investigação recomendada: controles de tamanho/objetivo, múltiplas seeds,
+comparação de uma/duas iterações e ablação das escalas antes de redesenho maior. Preservar
+V1 e seus checkpoints como referência. Resultados em corpus byte pequeno, frases
+geradas e indicadores numéricos de não colapso não comprovam gramática geral,
+raciocínio ou a tese inteira do projeto. Fibonacci/DEQ/compressão exigem experimentos
+próprios; sua motivação matemática não substitui evidência de utilidade no modelo.
