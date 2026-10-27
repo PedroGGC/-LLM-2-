@@ -180,3 +180,12 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
 - O ZIP de integração passou em `ZipFile.testzip()`, com 112 arquivos e 1.339.174 bytes. Não contém tensores/checkpoints retomáveis. Essa execução e as suítes concorrentes são verificações de engenharia, não benchmarks de throughput/qualidade CPU.
 - Corrigidos na revisão o default de inferência para respeitar FP32 do checkpoint, mapeamento de GPUs sob CUDA_VISIBLE_DEVICES e rótulos de avaliação completa/parcial. O runner T4 seleciona testes CUDA FP32; não exige BF16 nativo/emulado.
 - `compileall`, parse do bootstrap e `git diff --check` passaram. Não houve execução CUDA/T4/BF16/Inductor, energia ou confirmação de ganho de velocidade/VRAM. O próximo resultado empírico de GPU virá do Kaggle pelo navegador.
+
+### Correção da máscara de GPU herdada — 26/10/2026
+
+- A execução Kaggle fixada em `10b05f554947efa1171d298e774608a25f20e0a7` detectou duas T4, mas parou na suíte CPU antes de qualquer treino: **1 failed, 93 passed, 8 deselected**. O teste de configuração sem máscara herdou `CUDA_VISIBLE_DEVICES=0` do subprocesso e pediu o índice lógico 1. Avisos de matplotlib/pyparsing não causaram a falha.
+- Reprodução CPU local com a mesma variável: **1 failed**, 0,69 s; `runs/kaggle-visible-gpu-repro.log`. O teste agora remove explicitamente a máscara ao verificar o cenário sem máscara. O helper valida índice lógico e disponibilidade, preserva UUID/MIG e nunca escapa de uma máscara vazia, desativada ou insuficiente por fallback.
+- Testes de campanha sob `CUDA_VISIBLE_DEVICES=0`: **20 passed**, 15,63 s; `runs/kaggle-visible-gpu-targeted.log`. Incluem mapeamento de máscara unitária/múltipla/UUID/MIG, índices inválidos, CUDA desativado, preservação de ambiente e a campanha CPU em subprocessos.
+- Suíte comum completa sob a mesma máscara: **95 passed, 5 skipped**, 111,08 s; `runs/kaggle-visible-gpu-full-pytest.log`.
+- Suíte fractal completa sob a mesma máscara: **109 passed, 8 skipped**, 124,72 s; `../LLM 2-fractal-lrm/runs/kaggle-visible-gpu-full-pytest.log`.
+- Todos os skips locais continuam sendo CUDA indisponível. `compileall` dos arquivos alterados e `git diff --check` passaram. A correção não modifica modelos, objetivos, treino ou retomada; os testes CUDA FP32 permanecem habilitados na próxima campanha Kaggle. Ainda não há resultado de treino ou benchmark T4 desta entrega.
