@@ -42,6 +42,10 @@ class ScaleConditioning(nn.Module):
         gamma, beta = self.film[index].unbind(0)
         return value * (1 + 0.1 * gamma.tanh()) + 0.1 * beta
 
+    def forward_batched(self, contexts):
+        gamma, beta = self.film.unbind(1)
+        return contexts * (1 + 0.1 * gamma.tanh()[:, None, None, :]) + 0.1 * beta[:, None, None, :]
+
 
 class CrossScaleInteraction(nn.Module):
     def __init__(self, scales, dim):
@@ -57,6 +61,14 @@ class CrossScaleInteraction(nn.Module):
             sum(weights[i, j] * other for j, other in enumerate(states)))
             for i, value in enumerate(states))
 
+    def forward_batched(self, states):
+        weights = self.mixing.softmax(-1)
+        # The reference sums FP32 states with FP32 mixing weights under autocast.
+        # Do not silently turn that sum into a BF16 matmul.
+        with torch.autocast(device_type=states.device.type, enabled=False):
+            mixed = torch.einsum("ij,jbtd->ibtd", weights.float(), states.float()).to(states.dtype)
+        return states + self.gate.sigmoid()[:, None, None, None] * self.projection(mixed)
+
 
 class SharedFractalCore(SharedRecursiveCore):
     """The exact common recursive operation, reused across scales without duplicate weights."""
@@ -67,12 +79,22 @@ class FractalRecursiveBlock(nn.Module):
         super().__init__()
         count = len(research.scales)
         self.shared = research.share_scales
+        self.execution = research.scale_execution
+        if self.execution == "batched" and not self.shared:
+            raise ValueError("batched execution requires shared scale cores")
         self.cores = nn.ModuleList([SharedFractalCore(config, research.core_layers)
                                    for _ in range(1 if self.shared else count)])
         self.conditioning = ScaleConditioning(count, config.d_model) if research.scale_conditioning else None
         self.interaction = CrossScaleInteraction(count, config.d_model)
 
     def forward(self, states, contexts):
+        if self.execution == "batched":
+            stacked_states, stacked_contexts = torch.stack(states), torch.stack(contexts)
+            if self.conditioning is not None:
+                stacked_contexts = self.conditioning.forward_batched(stacked_contexts)
+            shape = stacked_states.shape
+            values = self.cores[0](stacked_states.flatten(0, 1), stacked_contexts.flatten(0, 1))
+            return self.interaction.forward_batched(values.reshape(shape)).unbind(0)
         values = []
         for index, (state, context) in enumerate(zip(states, contexts)):
             if self.conditioning is not None:
@@ -83,6 +105,7 @@ class FractalRecursiveBlock(nn.Module):
 
 class FractalLatentModel(Backbone):
     architecture_version = 1
+    supports_hidden_only = True
 
     def __init__(self, config, research):
         super().__init__()
@@ -104,7 +127,7 @@ class FractalLatentModel(Backbone):
     def set_training_step(self, step):
         self.training_step.fill_(step)
 
-    def forward(self, input_ids, *, state=None, iterations=None):
+    def forward(self, input_ids, *, state=None, iterations=None, return_logits=True):
         if state is not None:
             raise ValueError("cross-segment state is unsupported; reset for every independent input")
         if input_ids.ndim != 2 or not 0 < input_ids.shape[1] <= self.config.max_seq_len:
@@ -125,15 +148,15 @@ class FractalLatentModel(Backbone):
             if self.research.record_states or self.research.intermediate_weight:
                 history.append(self.norm(states[0]))
         hidden = self.norm(states[0])
-        return ModelOutput(logits=self.lm_head(hidden), hidden_states=hidden,
+        return ModelOutput(logits=self.lm_head(hidden) if return_logits else None, hidden_states=hidden,
                            state=LatentState(states[0], steps), intermediate_states=tuple(history))
 
-    def analytical_cost(self, seq_len):
+    def analytical_cost(self, seq_len, *, include_logits=True):
         d, h, s = self.config.d_model, self.config.hidden_dim, seq_len
         count, steps = len(self.research.scales), self.active_iterations()
         per_core = self.research.core_layers*(8*s*d*d + 6*s*d*h + 4*s*s*d) + 2*s*d*d
         per_iteration = count * (per_core + 2*s*d*d)
-        forward = steps * per_iteration + 2*s*d*self.config.vocab_size
+        forward = steps * per_iteration + (2*s*d*self.config.vocab_size if include_logits else 0)
         recompute = steps * per_iteration if self.training and self.research.gradient_checkpointing else 0
         return forward, recompute, steps
 

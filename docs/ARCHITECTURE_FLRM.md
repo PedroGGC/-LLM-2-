@@ -27,7 +27,7 @@ devem ser invariantes sob mudanças futuras, incluindo posições na fronteira d
 A geração continua autoregressiva e recalcula a janela, sem KV cache nem memória entre documentos.
 
 F1–F4 mantêm o número de escalas e as operações por escala explícitos. Compartilhar pesos reduz
-parâmetros, mas não o número de chamadas. Cada iteração custa três chamadas do core e as
+parâmetros, mas não o número de chamadas. Cada iteração custa o equivalente a três processamentos do core e as
 projeções de interação. FiLM/pooling/mistura elementwise são exclusões documentadas da estimativa.
 `fractal_parameter_formula` confere parâmetros únicos, incluindo interação/condicionamento.
 
@@ -60,3 +60,11 @@ temporários e não depende do corpus preparado na branch comum.
 Futuro: escalas realmente comprimidas com máscaras corretas, NCM discreto, memória entre
 escalas, DeltaNet/Mamba, DEQ, parada aprendida, profundidade dinâmica e kernels Triton.
 Nenhum desses componentes foi implementado nesta entrega.
+
+## Execução agrupada P01–P06
+
+`research.scale_execution: reference` preserva a execução sequencial. A opção `batched`, somente com `share_scales: true`, empilha estados/contextos em S×B, aplica uma chamada do núcleo compartilhado e vetoriza FiLM/interação. Os parâmetros e o número analítico de operações são iguais; ordem de redução e RNG/dropout podem mudar. A soma de mistura permanece FP32 sob autocast. O pooling continua uma soma prefixada por encoder; não foi trocado por projeções que mudariam o modelo.
+
+`return_logits=False` fornece hidden-only para teacher/diagnóstico e o estimador omite a cabeça correspondente. Não é KV cache nem memória entre segmentos.
+
+Causalidade, saídas/gradientes CPU FP32 com SDPA math, memorização e retomada exata com dropout/acumulação são verificados por `tests/test_fractal_grouped.py`. CUDA FP32 tem testes separados; T4 será medida no Kaggle. Nenhum speedup ou queda de VRAM do modo agrupado foi presumido. A célula e a campanha estão em KAGGLE_T4_CAMPAIGN.md.
