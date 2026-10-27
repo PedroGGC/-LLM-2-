@@ -10,9 +10,11 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import threading
+import time
 import traceback
 import uuid
 import zipfile
@@ -24,6 +26,7 @@ from ..checkpoint import read_checkpoint_metadata
 from ..config import ExperimentConfig, ResearchConfig, load_config
 from ..data import PreparedData, prepare_data, sha256_file, write_json
 from ..runtime import source_provenance
+from .presentation import MODEL_NAMES, comparison_text, legend, number, progress, stage
 
 
 MODELS = ("baseline", "baseline_small", "baseline_jepa", "lrm", "lrm_no_jepa",
@@ -109,14 +112,20 @@ class Campaign:
             write_json(temporary, self.manifest)
             os.replace(temporary, self.output / "campaign.json")
 
-    def command(self, arguments, log_name, *, gpu=None):
+    def command(self, arguments, log_name, *, gpu=None, job=None):
         if self.cancelled.is_set():
             raise RuntimeError("campaign cancelled after another worker failed")
         path = self.output / "logs" / log_name
         path.parent.mkdir(parents=True, exist_ok=True)
         command = [sys.executable, *map(str, arguments)]
         env = worker_environment(self.root, gpu)
-        print(f"Running {log_name}; full output: {path}", flush=True)
+        action = next((name for name in ("train", "evaluate", "benchmark", "generate", "diagnose", "profile")
+                       if name in arguments), None)
+        title = {"train": "Treinamento", "evaluate": "Validação completa (loss: menor = melhor)",
+                 "benchmark": "Velocidade de geração (maior = melhor)", "generate": "Exemplo de texto gerado",
+                 "diagnose": "Diagnóstico das representações", "profile": "Perfil isolado de velocidade/memória"}.get(action, "Verificação de testes")
+        print(f"\n▶ {title} — {log_name}\n  Log técnico completo: {path}", flush=True)
+        started = time.monotonic()
         with path.open("x", encoding="utf-8") as stream:
             stream.write(json.dumps({"command": command, "cwd": str(self.root),
                                      "CUDA_VISIBLE_DEVICES": env.get("CUDA_VISIBLE_DEVICES")})+"\n")
@@ -130,7 +139,14 @@ class Campaign:
                     stream.write(line)
                     stream.flush()
                     if line.startswith("TRAIN "):
-                        print(f"[{log_name}] {line.rstrip()}", flush=True)
+                        try:
+                            metrics = json.loads(line[6:])
+                        except (ValueError, TypeError):
+                            continue  # The original line is already preserved in the technical log.
+                        if job and (metrics["step"] % 100 == 0 or metrics["step"] >= job["max_steps"]):
+                            print(progress(metrics, job, time.monotonic()-started), flush=True)
+                    elif action == "generate" or re.search(r"\d+ (passed|failed|skipped|deselected)", line):
+                        print(line.rstrip(), flush=True)
                 returncode = process.wait()
             finally:
                 process.stdout.close()
@@ -142,7 +158,7 @@ class Campaign:
             if returncode:
                 tail = "\n".join(path.read_text(encoding="utf-8").splitlines()[-40:])
                 raise RuntimeError(f"command exited {returncode}; complete log: {path}\n{tail}")
-        print(f"Finished {log_name}", flush=True)
+        print(f"✓ Etapa concluída: {log_name}", flush=True)
 
     def abort(self):
         self.cancelled.set()
@@ -163,7 +179,7 @@ class Campaign:
                 self.save()
             try:
                 self.command(["-m", "llm2", "train", "--config", job["config"]],
-                             f"{job['id']}-train.log", gpu=gpu)
+                             f"{job['id']}-train.log", gpu=gpu, job=job)
                 directory = Path(job["directory"])
                 summary = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
                 checkpoint = Path(summary["checkpoint"]).resolve()
@@ -181,7 +197,13 @@ class Campaign:
                     job.update(status="trained", checkpoint=str(checkpoint), stop_reason=summary["stop_reason"],
                                step=summary["step"], checkpoint_model_sha256=metadata["files"]["model.safetensors"])
                     self.save()
-                print(f"Trained {job['id']}: step={summary['step']} reason={summary['stop_reason']}", flush=True)
+                reason = {"max_steps": "atingiu o número de passos planejado",
+                          "requested_step": "atingiu o passo solicitado",
+                          "time_budget": "atingiu o limite de tempo; encerramento antecipado",
+                          "token_budget": "atingiu o orçamento de alvos; encerramento antecipado",
+                          "learning_flop_budget": "atingiu o orçamento estimado de computação; encerramento antecipado",
+                          }.get(summary["stop_reason"], summary["stop_reason"])
+                print(f"✓ {MODEL_NAMES.get(job['model'], job['model'])}: {summary['step']} passos; {reason}.", flush=True)
             except Exception as exc:
                 with self.lock:
                     job.update(status="failed", error=str(exc))
@@ -204,6 +226,8 @@ class Campaign:
             raise ValueError("final evaluation scope/dataset mismatch")
         if result["checkpoint_model_sha256"] != job["checkpoint_model_sha256"]:
             raise ValueError("final evaluation belongs to different weights")
+        print(f"  ✓ Loss LM COMPLETA: {number(result['validation_loss'], 6)} (menor = melhor); "
+              f"{number(result['validation_tokens'], 0)} alvos avaliados.", flush=True)
         if benchmark:
             self.command(["-m", "llm2", "benchmark", *common, "--prompt", "First Citizen:",
                           "--warmup-tokens", "8", "--max-new-tokens", "64",
@@ -267,6 +291,9 @@ def parser():
     result.add_argument("--cuda-tests", action="store_true")
     result.add_argument("--evaluate-checkpoints", nargs="*", default=[],
                         help="optional old checkpoints; original prepared data must match their fingerprints")
+    result.add_argument("--review-campaign", help="evaluate saved checkpoints only; never starts training")
+    result.add_argument("--evaluation-root", help="original verified source checkout for saved checkpoints")
+    result.add_argument("--review-steps", nargs="+", type=int, default=[500, 1000, 1500, 2000])
     return result
 
 
@@ -296,6 +323,8 @@ def run_campaign(args):
     campaign = Campaign(root, output, device=args.device, gpus=args.gpus)
     failure = None
     try:
+        legend()
+        stage(1, 7, "PREPARAR E CONFERIR OS DADOS")
         if args.data:
             data_path = Path(args.data).resolve()
         else:
@@ -319,6 +348,9 @@ def run_campaign(args):
                     (sources / f"{index}-{raw_path.name}").write_bytes(raw_path.read_bytes())
                 campaign.manifest["raw_sources"].append(entry)
         campaign.save()
+        stage(2, 7, "TESTES DE CORREÇÃO — CPU E GPU")
+        if not (args.cpu_tests or args.cuda_tests):
+            print("Testes não solicitados nesta execução.", flush=True)
         for index, checkpoint in enumerate(args.evaluate_checkpoints):
             destination = output / "existing_evaluations" / str(index)
             campaign.command(["-m", "llm2", "evaluate", "--checkpoint", checkpoint,
@@ -344,10 +376,16 @@ def run_campaign(args):
                 path = output / "configs" / f"{run_id}.yaml"
                 path.write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=True), encoding="utf-8")
                 jobs.append({"id": run_id, "model": model, "seed": seed, "gpu_slot": slot,
+                             "max_steps": cfg.train.max_steps,
                              "physical_gpu": worker_environment(root, slot).get("CUDA_VISIBLE_DEVICES"),
                              "directory": str(directory), "config": str(path), "status": "pending"})
         campaign.manifest["status"] = "training"
         campaign.save()
+        stage(3, 7, "TREINAMENTO — MODELOS DISTRIBUÍDOS ENTRE AS GPUs")
+        for job in jobs:
+            print(f"  {MODEL_NAMES.get(job['model'], job['model'])} / seed {job['seed']} → "
+                  f"{'GPU física '+str(job['physical_gpu']) if args.device == 'cuda' else 'CPU'}", flush=True)
+        print("Progresso a cada 100 passos; ETA é aproximado. Loss exibida durante o treino pode ser parcial.", flush=True)
         with ThreadPoolExecutor(max_workers=len(campaign.gpus)) as workers:
             futures = [workers.submit(campaign.train_worker, jobs[i::len(campaign.gpus)], gpu)
                        for i, gpu in enumerate(campaign.gpus)]
@@ -355,23 +393,43 @@ def run_campaign(args):
                 future.result()
         campaign.manifest["status"] = "evaluating"
         campaign.save()
-        for job in jobs:
+        stage(4, 7, "VALIDAÇÃO COMPLETA E GERAÇÃO — UMA GPU POR VEZ")
+        print("A segunda GPU pode ficar ociosa nesta etapa. Isso é esperado.", flush=True)
+        for index, job in enumerate(jobs, 1):
+            print(f"\nModelo {index}/{len(jobs)}: {MODEL_NAMES.get(job['model'], job['model'])} / seed {job['seed']}", flush=True)
             campaign.evaluate_run(job, benchmark=not args.no_benchmark, diagnostics=not args.no_diagnostics)
         if len({job["validation_tokens"] for job in jobs}) != 1:
             raise ValueError("models were not evaluated on the same number of tokens")
+        stage(5, 7, "PERFIL DE DESEMPENHO ISOLADO")
         if args.profile:
             campaign.profile_runs(jobs, args.warmup_steps, args.measure_steps)
+        else:
+            print("Perfil não solicitado nesta execução.", flush=True)
+        stage(6, 7, "COMPARAÇÃO FINAL — MÉTRICAS EXPLICADAS")
         from .reporting import generate_report
         generate_report([job["directory"] for job in jobs], output / "report")
+        rows = []
+        for job in jobs:
+            directory = Path(job["directory"])
+            summary = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
+            benchmark_path = Path(job["evaluation"]).parent / "benchmark.json"
+            benchmark = json.loads(benchmark_path.read_text(encoding="utf-8")) if benchmark_path.exists() else {}
+            rows.append({**summary, "model": job["model"], "seed": job["seed"],
+                         "validation_loss": job["full_validation_loss"],
+                         "generation_tokens_per_second": benchmark.get("tokens_per_second")})
+        text = comparison_text(rows)
+        (output / "report/resumo-pt.md").write_text(text, encoding="utf-8")
+        print(text, flush=True)
         campaign.manifest["status"] = "complete"
     except Exception as exc:
         failure = exc
         campaign.abort()
         campaign.manifest.update(status="failed", error=str(exc), traceback=traceback.format_exc())
     finally:
+        stage(7, 7, "EXPORTAR RESULTADOS" if failure is None else "EXPORTAR RESULTADOS PARCIAIS — HOUVE UMA FALHA")
         campaign.save()
         archive = export_campaign(output)
-        print(f"Campaign: {output}\nAnalysis ZIP: {archive}", flush=True)
+        print(f"Pasta da campanha: {output}\nZIP para enviar à análise: {archive}", flush=True)
     if failure is not None:
         raise RuntimeError(f"campaign failed; logs and partial results preserved in {archive}") from failure
     return {"status": "complete", "campaign": str(output), "results_zip": str(archive),
@@ -380,7 +438,19 @@ def run_campaign(args):
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    print(json.dumps(run_campaign(args), indent=2, ensure_ascii=False))
+    try:
+        if args.review_campaign:
+            from .checkpoint_review import review_checkpoints
+            result = review_checkpoints(args)
+        else:
+            result = run_campaign(args)
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(f"\n❌ PROCESSO INTERROMPIDO: {exc}\nConfira o motivo e os logs indicados acima.", flush=True)
+        raise
+    if result["status"] == "complete":
+        print("\n✓ PROCESSO CONCLUÍDO COM SUCESSO. O ZIP de análise está indicado acima.", flush=True)
+    else:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -2,7 +2,32 @@
 
 Esta entrega implementa P01–P06. GPU é executada **no notebook do Kaggle pelo navegador**. Não é preciso instalar nada no computador pessoal. Localmente foram/serão feitos testes CPU; os testes CUDA deste pacote só confirmam suporte quando executados no Kaggle.
 
-## Executar
+## Próximo passo recomendado: comparar checkpoints já salvos
+
+Esse modo não inicia treino. Compara a qualidade dos checkpoints de 500, 1.000, 1.500 e 2.000 passos, mantendo os pesos e dados originais. Loss de validação **menor = melhor** previsão dos próximos tokens. Não mede novamente velocidade.
+
+Use esta célula com o commit informado na entrega e a pasta da campanha anterior:
+
+```python
+import os
+from urllib.request import urlopen
+
+REVISION = "COLE_O_COMMIT_DE_40_CARACTERES_DA_ENTREGA"
+os.environ["LLM2_REVISION"] = REVISION
+LLM2_SETTINGS = {
+    "mode": "avaliar_salvos",
+    "previous_campaign": "/kaggle/working/llm2-campaign-8f86ba9cc48b",
+    "review_steps": [500, 1000, 1500, 2000],
+}
+url = f"https://raw.githubusercontent.com/PedroGGC/-LLM-2-/{REVISION}/scripts/kaggle_notebook.py"
+exec(compile(urlopen(url, timeout=60).read().decode("utf-8-sig"), url, "exec"), globals())
+```
+
+Se a sessão anterior acabou, anexe os outputs da versão salva ao notebook e ajuste `previous_campaign` para a pasta restaurada, por exemplo em `/kaggle/input/.../llm2-campaign-8f86ba9cc48b`. Essa pasta deve conter `campaign.json`, `data` e `runs` com os pesos/estado dos checkpoints. O ZIP de análise contém apenas metadados e não basta. Se o dataset original foi salvo em outra pasta, informe também `"data": "/caminho/para/dados-originais"`; seu fingerprint precisa continuar igual.
+
+O bootstrap preserva ou recupera o checkout do commit original para avaliar os pesos antigos. O novo executor verifica hashes do código/dados/pesos e não carrega o pickle do optimizer. A avaliação completa de um checkpoint já presente pode ser reutilizada somente após conferir identidade, escopo e médias por janela. Novas avaliações e seu ZIP ficam em outra pasta `llm2-review-...`. A comparação seleciona o menor erro observado na validação; não substitui teste independente.
+
+## Executar uma nova campanha de treino
 
 Ative Internet e o acelerador GPU T4 x2. Cole a célula abaixo, usando o **commit de 40 caracteres informado na entrega** em REVISION. A célula baixa o bootstrap daquele commit e executa o fluxo no Kaggle.
 
@@ -12,6 +37,7 @@ Ative Internet e o acelerador GPU T4 x2. Cole a célula abaixo, usando o **commi
     REVISION = "COLE_O_COMMIT_DE_40_CARACTERES_DA_ENTREGA"
     os.environ["LLM2_REVISION"] = REVISION
     LLM2_SETTINGS = {
+        "mode": "treinar",
         "steps": 2000,
         "seeds": [42],
         "models": ["baseline", "lrm", "flrm_reference", "flrm_batched"],
@@ -21,6 +47,16 @@ Ative Internet e o acelerador GPU T4 x2. Cole a célula abaixo, usando o **commi
     exec(compile(urlopen(url, timeout=60).read().decode("utf-8-sig"), url, "exec"), globals())
 
 O bootstrap cria um checkout separado pelo commit, usa o Python do notebook para instalar dependências e não instala um wheel CPU de Torch por cima da instalação CUDA. Não faz pull sobre os experimentos existentes. O corpus padrão é tinyshakespeare (~1,1 MB) de uma revisão fixada de char-rnn. Documentos são parágrafos, com deduplicação exata antes do split; o tokenizer byte não usa validação para aprender vocabulário. Isso continua sendo um teste pequeno de modelagem de bytes, não linguagem geral.
+
+### Como acompanhar a saída
+
+- Preparação: hardware, código/dependências e início da campanha.
+- Treino: etapas numeradas, modelo/seed/GPU física e percentual a cada 100 passos. O tempo restante é uma estimativa, não uma promessa. Cada GPU recebe um processo por vez; as duas não somam VRAM para um único modelo.
+- Loss LM de validação: **menor = melhor** previsão. A saída durante o treino é marcada como **PARCIAL**; a tabela final usa todas as janelas completas.
+- Velocidade de treino/geração: **maior = melhor**, com unidades explícitas. Treino e geração são tarefas diferentes e suas velocidades não devem ser misturadas.
+- Memória VRAM: **menor = menor consumo de recurso** para a mesma tarefa. Parâmetros: menos significa modelo menor; não garante melhor qualidade.
+- Geração: mostra o texto produzido. Diagnósticos e medições técnicas ficam nos logs; a tabela em português também é salva em `report/resumo-pt.md`.
+- `n/d`: medição indisponível, não zero. Qualquer falha interrompe o processo; o indicador de conclusão só aparece após sucesso real.
 
 Para usar os dados preparados anteriores, acrescente a LLM2_SETTINGS:
 

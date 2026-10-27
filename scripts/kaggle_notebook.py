@@ -14,84 +14,120 @@ import uuid
 
 PIN = os.environ.get("LLM2_REVISION", "")
 SETTINGS = globals().get("LLM2_SETTINGS", {})
+MODE = SETTINGS.get("mode", "treinar")
+if MODE not in ("treinar", "avaliar_salvos"):
+    raise ValueError("Escolha mode='treinar' ou mode='avaliar_salvos'.")
 if not re.fullmatch(r"[0-9a-f]{40}", PIN):
-    raise ValueError("Set LLM2_REVISION to the exact published 40-character commit from the delivery.")
+    raise ValueError("Informe em LLM2_REVISION o commit de 40 caracteres fornecido na entrega.")
 WORK = Path("/kaggle/working")
 if not WORK.is_dir():
-    raise RuntimeError("Run this cell in Kaggle Notebooks with Internet and GPU T4x2 enabled.")
+    raise RuntimeError("Execute esta célula no site Kaggle com Internet e GPU T4x2 ativadas.")
+
+print("="*78)
+print("🚀 LLM2-Lab — comparação de modelos no Kaggle")
+print("Modo:", "AVALIAR CHECKPOINTS SALVOS — SEM NOVO TREINO" if MODE == "avaliar_salvos" else "NOVA CAMPANHA DE TREINO")
+print("="*78)
+print("\n[Preparação 1/3] Conferir as GPUs")
 
 import torch
-if not torch.cuda.is_available() or torch.cuda.device_count() < 2:
-    raise RuntimeError("In Kaggle Settings select GPU T4 x2; this campaign requires two visible CUDA GPUs.")
+required_gpus = 2 if MODE == "treinar" else 1
+if not torch.cuda.is_available() or torch.cuda.device_count() < required_gpus:
+    raise RuntimeError(f"Ative GPU T4 x2 nas configurações do Kaggle. Este modo precisa de {required_gpus} GPU(s).")
 torch_release = tuple(int(part) for part in str(torch.__version__).split("+")[0].split(".")[:2])
 if not (torch_release[0] == 2 and torch_release[1] >= 5):
-    raise RuntimeError("Use a Kaggle image with CUDA PyTorch >=2.5,<3; this bootstrap will not replace Torch automatically.")
-print("GPUs:", [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())])
+    raise RuntimeError("Use uma imagem Kaggle com PyTorch CUDA >=2.5,<3; Torch não será substituído automaticamente.")
+for index in range(torch.cuda.device_count()):
+    print(f"  ✓ GPU {index}: {torch.cuda.get_device_name(index)}")
+print("A GPU também usa CPU para coordenar operações; CPU ocupada não significa treino sem GPU.")
 
-REPO = WORK / f"llm2-{PIN[:12]}"
 URL = "https://github.com/PedroGGC/-LLM-2-.git"
-if not REPO.exists():
-    subprocess.run(["git", "clone", "--no-checkout", "--single-branch",
-                    "--branch", "experiment/fractal-lrm", URL, str(REPO)], check=True)
-    subprocess.run(["git", "-C", str(REPO), "checkout", "--detach", PIN], check=True)
-head = subprocess.check_output(["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True).strip()
-if head != PIN:
-    raise RuntimeError("Existing checkout has another commit; choose a fresh directory, do not reset old runs.")
-subprocess.run(["git", "-C", str(REPO), "diff", "--exit-code", "HEAD"], check=True)
+
+
+def checkout(revision):
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("A revisão do código precisa ter 40 caracteres hexadecimais.")
+    repo = WORK / f"llm2-{revision[:12]}"
+    if not repo.exists():
+        subprocess.run(["git", "clone", "--no-checkout", "--single-branch",
+                        "--branch", "experiment/fractal-lrm", URL, str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "checkout", "--detach", revision], check=True)
+    head = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    if head != revision:
+        raise RuntimeError(f"O checkout {repo} tem outra revisão. Os experimentos antigos serão preservados.")
+    subprocess.run(["git", "-C", str(repo), "diff", "--exit-code", "HEAD"], check=True)
+    return repo
+
+
+print("\n[Preparação 2/3] Preparar o código e as dependências do notebook")
+REPO = checkout(PIN)
 subprocess.run([sys.executable, "-m", "pip", "install", "--quiet",
                 "-e", str(REPO)+"[dev,research]"], check=True)
 
 SESSION = uuid.uuid4().hex[:12]
-OUTPUT = WORK / f"llm2-campaign-{SESSION}"
-command = [sys.executable, str(REPO / "scripts/run_kaggle.py"), "--execute",
-           "--output", str(OUTPUT), "--device", "cuda", "--gpus", "0", "1",
-           "--steps", str(SETTINGS.get("steps", 2000)),
-           "--max-seconds", str(SETTINGS.get("max_seconds", 1800)),
-           "--models", *SETTINGS.get("models", ["baseline", "lrm", "flrm_reference", "flrm_batched"]),
-           "--seeds", *map(str, SETTINGS.get("seeds", [42]))]
-
-data = SETTINGS.get("data")
-inputs = SETTINGS.get("input", [])
-if data and inputs:
-    raise ValueError("Choose an existing prepared data folder OR raw input files.")
-if data:
-    command += ["--data", str(data)]
-elif inputs:
-    command += ["--input", *map(str, inputs)]
+OUTPUT = WORK / f"{'llm2-review' if MODE == 'avaliar_salvos' else 'llm2-campaign'}-{SESSION}"
+if MODE == "avaliar_salvos":
+    previous = Path(SETTINGS.get("previous_campaign", ""))
+    if not (previous / "campaign.json").is_file():
+        raise FileNotFoundError("Não encontrei a campanha anterior. Em previous_campaign, indique a pasta dos "
+                                "outputs completos salvos. O ZIP de análise sozinho não contém os pesos.")
+    old = json.loads((previous / "campaign.json").read_text(encoding="utf-8"))
+    original_repo = checkout(old["provenance"]["git"]["commit"])
+    command = [sys.executable, str(REPO / "scripts/run_kaggle.py"), "--execute",
+               "--review-campaign", str(previous), "--evaluation-root", str(original_repo),
+               "--output", str(OUTPUT), "--device", "cuda", "--gpus", "0",
+               "--review-steps", *map(str, SETTINGS.get("review_steps", [500, 1000, 1500, 2000]))]
+    if SETTINGS.get("data"):
+        command += ["--data", str(SETTINGS["data"])]
 else:
-    # ~1.1 MB, immutable public source revision; no large dataset download.
-    corpus_revision = "6f9487a6fe5b420b7ca9afb0d7c078e37c1d1b4e"
-    corpus_url = f"https://raw.githubusercontent.com/karpathy/char-rnn/{corpus_revision}/data/tinyshakespeare/input.txt"
-    folder = WORK / f"llm2-input-{SESSION}"
-    folder.mkdir(exist_ok=False)
-    with urlopen(corpus_url, timeout=60) as response:
-        content = response.read(2*1024*1024+1)
-    if not content or len(content) > 2*1024*1024:
-        raise ValueError("Unexpected corpus size; download limited to 2 MiB.")
-    content.decode("utf-8")
-    corpus = folder / "tinyshakespeare.txt"
-    corpus.write_bytes(content)
-    provenance = {"url": corpus_url, "sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)}
-    (folder / "source.json").write_text(json.dumps(provenance, indent=2), encoding="utf-8")
-    command += ["--input", str(corpus)]
-    print("Corpus:", provenance)
+    command = [sys.executable, str(REPO / "scripts/run_kaggle.py"), "--execute",
+               "--output", str(OUTPUT), "--device", "cuda", "--gpus", "0", "1",
+               "--steps", str(SETTINGS.get("steps", 2000)),
+               "--max-seconds", str(SETTINGS.get("max_seconds", 1800)),
+               "--models", *SETTINGS.get("models", ["baseline", "lrm", "flrm_reference", "flrm_batched"]),
+               "--seeds", *map(str, SETTINGS.get("seeds", [42]))]
 
-if SETTINGS.get("profile", True):
-    command += ["--profile"]
-if SETTINGS.get("cpu_tests", True):
-    command += ["--cpu-tests"]
-if SETTINGS.get("cuda_tests", True):
-    command += ["--cuda-tests"]
-if not SETTINGS.get("benchmark", True):
-    command += ["--no-benchmark"]
-if not SETTINGS.get("diagnostics", True):
-    command += ["--no-diagnostics"]
-if SETTINGS.get("evaluate_checkpoints"):
-    command += ["--evaluate-checkpoints", *map(str, SETTINGS["evaluate_checkpoints"])]
-print("Pinned commit:", PIN)
-print("Fresh output:", OUTPUT)
-print("Models:", SETTINGS.get("models", ["baseline", "lrm", "flrm_reference", "flrm_batched"]))
-print("CPU/GPU tests and profiling will be recorded; failed commands stop the campaign.")
+    data = SETTINGS.get("data")
+    inputs = SETTINGS.get("input", [])
+    if data and inputs:
+        raise ValueError("Escolha a pasta de dados preparados OU arquivos brutos, não ambos.")
+    if data:
+        command += ["--data", str(data)]
+    elif inputs:
+        command += ["--input", *map(str, inputs)]
+    else:
+        # ~1.1 MB, immutable public source revision; no large dataset download.
+        corpus_revision = "6f9487a6fe5b420b7ca9afb0d7c078e37c1d1b4e"
+        corpus_url = f"https://raw.githubusercontent.com/karpathy/char-rnn/{corpus_revision}/data/tinyshakespeare/input.txt"
+        folder = WORK / f"llm2-input-{SESSION}"
+        folder.mkdir(exist_ok=False)
+        with urlopen(corpus_url, timeout=60) as response:
+            content = response.read(2*1024*1024+1)
+        if not content or len(content) > 2*1024*1024:
+            raise ValueError("Tamanho do corpus inesperado; download limitado a 2 MiB.")
+        content.decode("utf-8")
+        corpus = folder / "tinyshakespeare.txt"
+        corpus.write_bytes(content)
+        provenance = {"url": corpus_url, "sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)}
+        (folder / "source.json").write_text(json.dumps(provenance, indent=2), encoding="utf-8")
+        command += ["--input", str(corpus)]
+        print("Corpus de demonstração:", provenance)
+
+    if SETTINGS.get("profile", True):
+        command += ["--profile"]
+    if SETTINGS.get("cpu_tests", True):
+        command += ["--cpu-tests"]
+    if SETTINGS.get("cuda_tests", True):
+        command += ["--cuda-tests"]
+    if not SETTINGS.get("benchmark", True):
+        command += ["--no-benchmark"]
+    if not SETTINGS.get("diagnostics", True):
+        command += ["--no-diagnostics"]
+    if SETTINGS.get("evaluate_checkpoints"):
+        command += ["--evaluate-checkpoints", *map(str, SETTINGS["evaluate_checkpoints"])]
+print("\n[Preparação 3/3] Iniciar as etapas da campanha")
+print("Revisão fixada:", PIN)
+print("Nova pasta de resultados:", OUTPUT)
+print("Qualquer falha interrompe o processo e preserva os logs disponíveis.")
 # Child imports THIS source, irrespective of an earlier editable installation in the notebook.
 env = os.environ.copy()
 env["PYTHONPATH"] = str(REPO / "src")
@@ -99,9 +135,9 @@ env["PYTHONUNBUFFERED"] = "1"
 env["PYTHONIOENCODING"] = "utf-8"
 subprocess.run(command, cwd=REPO, env=env, check=True)
 archive = OUTPUT.parent / f"{OUTPUT.name}-results.zip"
-print("\nFinished. Download this analysis bundle and send it back:")
+print("\n✅ CONCLUÍDO. Baixe este ZIP e envie para análise:")
 print(archive)
-print("Checkpoint tensors remain in the campaign directory. Save a Kaggle version with outputs to preserve them.")
+print("Os pesos permanecem na pasta original. Salve uma versão do Kaggle com os outputs para preservá-los.")
 try:
     from IPython.display import display, FileLink
     display(FileLink(str(archive)))
