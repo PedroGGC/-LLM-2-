@@ -83,6 +83,7 @@ else:
                "--output", str(OUTPUT), "--device", "cuda", "--gpus", "0", "1",
                "--steps", str(SETTINGS.get("steps", 2000)),
                "--max-seconds", str(SETTINGS.get("max_seconds", 1800)),
+               "--progress-interval", str(SETTINGS.get("progress_interval", 500)),
                "--models", *SETTINGS.get("models", ["baseline", "lrm", "flrm_reference", "flrm_batched"]),
                "--seeds", *map(str, SETTINGS.get("seeds", [42]))]
 
