@@ -550,3 +550,56 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
   com aliases `_no_jepa_k1`/`_no_jepa_k2`, referência Transformer e run_number=3
   para preservar 0002. Código já foi implementado/testado; nenhuma mudança de
   treino nesta análise, somente registro das evidências e classificação correta.
+
+### Evidência Kaggle — campanha 0003, K=1/K=2 sem JEPA
+
+- Fonte correta e limpa `2c0eb188f1c648938605f28bb959da34143b214d`; ZIP com 118
+  entradas, 5.495.752 bytes, CRC íntegro, SHA256
+  `c874b942aa8e010e9b8017b29a7c36eec69a09a32f5a2e21991e27e5872f3482`.
+  Configs, manifesto e summaries concordam em K=1/2/1. Esta campanha contém
+  efetivamente a ablação solicitada, diferente da repetição 0002.
+- Três treinos completos de 2.000 passos/16.384.000 alvos, seed 42, contexto 256,
+  FP32/eager. FLRMs compressed_grouped sem JEPA/MTP/auxiliares, latent_steps=0,
+  configs iguais exceto iterations/output_dir. Ambos 2.168.076 backbone/total,
+  zero congelados; Transformer pequeno 2.164.224 backbone/total. Não há teacher.
+- Dataset original `beed0146113d17994cd94ddd246e8cabecf6c5eceb005c394526884df66a3ef7`;
+  corpus bruto e splits documentais conferidos. Mesmas 437 janelas/111.872 alvos
+  completos avaliados; NLL reconstruída dos JSONLs com erro máximo 9,18e-9.
+  Código/configs/snapshots conferem byte a byte com Git. Identidades declaradas
+  dos pesos coincidem entre checkpoint/avaliação/benchmark; tensores ausentes,
+  não carregados ou reexecutados localmente. Auditoria realizou 212 verificações.
+- CPU **150 passed, 16 deselected**, 161,49 s; CUDA FP32 **12 passed,
+  154 deselected**, 31,78 s. Novo save/continuação K1 agrupado sem JEPA agora
+  tem evidência real na T4. Ambiente Python 3.13.15/Torch 2.11.0+cu128/CUDA 12.8,
+  FP32/eager; não estender a BF16/Inductor ou retomada bit a bit CUDA.
+- T4 distintas nos treinos K1/K2; Transformer depois de K1 na GPU 0. Todos os
+  perfis, avaliações e geração foram sequenciais na mesma GPU 0, com UUID igual
+  nos perfis. 10 warmups, 30 amostras consecutivas sem profiler e trace separado.
+
+| Modelo | Loss completa ↓ | Perplexidade ↓ | Treino s ↓ | Treino alvos/s ↑ | VRAM MiB ↓ | Geração tok/s ↑ | Perfil isolado alvos/s ↑ |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Transformer pequeno | 1,40049951 | 4,05722608 | 105,25 | 155.660 | 202,16 | 494,50 | 164.255 |
+| FLRM K1 sem JEPA | 1,40755594 | 4,08595688 | 164,21 | 99.777 | 259,71 | 169,48 | 105.472 |
+| FLRM K2 sem JEPA | 1,39746689 | 4,04494069 | 315,79 | 51.882 | 408,27 | 91,83 | 54.507 |
+
+- Loss/perplexidade/tempo menores = melhores; velocidades maiores = melhores;
+  VRAM menor = menor consumo na mesma tarefa, allocator PyTorch, não total da
+  placa. K2 melhora 0,01008905 em loss/1,00383% perplexidade contra K1, com quase
+  duas vezes o custo de treino. K1: +93,50% throughput isolado, −48,00% tempo,
+  −36,39% VRAM e +84,55% geração contra K2. Não é vantagem gratuita de recursão.
+- Contra Transformer, K1 tem perplexidade +0,70814%, tempo 1,56×, VRAM 1,28×,
+  geração 2,92× mais lenta; é dominado nos critérios medidos deste ensaio. K2 tem
+  perplexidade −0,30280%, mas tempo 3,00×, VRAM 2,02× e geração 5,38× mais lenta.
+  Uma seed/igual quantidade de alvos não estabelecem vantagem geral por orçamento
+  de tempo/FLOPs. Os três melhores parciais foram no passo 2000; intermediários
+  não têm avaliação completa fornecida. K muda RNG/dropout e trajetória.
+- Trace por passo instrumentado: 782 launches Transformer, 2.095 K1, 4.183 K2.
+  Isso motiva, sem provar ganho, próximo perfil de microbatch/acumulação 8×4,
+  16×2 e 32×1 mantendo 32 sequências por optimizer-step. Não implementado nem
+  medido nesta análise; requer verificar amostragem/gradientes/retomada/qualidade.
+  Depois, replicar candidatos com seeds 42/43/44 e orçamentos de tempo pareados.
+- Geração é observação curta batch 1, prompt 14, 64 novos tokens, warmup 8,
+  sem KV cache. Otimização do lote de treino não resolve diretamente a geração.
+  Nenhuma mudança de modelos/Trainer/código de treino nesta análise, só registro
+  da evidência. K2 sem JEPA permanece candidato de qualidade; Transformer é a
+  referência de eficiência, sem alegar uma vitória global do FLRM.
