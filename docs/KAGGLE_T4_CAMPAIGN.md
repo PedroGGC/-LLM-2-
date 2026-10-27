@@ -53,6 +53,8 @@ A avaliação exige que o manifest corresponda ao checkpoint; nenhuma verificaç
 
 Cada execução tem identificador e diretórios novos. As execuções de perfilamento são descartáveis e independentes do treino científico. O ganho de performance do modo agrupado ainda precisa ser medido na T4.
 
+Se a campanha parar em `tests-cpu.log`, antes de `training`, nenhum modelo foi treinado. O ZIP parcial contém os logs da falha. Na primeira entrega, um teste herdava a máscara unitária de GPU do subprocesso e pedia indevidamente o índice lógico 1; a correção isola essa premissa e valida índices sem escapar da máscara do processo pai. Use o novo commit informado na entrega e mantenha os testes habilitados. O bootstrap cria outro checkout e outra campanha; os diretórios anteriores ficam preservados. Os dados preparados podem ser reutilizados via `data` se os quatro arquivos originais ainda existirem.
+
 ## Modelos e controles
 
 - baseline: Transformer 10.720.512 parâmetros no perfil padrão, sem JEPA.
