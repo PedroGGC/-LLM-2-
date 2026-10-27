@@ -1,6 +1,7 @@
-# LLM2-Lab — Configuração Otimizada para Kaggle (NVIDIA Tesla T4 x2 / ~30 GB VRAM)
+# LLM2-Lab — teste de infraestrutura Kaggle, 50 passos, uma GPU por processo.
+# T4 x2 são duas GPUs independentes; a VRAM não é unificada por esta configuração.
 # Usa device: cuda com precision: fp32 (compatibilidade com GPU Turing T4 sem BF16 nativo).
-# Exercita a tese da IA 2: LRM (Latent Recursive Model) com passos latentes e JEPA preditivo.
+# Exercita LRM com passos latentes e JEPA; não comprova capacidade geral de raciocínio.
 model:
   vocab_size: 257
   d_model: 128
@@ -35,6 +36,7 @@ train:
   cpu_threads: 2
 research:
   architecture: recursive
+  core_layers: 1  # Padrão anterior, agora explícito; n_layers não define este núcleo.
   iterations: 2
   jepa_weight: 0.1
   latent_steps: 1
