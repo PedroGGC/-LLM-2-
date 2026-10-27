@@ -84,6 +84,7 @@ else:
                "--steps", str(SETTINGS.get("steps", 2000)),
                "--max-seconds", str(SETTINGS.get("max_seconds", 1800)),
                "--progress-interval", str(SETTINGS.get("progress_interval", 500)),
+               "--iterations", str(SETTINGS.get("iterations", 2)),
                "--models", *SETTINGS.get("models", ["baseline", "lrm", "flrm_reference", "flrm_batched"]),
                "--seeds", *map(str, SETTINGS.get("seeds", [42]))]
 

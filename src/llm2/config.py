@@ -154,7 +154,7 @@ class ResearchConfig:
         _types(self)
         if self.architecture not in ("transformer", "recursive", "untied", "fractal"):
             raise ValueError("unknown research architecture")
-        if self.scale_execution not in ("reference", "batched"):
+        if self.scale_execution not in ("reference", "batched", "compressed"):
             raise ValueError("scale_execution must be reference|batched")
         if self.scale_execution != "reference" and (self.architecture != "fractal" or not self.share_scales):
             raise ValueError("batched scales require a fractal model with shared scale weights")

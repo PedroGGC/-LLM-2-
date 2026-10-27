@@ -7,6 +7,7 @@ MODEL_NAMES = {
     "baseline": "Transformer", "baseline_small": "Transformer pequeno",
     "baseline_jepa": "Transformer + JEPA", "lrm": "LRM", "lrm_no_jepa": "LRM sem JEPA",
     "flrm_reference": "FLRM sequencial", "flrm_batched": "FLRM agrupado",
+    "flrm_compressed": "FLRM comprimido",
     "flrm_no_jepa": "FLRM sem JEPA",
 }
 

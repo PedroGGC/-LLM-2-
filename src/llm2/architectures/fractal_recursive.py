@@ -1,6 +1,6 @@
-"""Experimental aligned multiscale recurrence; every aggregation is prefix-causal.
+"""Experimental aligned and compressed multiscale recurrence; every aggregation is prefix-causal.
 
-Scale grids retain token resolution. This tests functional sharing, not compressed attention.
+Supports reference, batched and compressed scale execution modes.
 """
 
 import torch
@@ -10,6 +10,39 @@ from torch.utils.checkpoint import checkpoint
 from ..interfaces import Backbone, ModelOutput
 from ..model import RMSNorm, TransformerLM
 from .latent_recursive import LatentState, SharedRecursiveCore, LatentRecursiveModel
+
+
+class CausalScaleCompressor(nn.Module):
+    """Causal block pooling and causal upsampling with strict future isolation."""
+
+    def __init__(self, factor, dim):
+        super().__init__()
+        self.factor = factor
+        self.dim = dim
+        self.prior = nn.Parameter(torch.zeros(1, 1, dim))
+
+    def compress(self, x):
+        B, T, D = x.shape
+        C = self.factor
+        pad = (C - (T % C)) % C
+        if pad > 0:
+            x = torch.cat([x, x.new_zeros(B, pad, D)], dim=1)
+        T_pad = x.shape[1]
+        chunks = x.view(B, T_pad // C, C, D)
+        if pad > 0:
+            counts = torch.full((T_pad // C, 1), C, dtype=x.dtype, device=x.device)
+            counts[-1, 0] = C - pad
+            compressed = chunks.sum(dim=2) / counts.unsqueeze(0)
+        else:
+            compressed = chunks.mean(dim=2)
+        return compressed
+
+    def upsample_causal(self, compressed, target_len):
+        B, T_comp, D = compressed.shape
+        C = self.factor
+        shifted = torch.cat([self.prior.expand(B, 1, D), compressed[:, :-1, :]], dim=1)
+        upsampled = shifted.repeat_interleave(C, dim=1)[:, :target_len, :]
+        return upsampled
 
 
 class FractalScaleEncoder(nn.Module):
@@ -63,8 +96,6 @@ class CrossScaleInteraction(nn.Module):
 
     def forward_batched(self, states):
         weights = self.mixing.softmax(-1)
-        # The reference sums FP32 states with FP32 mixing weights under autocast.
-        # Do not silently turn that sum into a BF16 matmul.
         with torch.autocast(device_type=states.device.type, enabled=False):
             mixed = torch.einsum("ij,jbtd->ibtd", weights.float(), states.float()).to(states.dtype)
         return states + self.gate.sigmoid()[:, None, None, None] * self.projection(mixed)
@@ -80,14 +111,35 @@ class FractalRecursiveBlock(nn.Module):
         count = len(research.scales)
         self.shared = research.share_scales
         self.execution = research.scale_execution
-        if self.execution == "batched" and not self.shared:
-            raise ValueError("batched execution requires shared scale cores")
+        if self.execution in ("batched", "compressed") and not self.shared:
+            raise ValueError(f"{self.execution} execution requires shared scale cores")
         self.cores = nn.ModuleList([SharedFractalCore(config, research.core_layers)
                                    for _ in range(1 if self.shared else count)])
         self.conditioning = ScaleConditioning(count, config.d_model) if research.scale_conditioning else None
         self.interaction = CrossScaleInteraction(count, config.d_model)
+        if self.execution == "compressed":
+            self.comp4 = CausalScaleCompressor(4, config.d_model)
+            self.comp16 = CausalScaleCompressor(16, config.d_model)
 
     def forward(self, states, contexts):
+        if self.execution == "compressed":
+            s0, s1, s2 = states
+            c0, c1, c2 = contexts
+            T = c0.shape[1]
+            if self.conditioning is not None:
+                c0 = self.conditioning(c0, 0)
+                c1 = self.conditioning(c1, 1)
+                c2 = self.conditioning(c2, 2)
+            v0 = self.cores[0](s0, c0)
+            v1 = self.cores[0](s1, c1)
+            v2 = self.cores[0](s2, c2)
+            u1 = self.comp4.upsample_causal(v1, T)
+            u2 = self.comp16.upsample_causal(v2, T)
+            mixed = self.interaction((v0, u1, u2))
+            next_s0 = mixed[0]
+            next_s1 = self.comp4.compress(mixed[1])
+            next_s2 = self.comp16.compress(mixed[2])
+            return (next_s0, next_s1, next_s2)
         if self.execution == "batched":
             stacked_states, stacked_contexts = torch.stack(states), torch.stack(contexts)
             if self.conditioning is not None:
@@ -135,8 +187,15 @@ class FractalLatentModel(Backbone):
         steps = self.active_iterations() if iterations is None else iterations
         if type(steps) is not int or steps <= 0:
             raise ValueError("iterations must be positive")
-        contexts = self.encoder(self.embedding(input_ids))
-        states = tuple(torch.zeros_like(context) for context in contexts)
+        if self.research.scale_execution == "compressed":
+            c0 = self.embedding(input_ids)
+            c1 = self.block.comp4.compress(c0)
+            c2 = self.block.comp16.compress(c0)
+            contexts = (c0, c1, c2)
+            states = (torch.zeros_like(c0), torch.zeros_like(c1), torch.zeros_like(c2))
+        else:
+            contexts = self.encoder(self.embedding(input_ids))
+            states = tuple(torch.zeros_like(context) for context in contexts)
         history = []
         for index in range(steps):
             if self.training and self.research.detach_every and index and index % self.research.detach_every == 0:
@@ -154,8 +213,15 @@ class FractalLatentModel(Backbone):
     def analytical_cost(self, seq_len, *, include_logits=True):
         d, h, s = self.config.d_model, self.config.hidden_dim, seq_len
         count, steps = len(self.research.scales), self.active_iterations()
-        per_core = self.research.core_layers*(8*s*d*d + 6*s*d*h + 4*s*s*d) + 2*s*d*d
-        per_iteration = count * (per_core + 2*s*d*d)
+        if self.research.scale_execution == "compressed":
+            s1 = (s + 3) // 4
+            s2 = (s + 15) // 16
+            lengths = (s, s1, s2)
+            per_iteration = sum(self.research.core_layers*(8*si*d*d + 6*si*d*h + 4*si*si*d) + 2*si*d*d for si in lengths)
+            per_iteration += 2*s*d*d
+        else:
+            per_core = self.research.core_layers*(8*s*d*d + 6*s*d*h + 4*s*s*d) + 2*s*d*d
+            per_iteration = count * (per_core + 2*s*d*d)
         forward = steps * per_iteration + (2*s*d*self.config.vocab_size if include_logits else 0)
         recompute = steps * per_iteration if self.training and self.research.gradient_checkpointing else 0
         return forward, recompute, steps
@@ -164,5 +230,6 @@ class FractalLatentModel(Backbone):
 def fractal_parameter_formula(config, research):
     d, h, n = config.d_model, config.hidden_dim, len(research.scales)
     core = d*d + 2*d + research.core_layers*(4*d*d + 3*d*h + 2*d)
+    extra = 2 * d if research.scale_execution == "compressed" else 0
     return (config.vocab_size*d + d + (1 if research.share_scales else n)*core
-            + d*d + n*n + n + (2*n*d if research.scale_conditioning else 0))
+            + d*d + n*n + n + (2*n*d if research.scale_conditioning else 0) + extra)

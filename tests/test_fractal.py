@@ -114,3 +114,23 @@ def test_fractal_cuda_bf16(training_config):
         metrics = trainer.train_step()
         assert metrics["peak_vram_allocated_bytes"] > 0
         assert all(torch.isfinite(p).all() for p in trainer.model.parameters())
+
+
+def test_fractal_compressed_shapes_causality_and_parameters(tiny_config):
+    r = ResearchConfig(architecture="fractal", scale_execution="compressed", iterations=2, record_states=True)
+    model = FractalLatentModel(tiny_config, r)
+    assert count_parameters(model) == fractal_parameter_formula(tiny_config, r)
+    ids = torch.randint(0, 32, (2, 17))
+    model.zero_grad(set_to_none=True)
+    output = model(ids)
+    assert output.logits.shape == (2, 17, 32)
+    assert len(output.intermediate_states) == 2
+    output.logits.square().mean().backward()
+    assert all(torch.isfinite(p.grad).all() for p in model.parameters() if p.grad is not None)
+    model.eval()
+    for cut in (1, 4, 8, 16):
+        changed = ids.clone()
+        changed[:, cut:] = (changed[:, cut:] + 7) % 32
+        torch.testing.assert_close(model(ids).logits[:, :cut], model(changed).logits[:, :cut], rtol=0, atol=0)
+    gen = generate(model, ids[:1, :2], max_seq_len=16, max_new_tokens=3, temperature=0)
+    assert gen.shape == (1, 5)
