@@ -7,10 +7,10 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import subprocess
 import sys
 from urllib.request import urlopen
-import uuid
 
 PIN = os.environ.get("LLM2_REVISION", "")
 SETTINGS = globals().get("LLM2_SETTINGS", {})
@@ -63,8 +63,11 @@ REPO = checkout(PIN)
 subprocess.run([sys.executable, "-m", "pip", "install", "--quiet",
                 "-e", str(REPO)+"[dev,research]"], check=True)
 
-SESSION = uuid.uuid4().hex[:12]
-OUTPUT = WORK / f"{'llm2-review' if MODE == 'avaliar_salvos' else 'llm2-campaign'}-{SESSION}"
+# Load the pinned helper without reusing a package cached by an earlier cell.
+numbered_output = runpy.run_path(str(REPO / "src/llm2/research/naming.py"))["numbered_output"]
+OUTPUT = numbered_output(WORK, "llm2-review" if MODE == "avaliar_salvos" else "llm2-campaign",
+                         number=SETTINGS.get("run_number"), search_roots=[Path("/kaggle/input")])
+SESSION = OUTPUT.name.rsplit("-", 1)[1]
 if MODE == "avaliar_salvos":
     previous = Path(SETTINGS.get("previous_campaign", ""))
     if not (previous / "campaign.json").is_file():

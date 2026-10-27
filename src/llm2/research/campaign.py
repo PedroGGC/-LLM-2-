@@ -16,7 +16,6 @@ import sys
 import threading
 import time
 import traceback
-import uuid
 import zipfile
 
 import torch
@@ -27,6 +26,7 @@ from ..config import ExperimentConfig, ResearchConfig, load_config
 from ..data import PreparedData, prepare_data, sha256_file, write_json
 from ..runtime import source_provenance
 from .presentation import MODEL_NAMES, comparison_text, legend, number, progress, stage
+from .naming import numbered_output
 
 
 MODELS = ("baseline", "baseline_small", "baseline_jepa", "lrm", "lrm_no_jepa",
@@ -334,8 +334,7 @@ def run_campaign(args):
     if not args.execute:
         return {"status": "not_started", "models": args.models, "seeds": args.seeds,
                 "next": "Add --execute to run exactly this selection."}
-    identifier = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")+"-"+uuid.uuid4().hex[:8]
-    output = Path(args.output).resolve() if args.output else root / "runs" / f"kaggle-{identifier}"
+    output = Path(args.output).resolve() if args.output else numbered_output(root / "runs")
     campaign = Campaign(root, output, device=args.device, gpus=args.gpus)
     failure = None
     try:

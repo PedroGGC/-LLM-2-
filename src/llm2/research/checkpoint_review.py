@@ -6,7 +6,6 @@ import math
 from pathlib import Path
 import shutil
 import traceback
-import uuid
 import zipfile
 
 import torch
@@ -98,7 +97,8 @@ def review_checkpoints(args):
     if not tasks:
         raise ValueError("A campanha anterior não contém execuções para avaliar.")
     print(f"✓ Dados, código e {len(tasks)} checkpoints conferidos. Nenhum treino será executado.", flush=True)
-    output = Path(args.output).resolve() if args.output else original.parent / f"llm2-review-{uuid.uuid4().hex[:12]}"
+    from .naming import numbered_output
+    output = Path(args.output).resolve() if args.output else numbered_output(original.parent, "llm2-review")
     campaign = Campaign(root, output, device=args.device, gpus=args.gpus)
     campaign.manifest.update(kind="checkpoint_review", original_campaign=str(original),
         dataset_sha256=data.fingerprint, evaluation_root=str(root), evaluation_source_sha256=expected,

@@ -396,3 +396,28 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
   objetivos puros sem MTP/currículo e mesmo orçamento de alvos. Comparar qualidade
   pela loss LM completa (menor = melhor); velocidade maior = melhor; VRAM menor =
   menor consumo. Uma seed é triagem, não evidência de superioridade consistente.
+
+### Saídas numeradas — 27/10/2026
+
+- Pedido: retirar sufixos aleatórios dos ZIPs. Plano em
+  `docs/PLAN_NUMBERED_OUTPUTS.md`. Novo helper stdlib em
+  `src/llm2/research/naming.py`, incluído em snapshots/hashes. Bootstrap e defaults
+  CLI usam `llm2-campaign-0001`/`llm2-review-0001`; ZIP herda o número da pasta.
+  Os nomes existentes e os diretórios do código identificados por SHA são preservados.
+- Números vêm de pastas, ZIPs e reservas locais; bootstrap também consulta outputs
+  anteriores anexados em `/kaggle/input`. `run_number` positivo permite escolha
+  explícita. Sessão vazia sem histórico reinicia em 0001: não há contador remoto
+  global. Revisões têm sequência separada; falhas podem consumir números.
+- Reservas por mkdir exclusivo fora da pasta da campanha: sem pré-criar o output
+  nem permitir reutilização/overwrite. Testes cobrem 24 reservas concorrentes,
+  arquivos ZIP isolados preservados, input de execução interrompida, outputs
+  anexados, número manual ocupado/inválido e carregamento do helper via runpy
+  para evitar import antigo no kernel do notebook. Campanha real de metadados/ZIP
+  confirma compatibilidade com criação exclusiva do output.
+- Direcionados: **37 passed**, 23,95 s, incluindo testes de campanha/revisão,
+  `runs/numbered-output-tests.log`. Suíte `python -m pytest -q`: **147 passed,
+  15 skipped**, 87,34 s, `runs/numbered-output-full-tests.log`. Skips são CUDA
+  indisponível localmente. Compileall e git diff --check passaram.
+- Nenhuma alteração no backbone, objetivos, Trainer, dados ou checkpointing.
+  Nenhum novo resultado GPU ou de qualidade; a ablação JEPA continua pendente
+  da execução Kaggle do usuário. `--output` explícito mantém seu comportamento.

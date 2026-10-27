@@ -2,6 +2,29 @@
 
 Esta entrega implementa P01–P06. GPU é executada **no notebook do Kaggle pelo navegador**. Não é preciso instalar nada no computador pessoal. Localmente foram/serão feitos testes CPU; os testes CUDA deste pacote só confirmam suporte quando executados no Kaggle.
 
+## Nomes numerados dos resultados
+
+Novas campanhas usam `llm2-campaign-0001`, `llm2-campaign-0002`, etc. Seus ZIPs
+são `llm2-campaign-0001-results.zip`, `llm2-campaign-0002-results.zip`. Revisões
+sem treino têm sequência própria: `llm2-review-0001-results.zip`.
+
+A célula escolhe o próximo número após os disponíveis em `/kaggle/working` e
+outputs antigos anexados em `/kaggle/input`. Reservas exclusivas evitam colisões
+entre chamadas simultâneas; uma falha pode consumir um número, deixando lacunas.
+Pastas/ZIPs/checkpoints antigos não são renomeados nem sobrescritos. O diretório
+do código continua identificado pelo SHA Git, para conferir a revisão exata.
+
+Uma sessão nova sem histórico acessível começa em 0001. Para manter uma sequência
+entre sessões independentes, pode definir explicitamente no dicionário da célula:
+
+```python
+"run_number": 2,  # Escolha o próximo número da sua sequência pessoal.
+```
+
+Se esse número já existe ou está reservado, a célula para com uma mensagem e
+preserva todos os arquivos. Omitir `run_number` ativa a escolha automática.
+CLI continua aceitando `--output` explícito; sem essa opção, adota nomes numéricos.
+
 ## Etapa atual: FLRM agrupado com/sem JEPA × Transformer (27/10/2026)
 
 A campanha 8b8ac432c0ea selecionou o agrupamento como candidato de velocidade,
