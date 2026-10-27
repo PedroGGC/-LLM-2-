@@ -43,7 +43,7 @@ A avaliação exige que o manifest corresponda ao checkpoint; nenhuma verificaç
 ## O que a execução faz
 
 1. Confere duas GPUs e o checkout fixado.
-2. Executa a suíte CPU e os testes CUDA. Testes BF16 podem ser pulados na T4; novos testes FP32 exercitam Transformer, LRM e, na branch fractal, os dois modos do FLRM.
+2. Executa a suíte CPU e seleciona os testes CUDA FP32 para T4, que exercitam Transformer, LRM e, na branch fractal, os dois modos do FLRM. Testes BF16 não fazem parte dessa seleção; não se confunde emulação com validação de BF16 nativo.
 3. Executa quatro modelos, com no máximo um processo de treino por GPU. As duas T4 não formam VRAM unificada.
 4. Usa os resumos da execução recém-concluída para localizar/verificar checkpoints. Qualquer erro de subprocesso interrompe a campanha, preserva logs e gera um ZIP parcial.
 5. Após os treinos, avalia **toda a validação** e salva loss por janela para os quatro modelos.

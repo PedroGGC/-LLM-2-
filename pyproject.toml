@@ -25,5 +25,5 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-markers = ["cuda: requires a CUDA device with BF16", "compile: optional torch.compile smoke"]
+markers = ["cuda: requires a CUDA device; precision is checked per test", "compile: optional torch.compile smoke"]
 

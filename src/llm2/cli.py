@@ -119,7 +119,7 @@ def _inference(args):
     metadata = read_checkpoint_metadata(args.checkpoint)
     cfg = ExperimentConfig.from_dict(metadata["config"])
     cfg.train.device = args.device
-    cfg.train.precision = args.precision or ("bf16" if args.device == "cuda" else "fp32")
+    cfg.train.precision = args.precision or (cfg.train.precision if args.device == "cuda" else "fp32")
     cfg.train.__post_init__()
     device = setup_runtime(cfg.train)
     data = PreparedData(args.data or cfg.data.path)
