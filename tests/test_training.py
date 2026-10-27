@@ -126,10 +126,10 @@ def test_metrics_and_estimated_flops(training_config):
         assert trainer.counters["gpu_time_seconds"] is None
         assert trainer.counters["peak_vram_allocated_bytes"] is None
     path = trainer.output_dir
-    metadata = json.loads((path / "run.json").read_text())
+    metadata = json.loads((path / "run.json").read_text(encoding="utf-8"))
     assert metadata["flops_estimate"]["is_estimate"] is True
     assert metadata["model_parameters_calculated"] == sum(p.numel() for p in trainer.model.parameters())
-    rows = [json.loads(line) for line in (path / "metrics.jsonl").read_text().splitlines()]
+    rows = [json.loads(line) for line in (path / "metrics.jsonl").read_text(encoding="utf-8").splitlines()]
     assert rows[-1]["validation_loss"] > 0
     assert rows[-1]["tokens_per_second"] > 0
     assert list((path / "tensorboard").glob("events.*"))
@@ -178,9 +178,9 @@ def test_environment_change_rejected(training_config):
         trainer.fit(until_step=1)
         path = trainer.last_checkpoint
     metadata_path = path / "metadata.json"
-    metadata = json.loads(metadata_path.read_text())
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata["environment"]["packages"]["torch"] = "different-version"
-    metadata_path.write_text(json.dumps(metadata))
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     with pytest.raises(ValueError, match="environment changed"):
         Trainer(training_config, resume=path)
 
@@ -262,7 +262,7 @@ def test_log_rewind_preserves_abandoned_attempt(training_config):
         stream.write('{"step": 3, "training_loss": 123}\n')
         stream.write('{"step":')
     with Trainer(training_config, resume=checkpoint):
-        active = [json.loads(line) for line in metrics_file.read_text().splitlines()]
+        active = [json.loads(line) for line in metrics_file.read_text(encoding="utf-8").splitlines()]
         assert all(row["step"] <= 2 for row in active)
         assert list(trainer.output_dir.glob("metrics-before-resume-*.jsonl"))
 

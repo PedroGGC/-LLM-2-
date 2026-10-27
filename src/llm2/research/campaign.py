@@ -25,7 +25,7 @@ from ..checkpoint import read_checkpoint_metadata
 from ..config import ExperimentConfig, ResearchConfig, load_config
 from ..data import PreparedData, prepare_data, sha256_file, write_json
 from ..runtime import source_provenance
-from .presentation import MODEL_NAMES, comparison_text, legend, number, progress, stage
+from .presentation import MODEL_NAMES, batch_comparison_text, comparison_text, legend, number, progress, stage
 from .naming import numbered_output
 
 
@@ -62,10 +62,19 @@ def worker_environment(root, gpu=None):
     return env
 
 
-def campaign_config(base, model, data, output, *, seed, steps, device, max_seconds, iterations=2):
+def campaign_config(base, model, data, output, *, seed, steps, device, max_seconds, iterations=2,
+                    batch_size=None, grad_accum_steps=None):
     if model not in MODELS:
         raise ValueError(f"unknown campaign model: {model}")
     cfg = ExperimentConfig.from_dict(base.to_dict())
+    if batch_size is not None:
+        if type(batch_size) is not int or batch_size <= 0:
+            raise ValueError(f"batch_size must be a positive integer, got {batch_size!r}")
+        cfg.data.batch_size = batch_size
+    if grad_accum_steps is not None:
+        if type(grad_accum_steps) is not int or grad_accum_steps <= 0:
+            raise ValueError(f"grad_accum_steps must be a positive integer, got {grad_accum_steps!r}")
+        cfg.train.grad_accum_steps = grad_accum_steps
     cfg.data.path, cfg.train.output_dir = str(Path(data).resolve()), str(Path(output).resolve())
     cfg.train.seed, cfg.train.max_steps = seed, steps
     cfg.optimizer.schedule_steps = max(cfg.optimizer.schedule_steps, steps)
@@ -260,13 +269,14 @@ class Campaign:
 
     def profile_runs(self, jobs, warmup, measured):
         selected = jobs
-        # One seed per execution mode, and never overlapping GPU profiles.
+        # One seed per execution mode and batch format, never overlapping GPU profiles.
         seen = set()
         for job in selected:
-            if job["model"] in seen:
-                continue
-            seen.add(job["model"])
             cfg = load_config(job["config"])
+            profile_key = (job["model"], cfg.data.batch_size, cfg.train.grad_accum_steps)
+            if profile_key in seen:
+                continue
+            seen.add(profile_key)
             cfg.train.console_progress = False
             cfg.train.max_steps = max(cfg.train.max_steps, warmup+measured+1)
             cfg.optimizer.schedule_steps = max(cfg.optimizer.schedule_steps, cfg.train.max_steps)
@@ -314,10 +324,144 @@ def parser():
     result.add_argument("--review-campaign", help="evaluate saved checkpoints only; never starts training")
     result.add_argument("--evaluation-root", help="original verified source checkout for saved checkpoints")
     result.add_argument("--review-steps", nargs="+", type=int, default=[500, 1000, 1500, 2000])
+    result.add_argument("--batch-size", type=int, default=None, help="override per-device microbatch size")
+    result.add_argument("--grad-accum-steps", type=int, default=None, help="override gradient accumulation steps")
+    result.add_argument("--profile-batches", action="store_true", help="run batch matrix profiling study")
+    result.add_argument("--batch-matrix", nargs="+", default=["8x4", "16x2", "32x1"],
+                        help="batch matrix combinations in BxA format (microbatch x accum)")
     return result
 
 
+def parse_batch_matrix(matrix):
+    combinations = []
+    for item in matrix:
+        match = re.fullmatch(r"(\d+)[xX*](\d+)", item.strip())
+        if not match:
+            raise ValueError(f"Formato de lote inválido: {item!r}. Use o formato BxA (ex: '8x4', '16x2', '32x1').")
+        b, a = int(match.group(1)), int(match.group(2))
+        if b <= 0 or a <= 0:
+            raise ValueError(f"Lote e acumulação devem ser positivos: {item!r}")
+        combinations.append((b, a))
+    return combinations
+
+
+def run_batch_profile(args):
+    root = Path(__file__).resolve().parents[3]
+    if args.warmup_steps < 0 or args.measure_steps < 1:
+        raise ValueError("profiling requires nonnegative warmup and at least one measured step")
+    if len(set(args.models)) != len(args.models):
+        raise ValueError("models must not contain duplicates")
+    if bool(args.data) == bool(args.input):
+        raise ValueError("provide exactly one of --data or --input")
+    batch_matrix = parse_batch_matrix(args.batch_matrix)
+    base = load_config(Path(args.config) if Path(args.config).is_absolute() else root / args.config)
+    if args.device == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA unavailable; this profile is meant for Kaggle T4x2")
+    if any(m.startswith("flrm") for m in args.models):
+        from ..architectures import fractal_recursive
+    if not args.execute:
+        return {"status": "not_started", "models": args.models, "batch_matrix": args.batch_matrix,
+                "next": "Add --execute to run exactly this batch profile."}
+    output = Path(args.output).resolve() if args.output else numbered_output(root / "runs")
+    campaign = Campaign(root, output, device=args.device, gpus=args.gpus)
+    legend()
+    stage(1, 4, "PREPARAR E CONFERIR OS DADOS")
+    if args.data:
+        data_path = Path(args.data).resolve()
+    else:
+        data_path = output / "data"
+        prepare_data(args.input, data_path, kind="byte", seed=42)
+    data = PreparedData(data_path)
+    if min(len(x) for x in data.arrays.values()) <= base.data.seq_len:
+        raise ValueError("dataset splits are too short for the selected context")
+    campaign.manifest.update(dataset_sha256=data.fingerprint, dataset_path=str(data_path),
+                             dataset_manifest=data.manifest, status="checking")
+    if data.tokenizer.vocab_size > base.model.vocab_size:
+        raise ValueError("prepared tokenizer exceeds model vocabulary; choose a matching --config")
+    if args.input:
+        sources = output / "input_sources"
+        sources.mkdir()
+        campaign.manifest["raw_sources"] = []
+        for index, raw_path in enumerate(map(Path, args.input)):
+            entry = {"path": str(raw_path.resolve()), "sha256": sha256_file(raw_path),
+                     "bytes": raw_path.stat().st_size, "bundled": raw_path.stat().st_size <= 2*1024*1024}
+            if entry["bundled"]:
+                (sources / f"{index}-{raw_path.name}").write_bytes(raw_path.read_bytes())
+            campaign.manifest["raw_sources"].append(entry)
+
+    stage(2, 4, "TESTES DE INTEGRAÇÃO")
+    if args.cpu_tests:
+        campaign.command(["-m", "pytest", "-q", "-m", "not cuda"], "tests-cpu.log", gpu=campaign.gpus[0])
+    if args.cuda_tests and args.device == "cuda":
+        campaign.command(["-m", "pytest", "-q", "-m", "cuda", "-k", "fp32"],
+                         "tests-cuda-fp32.log", gpu=campaign.gpus[0])
+
+    stage(3, 4, "PERFIL DE MATRIZ DE LOTES ISOLADO (GPU 0)")
+    (output / "configs").mkdir(parents=True, exist_ok=True)
+    (output / "profiles").mkdir(parents=True, exist_ok=True)
+    results = []
+    gpu_slot = campaign.gpus[0]
+    total_profiles = len(args.models) * len(batch_matrix)
+    count = 0
+    for model in args.models:
+        for b, a in batch_matrix:
+            count += 1
+            run_id = f"{model}-b{b}a{a}"
+            cfg = campaign_config(base, model, data_path, output / "runs" / run_id, seed=args.seeds[0],
+                                  steps=max(100, args.warmup_steps + args.measure_steps + 1),
+                                  device=args.device, max_seconds=0, iterations=args.iterations,
+                                  batch_size=b, grad_accum_steps=a)
+            cfg.train.console_progress = False
+            cfg.optimizer.schedule_steps = max(cfg.optimizer.schedule_steps, cfg.train.max_steps)
+            cfg.research.max_seconds = cfg.research.max_train_flops = cfg.research.max_tokens = 0
+            cfg_path = output / "configs" / f"profile-{run_id}.yaml"
+            cfg_path.write_text(yaml.safe_dump(cfg.to_dict()), encoding="utf-8")
+            dest = output / "profiles" / run_id
+            print(f"[{count}/{total_profiles}] Medindo {MODEL_NAMES.get(model, model)} | Lote {b}×{a} ({b*a} seqs/passo)...", flush=True)
+            campaign.command(["-m", "llm2", "profile", "--config", cfg_path,
+                              "--output", dest, "--execute",
+                              "--warmup-steps", str(args.warmup_steps),
+                              "--measure-steps", str(args.measure_steps)],
+                             f"{run_id}-profile.log", gpu=gpu_slot)
+            profile_data = json.loads((dest / "profile.json").read_text(encoding="utf-8"))
+            timing = profile_data["timing"]
+            step_metrics = profile_data.get("step_metrics", {})
+            peak_vram = step_metrics.get("peak_vram_allocated_bytes")
+            entry = {
+                "model": model,
+                "batch_size": b,
+                "grad_accum_steps": a,
+                "effective_sequences": b * a,
+                "tokens_per_second": timing.get("mean_tokens_per_second"),
+                "mean_step_seconds": timing.get("mean_step_seconds"),
+                "peak_vram_allocated_bytes": peak_vram,
+                "profile_path": str(dest / "profile.json"),
+            }
+            results.append(entry)
+            ms_val = entry["mean_step_seconds"] * 1000 if entry["mean_step_seconds"] is not None else None
+            vram_mib = peak_vram / (1024 * 1024) if peak_vram is not None else None
+            print(f"  ✓ {MODEL_NAMES.get(model, model)} [{b}×{a}]: "
+                  f"{number(entry['tokens_per_second'], 0)} alvos/s, "
+                  f"{number(ms_val, 1)} ms/passo, "
+                  f"VRAM alocada {number(vram_mib, 1)} MiB", flush=True)
+
+    stage(4, 4, "TABELA COMPARATIVA DE LOTES — THROUGHPUT, TEMPO E MEMÓRIA")
+    report_text = batch_comparison_text(results)
+    print(report_text, flush=True)
+    write_json(output / "batch_profiles.json", results)
+    (output / "batch_profile_report.md").write_text(report_text, encoding="utf-8")
+    campaign.manifest.update(status="complete", batch_profiles=results)
+    campaign.save()
+    archive = export_campaign(output)
+    print("\nCONCLUÍDO. Baixe este ZIP e envie para análise:")
+    print(archive)
+    return {"status": "complete", "results": results, "archive": str(archive)}
+
+
 def run_campaign(args):
+    if getattr(args, "profile_batches", False):
+        return run_batch_profile(args)
     root = Path(__file__).resolve().parents[3]
     if args.steps <= 0 or args.max_seconds < 0 or not args.seeds:
         raise ValueError("positive steps, nonnegative time budget and at least one seed required")
@@ -393,12 +537,14 @@ def run_campaign(args):
                 slot = campaign.gpus[len(jobs) % len(campaign.gpus)]
                 directory = output / "runs" / run_id
                 cfg = campaign_config(base, model, data_path, directory, seed=seed, steps=args.steps,
-                                      device=args.device, max_seconds=args.max_seconds, iterations=args.iterations)
+                                      device=args.device, max_seconds=args.max_seconds, iterations=args.iterations,
+                                      batch_size=args.batch_size, grad_accum_steps=args.grad_accum_steps)
                 path = output / "configs" / f"{run_id}.yaml"
                 path.write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=True), encoding="utf-8")
                 jobs.append({"id": run_id, "model": model, "seed": seed, "gpu_slot": slot,
                              "max_steps": cfg.train.max_steps, "checkpoint_interval": cfg.train.checkpoint_interval, "progress_interval": args.progress_interval,
                              "iterations": cfg.research.iterations+cfg.research.latent_steps,
+                             "batch_size": cfg.data.batch_size, "grad_accum_steps": cfg.train.grad_accum_steps,
                              "physical_gpu": worker_environment(root, slot).get("CUDA_VISIBLE_DEVICES"),
                              "directory": str(directory), "config": str(path), "status": "pending"})
         campaign.manifest["status"] = "training"

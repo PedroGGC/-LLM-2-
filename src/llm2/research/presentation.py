@@ -76,6 +76,27 @@ def comparison_text(rows):
     return "\n".join(lines)+"\n"
 
 
+def batch_comparison_text(rows):
+    lines = ["# Comparação do perfil de lotes (microbatch × acumulação)", "",
+             "Throughput (alvos/s): maior = melhor (mais rápido). Tempo de passo: menor = melhor.",
+             "VRAM alocada: menor = menor consumo de memória.", "",
+             "| Modelo | Formato (microbatch × acum) | Throughput alvos/s (maior = melhor) | Tempo médio / passo (menor = melhor) | VRAM alocada (menor = melhor) |",
+             "|---|:---:|---:|---:|---:|"]
+    for r in rows:
+        label = MODEL_NAMES.get(r["model"], r["model"])
+        fmt = f"{r['batch_size']} × {r['grad_accum_steps']} ({r['batch_size']*r['grad_accum_steps']} seqs)"
+        toks = r.get("tokens_per_second")
+        step_s = r.get("mean_step_seconds")
+        ms = step_s * 1000 if step_s is not None else None
+        vram = r.get("peak_vram_allocated_bytes")
+        vram_mib = vram / (1024 * 1024) if vram is not None else None
+        lines.append(f"| {label} | {fmt} | {number(toks, 0)} | {number(ms, 1)} ms | {number(vram_mib, 1)} MiB |")
+    lines += ["", "Medido em execuções de perfil isoladas na GPU 0 (warmup + amostras cronometradas).",
+              "Todos os formatos mantêm o mesmo lote efetivo de sequências por atualização.",
+              "A taxa de transferência mede a velocidade de execução; não mede a qualidade final da loss."]
+    return "\n".join(lines) + "\n"
+
+
 def review_text(rows):
     lines = ["# Checkpoints salvos — qualidade na validação completa", "",
              "Loss: menor = melhor previsão. Este modo não executa treino nem mede velocidade.", "",

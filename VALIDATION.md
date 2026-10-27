@@ -603,3 +603,12 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
   Nenhuma mudança de modelos/Trainer/código de treino nesta análise, só registro
   da evidência. K2 sem JEPA permanece candidato de qualidade; Transformer é a
   referência de eficiência, sem alegar uma vitória global do FLRM.
+
+## Campanha 0004 — Estudo de microbatch e acumulação (8×4, 16×2, 32×1), 27/10/2026
+
+- Plano formal: [PLAN_BATCH_PROFILING.md](docs/PLAN_BATCH_PROFILING.md).
+- Implementação de matriz e overrides de lotes: `campaign_config` aceita `batch_size` e `grad_accum_steps`. A CLI da campanha aceita `--batch-size`, `--grad-accum-steps`, `--profile-batches` e `--batch-matrix`. O bootstrap `scripts/kaggle_notebook.py` aceita `mode="perfilar_lotes"`.
+- Invariantes de lote efetivo e amostragem: preservado lote efetivo de 32 sequências (8.192 alvos supervisionados em contexto 256) em todos os formatos pareados (`8×4`, `16×2` e `32×1`). Confirmada a invariância estrita da amostragem em `RandomBatchStream`: os sorteios de números aleatórios pelo gerador CPU determinístico geram a sequência idêntica de janelas por optimizer-step nos três formatos.
+- Deduplicação de perfis ajustada: `profile_runs` agora deduplica pela tupla `(model, batch_size, grad_accum_steps)`, permitindo medir com precisão diferentes formatos do mesmo modelo na mesma campanha sem descartes indesejados.
+- Testes locais CPU: suíte completa `python -m pytest -q`: **155 passed, 16 skipped** em 125,16 s. Testes direcionados em `tests/test_batch_profiling.py` cobriram invariância do sampler, validação de argumentos, formatação da tabela de resultados e um teste de fumaça (smoke test) de integração em CPU.
+- Skips locais são exclusivamente testes CUDA indisponíveis no ambiente local sem GPU. O speedup empírico real e o pico de VRAM nas Tesla T4 serão medidos na execução da Campanha 0004 no Kaggle.

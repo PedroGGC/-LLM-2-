@@ -15,8 +15,8 @@ from urllib.request import urlopen
 PIN = os.environ.get("LLM2_REVISION", "")
 SETTINGS = globals().get("LLM2_SETTINGS", {})
 MODE = SETTINGS.get("mode", "treinar")
-if MODE not in ("treinar", "avaliar_salvos"):
-    raise ValueError("Escolha mode='treinar' ou mode='avaliar_salvos'.")
+if MODE not in ("treinar", "avaliar_salvos", "perfilar_lotes"):
+    raise ValueError("Escolha mode='treinar', mode='avaliar_salvos' ou mode='perfilar_lotes'.")
 if not re.fullmatch(r"[0-9a-f]{40}", PIN):
     raise ValueError("Informe em LLM2_REVISION o commit de 40 caracteres fornecido na entrega.")
 WORK = Path("/kaggle/working")
@@ -25,7 +25,7 @@ if not WORK.is_dir():
 
 print("="*78)
 print("🚀 LLM2-Lab — comparação de modelos no Kaggle")
-print("Modo:", "AVALIAR CHECKPOINTS SALVOS — SEM NOVO TREINO" if MODE == "avaliar_salvos" else "NOVA CAMPANHA DE TREINO")
+print("Modo:", "AVALIAR CHECKPOINTS SALVOS — SEM NOVO TREINO" if MODE == "avaliar_salvos" else "PERFIL DE MATRIZ DE LOTES (8x4, 16x2, 32x1)" if MODE == "perfilar_lotes" else "NOVA CAMPANHA DE TREINO")
 print("="*78)
 print("\n[Preparação 1/3] Conferir as GPUs")
 
@@ -81,6 +81,45 @@ if MODE == "avaliar_salvos":
                "--review-steps", *map(str, SETTINGS.get("review_steps", [500, 1000, 1500, 2000]))]
     if SETTINGS.get("data"):
         command += ["--data", str(SETTINGS["data"])]
+elif MODE == "perfilar_lotes":
+    command = [sys.executable, str(REPO / "scripts/run_kaggle.py"), "--execute",
+               "--output", str(OUTPUT), "--device", "cuda", "--gpus", "0",
+               "--profile-batches",
+               "--warmup-steps", str(SETTINGS.get("profile_warmup_steps", 10)),
+               "--measure-steps", str(SETTINGS.get("profile_measure_steps", 30)),
+               "--iterations", str(SETTINGS.get("iterations", 2)),
+               "--models", *SETTINGS.get("models", ["flrm_compressed_grouped_no_jepa_k1", "flrm_compressed_grouped_no_jepa_k2", "baseline_small"]),
+               "--seeds", *map(str, SETTINGS.get("seeds", [42]))]
+    if SETTINGS.get("batch_matrix"):
+        command += ["--batch-matrix", *SETTINGS["batch_matrix"]]
+    data = SETTINGS.get("data")
+    inputs = SETTINGS.get("input", [])
+    if data and inputs:
+        raise ValueError("Escolha a pasta de dados preparados OU arquivos brutos, não ambos.")
+    if data:
+        command += ["--data", str(data)]
+    elif inputs:
+        command += ["--input", *map(str, inputs)]
+    else:
+        corpus_revision = "6f9487a6fe5b420b7ca9afb0d7c078e37c1d1b4e"
+        corpus_url = f"https://raw.githubusercontent.com/karpathy/char-rnn/{corpus_revision}/data/tinyshakespeare/input.txt"
+        folder = WORK / f"llm2-input-{SESSION}"
+        folder.mkdir(exist_ok=False)
+        with urlopen(corpus_url, timeout=60) as response:
+            content = response.read(2*1024*1024+1)
+        if not content or len(content) > 2*1024*1024:
+            raise ValueError("Tamanho do corpus inesperado; download limitado a 2 MiB.")
+        content.decode("utf-8")
+        corpus = folder / "tinyshakespeare.txt"
+        corpus.write_bytes(content)
+        provenance = {"url": corpus_url, "sha256": hashlib.sha256(content).hexdigest(), "bytes": len(content)}
+        (folder / "source.json").write_text(json.dumps(provenance, indent=2), encoding="utf-8")
+        command += ["--input", str(corpus)]
+        print("Corpus de demonstração:", provenance)
+    if SETTINGS.get("cpu_tests", True):
+        command += ["--cpu-tests"]
+    if SETTINGS.get("cuda_tests", True):
+        command += ["--cuda-tests"]
 else:
     command = [sys.executable, str(REPO / "scripts/run_kaggle.py"), "--execute",
                "--output", str(OUTPUT), "--device", "cuda", "--gpus", "0", "1",
@@ -90,6 +129,10 @@ else:
                "--iterations", str(SETTINGS.get("iterations", 2)),
                "--models", *SETTINGS.get("models", ["flrm_compressed_grouped_no_jepa_k1", "flrm_compressed_grouped_no_jepa_k2", "baseline_small"]),
                "--seeds", *map(str, SETTINGS.get("seeds", [42]))]
+    if SETTINGS.get("batch_size") is not None:
+        command += ["--batch-size", str(SETTINGS["batch_size"])]
+    if SETTINGS.get("grad_accum_steps") is not None:
+        command += ["--grad-accum-steps", str(SETTINGS["grad_accum_steps"])]
 
     data = SETTINGS.get("data")
     inputs = SETTINGS.get("input", [])
