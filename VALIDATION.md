@@ -517,3 +517,36 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
   backbone/Trainer, dados ou verificação de checkpoints. Cada modelo começa do
   zero; run_number=2 preserva a campanha 0001. Igual orçamento de alvos não é
   igual computação; K altera consumo de dropout/RNG. Uma seed é triagem.
+
+### Campanha 0002 recebida — repetição JEPA, não ablação de K
+
+- O ZIP entregue como novos resultados 0002 executou **f16765f6e350b343de782f848ee91ed32b258796**,
+  não o commit 2c0eb18 preparado para K1/K2. Configs e summaries mostram FLRM
+  sem JEPA K=2, FLRM com JEPA K=2 e Transformer pequeno com uma passagem.
+  O número do ZIP não identifica o experimento; não relatar resultado K=1 aqui.
+- 118 entradas, 6.481.621 bytes, CRC íntegro, SHA256
+  `58ef199573f75ab0ee04400829e10abefed285a5e5386d81f452671ae79d3f69`.
+  205 verificações da análise: snapshots/configs conferem com Git; dataset
+  original e mesmas 437 janelas/111.872 alvos; identidades declaradas dos pesos
+  coincidem. Tensores ausentes do ZIP, não carregados localmente.
+- Três treinos completos 2.000 passos/16.384.000 alvos, seed 42, FP32/eager.
+  CPU **147 passed, 15 deselected**, 168,80 s; CUDA FP32 **11 passed,
+  151 deselected**, 29,64 s, correspondentes ao código anterior. O teste CUDA K1
+  novo não é evidência fornecida por esta campanha.
+- Loss completa (menor = melhor): sem JEPA K2 **1,39746688**, com JEPA K2
+  **1,39707955**, Transformer **1,40050012**. Treino alvos/s (maior = melhor):
+  **51.305 / 37.381 / 156.691**; VRAM alocada MiB (menor consumo):
+  **408,27 / 470,00 / 202,16**; geração tok/s **92,58 / 92,80 / 478,19**.
+  Tempos de passos de treino: **319,35 / 438,30 / 104,56 s**.
+- Perfis isolados na mesma T4/GPU 0, 10 warmups/30 amostras: sem JEPA
+  **53.504,30**, com JEPA **38.040,93**, Transformer **159.872,10 alvos/s**.
+  Desligar JEPA deu +40,65% no perfil, −13,13% VRAM e −27,14% tempo de treino.
+  JEPA preservou vantagem minúscula de 0,03873% na perplexidade completa.
+- Comparação independente com 0001: mesmos hashes de fonte, dataset, pacotes
+  e configs funcionais (excluídos somente caminhos); mesma seed. Deltas de loss:
+  sem JEPA −5,73e-9, com JEPA −1,09e-8, Transformer −2,94e-6. Confirma repetibilidade
+  dessa seed, não é replicação com seed independente nem teste K1/K2.
+- Reenviada célula completa da revisão 2c0eb188f1c648938605f28bb959da34143b214d,
+  com aliases `_no_jepa_k1`/`_no_jepa_k2`, referência Transformer e run_number=3
+  para preservar 0002. Código já foi implementado/testado; nenhuma mudança de
+  treino nesta análise, somente registro das evidências e classificação correta.
