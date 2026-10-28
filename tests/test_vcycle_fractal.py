@@ -253,12 +253,15 @@ def test_vcycle_cuda_fp32_save_continue(training_config, tmp_path, ncm_slots):
 def test_campaign_configs_for_vcycle_models(tmp_path):
     base = ExperimentConfig()
     cases = [
-        ("flrm_vcycle_k2", 0, True, False),
-        ("flrm_vcycle_ncm_k2", 16, True, False),
-        ("flrm_fused_ncm_k2", 16, False, False),
-        ("flrm_inv_vcycle_ncm_k2", 16, False, True),
+        ("flrm_compressed_grouped_no_jepa_k2", 0, False, False, False),
+        ("flrm_fused_k2", 0, False, False, True),
+        ("flrm_ncm_k2", 16, False, False, False),
+        ("flrm_fused_ncm_k2", 16, False, False, True),
+        ("flrm_vcycle_k2", 0, True, False, True),
+        ("flrm_vcycle_ncm_k2", 16, True, False, True),
+        ("flrm_inv_vcycle_ncm_k2", 16, False, True, True),
     ]
-    for name, expected_slots, expected_vcycle, expected_inv in cases:
+    for name, expected_slots, expected_vcycle, expected_inv, expected_fused in cases:
         cfg = campaign_config(
             base,
             name,
@@ -277,10 +280,57 @@ def test_campaign_configs_for_vcycle_models(tmp_path):
         assert cfg.research.jepa_weight == 0.0
         assert cfg.research.v_cycle is expected_vcycle
         assert cfg.research.inv_vcycle is expected_inv
-        assert cfg.research.fused_film is True
+        assert cfg.research.fused_film is expected_fused
         assert cfg.research.ncm_slots == expected_slots
         assert cfg.data.batch_size == 32
         assert cfg.train.grad_accum_steps == 1
+        assert cfg.train.compile is False
+
+    compiled_cfg = campaign_config(
+        base,
+        "flrm_fused_k2",
+        tmp_path / "data",
+        tmp_path / "compiled",
+        seed=42,
+        steps=100,
+        device="cpu",
+        max_seconds=0,
+        compile=True,
+    )
+    assert compiled_cfg.train.compile is True
+
+
+def test_ncm_preserves_bit_identical_common_initial_weights(tiny_config):
+    torch.manual_seed(42)
+    base_model = FractalLatentModel(
+        tiny_config,
+        ResearchConfig(
+            architecture="fractal",
+            scale_execution="compressed_grouped",
+            iterations=2,
+            ncm_slots=0,
+            fused_film=False,
+        ),
+    )
+    torch.manual_seed(42)
+    ncm_model = FractalLatentModel(
+        tiny_config,
+        ResearchConfig(
+            architecture="fractal",
+            scale_execution="compressed_grouped",
+            iterations=2,
+            ncm_slots=16,
+            fused_film=False,
+        ),
+    )
+    base_state = dict(base_model.named_parameters())
+    ncm_state = dict(ncm_model.named_parameters())
+    assert "block.ncm.memory" in ncm_state
+    assert "block.ncm.memory" not in base_state
+    assert ncm_state["block.ncm.memory"].abs().sum().item() > 0.0
+    for name, param in base_state.items():
+        assert name in ncm_state, name
+        assert torch.equal(param, ncm_state[name]), f"Initial weight mismatch on {name}"
 
 
 @attention_context(True)

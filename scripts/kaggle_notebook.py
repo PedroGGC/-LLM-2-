@@ -92,6 +92,8 @@ elif MODE == "perfilar_lotes":
                "--seeds", *map(str, SETTINGS.get("seeds", [42]))]
     if SETTINGS.get("batch_matrix"):
         command += ["--batch-matrix", *SETTINGS["batch_matrix"]]
+    if SETTINGS.get("compile", False):
+        command += ["--compile"]
     data = SETTINGS.get("data")
     inputs = SETTINGS.get("input", [])
     if data and inputs:
@@ -133,6 +135,8 @@ else:
         command += ["--batch-size", str(SETTINGS["batch_size"])]
     if SETTINGS.get("grad_accum_steps") is not None:
         command += ["--grad-accum-steps", str(SETTINGS["grad_accum_steps"])]
+    if SETTINGS.get("compile", False):
+        command += ["--compile"]
 
     data = SETTINGS.get("data")
     inputs = SETTINGS.get("input", [])

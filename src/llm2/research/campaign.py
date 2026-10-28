@@ -33,10 +33,13 @@ MODELS = ("baseline", "baseline_small", "baseline_jepa", "lrm", "lrm_no_jepa",
           "flrm_reference", "flrm_batched", "flrm_compressed", "flrm_compressed_native",
           "flrm_compressed_grouped", "flrm_compressed_grouped_no_jepa", "flrm_no_jepa",
           "flrm_compressed_grouped_no_jepa_k1", "flrm_compressed_grouped_no_jepa_k2",
+          "flrm_fused_k2", "flrm_ncm_k2",
           "flrm_vcycle_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2")
 
 FIXED_ITERATIONS = {"flrm_compressed_grouped_no_jepa_k1": 1,
                     "flrm_compressed_grouped_no_jepa_k2": 2,
+                    "flrm_fused_k2": 2,
+                    "flrm_ncm_k2": 2,
                     "flrm_vcycle_k2": 2,
                     "flrm_vcycle_ncm_k2": 2,
                     "flrm_fused_ncm_k2": 2,
@@ -68,7 +71,7 @@ def worker_environment(root, gpu=None):
 
 
 def campaign_config(base, model, data, output, *, seed, steps, device, max_seconds, iterations=2,
-                    batch_size=None, grad_accum_steps=None):
+                    batch_size=None, grad_accum_steps=None, compile=False):
     if model not in MODELS:
         raise ValueError(f"unknown campaign model: {model}")
     cfg = ExperimentConfig.from_dict(base.to_dict())
@@ -84,7 +87,7 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
     cfg.train.seed, cfg.train.max_steps = seed, steps
     cfg.optimizer.schedule_steps = max(cfg.optimizer.schedule_steps, steps)
     cfg.train.device, cfg.train.precision, cfg.train.deterministic = device, "fp32", device == "cpu"
-    cfg.train.compile = False
+    cfg.train.compile = bool(compile)
     cfg.train.console_progress = True
     cfg.train.accumulation_weighting = "tokens"
     cfg.train.checkpoint_interval = max(1, min(500, steps))
@@ -93,22 +96,26 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
     selected = model.rsplit("_k", 1)[0] if model in FIXED_ITERATIONS else model
     effective_iterations = 1 if architecture == "transformer" else FIXED_ITERATIONS.get(model, iterations)
     variant = selected.removesuffix("_no_jepa")
-    is_fused_family = model in ("flrm_vcycle_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2")
+    is_grouped_ablation = model in (
+        "flrm_fused_k2", "flrm_ncm_k2",
+        "flrm_vcycle_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2",
+    )
+    is_fused_film = model in ("flrm_fused_k2", "flrm_vcycle_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2")
     is_vcycle = model in ("flrm_vcycle_k2", "flrm_vcycle_ncm_k2")
     is_inv_vcycle = model == "flrm_inv_vcycle_ncm_k2"
-    ncm_slots = 16 if model in ("flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2") else 0
-    uses_jepa = not is_fused_family and not selected.endswith("_no_jepa") and (
+    ncm_slots = 16 if model in ("flrm_ncm_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2") else 0
+    uses_jepa = not is_grouped_ablation and not selected.endswith("_no_jepa") and (
         selected in ("baseline_jepa", "lrm", "flrm_reference", "flrm_batched") or selected.startswith("flrm_compressed"))
     jepa = 0.1 if uses_jepa else 0.
     scale_exec = (
-        "compressed_grouped" if is_fused_family
+        "compressed_grouped" if is_grouped_ablation
         else variant.removeprefix("flrm_") if variant.startswith("flrm_compressed")
         else "batched" if model == "flrm_batched"
         else "reference"
     )
     cfg.research = ResearchConfig(architecture=architecture, iterations=effective_iterations,
         latent_steps=0, jepa_weight=jepa, scale_execution=scale_exec,
-        v_cycle=is_vcycle, inv_vcycle=is_inv_vcycle, ncm_slots=ncm_slots, fused_film=is_fused_family,
+        v_cycle=is_vcycle, inv_vcycle=is_inv_vcycle, ncm_slots=ncm_slots, fused_film=is_fused_film,
         max_seconds=max_seconds, shutdown_reserve_seconds=min(30., max_seconds/10) if max_seconds else 0.)
     if model == "baseline_small":
         # At D=384 this is 2,164,224 parameters; inspect the resolved config for other widths.
@@ -341,6 +348,7 @@ def parser():
     result.add_argument("--review-steps", nargs="+", type=int, default=[500, 1000, 1500, 2000])
     result.add_argument("--batch-size", type=int, default=None, help="override per-device microbatch size")
     result.add_argument("--grad-accum-steps", type=int, default=None, help="override gradient accumulation steps")
+    result.add_argument("--compile", action="store_true", help="enable torch.compile for training")
     result.add_argument("--profile-batches", action="store_true", help="run batch matrix profiling study")
     result.add_argument("--batch-matrix", nargs="+", default=["8x4", "16x2", "32x1"],
                         help="batch matrix combinations in BxA format (microbatch x accum)")
@@ -426,7 +434,7 @@ def run_batch_profile(args):
             cfg = campaign_config(base, model, data_path, output / "runs" / run_id, seed=args.seeds[0],
                                   steps=max(100, args.warmup_steps + args.measure_steps + 1),
                                   device=args.device, max_seconds=0, iterations=args.iterations,
-                                  batch_size=b, grad_accum_steps=a)
+                                  batch_size=b, grad_accum_steps=a, compile=getattr(args, "compile", False))
             cfg.train.console_progress = False
             cfg.optimizer.schedule_steps = max(cfg.optimizer.schedule_steps, cfg.train.max_steps)
             cfg.research.max_seconds = cfg.research.max_train_flops = cfg.research.max_tokens = 0
@@ -553,7 +561,8 @@ def run_campaign(args):
                 directory = output / "runs" / run_id
                 cfg = campaign_config(base, model, data_path, directory, seed=seed, steps=args.steps,
                                       device=args.device, max_seconds=args.max_seconds, iterations=args.iterations,
-                                      batch_size=args.batch_size, grad_accum_steps=args.grad_accum_steps)
+                                      batch_size=args.batch_size, grad_accum_steps=args.grad_accum_steps,
+                                      compile=getattr(args, "compile", False))
                 path = output / "configs" / f"{run_id}.yaml"
                 path.write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=True), encoding="utf-8")
                 jobs.append({"id": run_id, "model": model, "seed": seed, "gpu_slot": slot,

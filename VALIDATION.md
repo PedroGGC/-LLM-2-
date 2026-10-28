@@ -689,3 +689,31 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
 - Testes executados localmente (CPU, Python 3.12.2, Torch 2.14.1+cpu):
   - `python -m pytest tests/test_vcycle_fractal.py -q`: **13 passed, 2 skipped** (incluindo equivalência numérica exata do atalho `raw_macro` em comprimentos arbitrários `[1, 4, 15, 16, 17, 31, 32, 33, 65]`, formas `[(4, 9), (2, 33), (4, 9)]` do `inv_vcycle`, causalidade estrita e retomada exata bit a bit).
   - Suíte completa `python -m pytest -q`: **168 passed, 18 skipped**. Todos os 18 skips são testes `@pytest.mark.cuda`.
+
+### Evidência Kaggle recebida — Campanha 0007 (`flrm_fused_ncm_k2`, `flrm_inv_vcycle_ncm_k2`, `baseline_small` em `32×1`), 27/10/2026
+
+- ZIP recebido (`llm2-campaign-0007-results.zip`), SHA256 `59176855081d7469b9b06f07a75ee217d9b66a1e40bc521a1ceb39bf19f6ef63` (118 entradas, commit `e8c261e2569aa8e4e82efd034f5ff7b9c73e5e84`).
+- Testes no Kaggle: CPU **168 passed, 18 deselected** (187,74 s); CUDA FP32 **14 passed, 172 deselected** (31,56 s).
+- Resultados em 2.000 passos / 16.384.000 alvos supervisionados, lote `32×1`, seed 42, validação completa (437 janelas / 111.872 alvos):
+  - `baseline_small`: Loss completa **1,39921776**, treino **152.344 alvos/s** (107,55 s), perfil isolado **188.015 alvos/s** (43,6 ms/passo, 269 `cudaLaunchKernel`), VRAM **491,93 MiB**, geração **398,17 tok/s**.
+  - `flrm_fused_ncm_k2`: Loss completa **1,40102090**, treino **48.002 alvos/s** (341,32 s), perfil isolado **52.931 alvos/s** (154,8 ms/passo, 1.078 `cudaLaunchKernel`), VRAM **1.425,32 MiB**, geração **64,95 tok/s**.
+  - `flrm_inv_vcycle_ncm_k2`: Loss completa **1,54726840**, treino **71.462 alvos/s** (229,27 s), perfil isolado **79.313 alvos/s** (103,3 ms/passo, 899 `cudaLaunchKernel`), VRAM **1.122,82 MiB**, geração **108,82 tok/s**.
+- Diagnóstico pós-Campanha 0007:
+  1. `flrm_inv_vcycle_ncm_k2` degradou severamente (`1,547268`) porque desligar o `SharedFractalCore` na escala fina $s_0$ em $k=0$ reduz a profundidade efetiva de atenção/MLP em resolução $T=256$ de $12$ para $6$ camadas.
+  2. A comparação entre `flrm_compressed_grouped_no_jepa_k2` na `0003` (`1,397467` em `8×4`) e `flrm_fused_ncm_k2` na `0007` (`1,401021` em `32×1`) confundiu simultaneamente formato do lote (`8×4` vs `32×1`), fusão (`fused_film`), NCM (`ncm_slots=16`) e um deslocamento de RNG nos pesos iniciais comuns causado pela chamada de `nn.init.normal_` dentro de `NeuralContextMemory.__init__` antes de `self.apply(TransformerLM._init_weights)`.
+  3. Além disso, o empacotamento `stacked_all` + `torch.einsum("ij,jbtd->ibtd", weights, stacked_all)` em `CrossScaleInteraction.forward_native` calculava todas as 3 combinações de escala para todas as 336 posições ($1.008$ posições-escala) e descartava $2/3$ do tensor resultante, explicando o aumento de VRAM para `1.425,32 MiB` e a queda de throughput para `48.002 alvos/s`.
+
+## Campanha 0008 — Correção de Empacotamento, Isolamento de RNG do NCM e Matriz Fatorial 2×2, 27/10/2026
+
+- Mudanças implementadas na branch `experiment/fractal-lrm`:
+  1. **Eliminação do cálculo descartado de $2/3$ em `CrossScaleInteraction.forward_native`**:
+     - Substituído `stacked_all = torch.cat((s_fine, c1_3, c2_3), dim=2)` + `torch.einsum("ij,jbtd->ibtd", weights, stacked_all)` por três contrações diretas por linha (`m0 = torch.einsum("j,jbtd->btd", weights[0], s_fine)`, `m1 = ...`, `m2 = ...`), concatenando apenas os tensores efetivamente utilizados (`packed_mixed = torch.cat((m0, m1, m2), dim=1)`) antes da projeção linear única `self.projection(packed_mixed)`.
+     - Elimina $2/3$ das multiplicações da mistura entre escalas e $\sim 94,5\text{ MiB}$ de alocações intermediárias por invocação em $B=32, T=256$, preservando equivalência numérica estrita (`rtol=3e-5, atol=2e-6`) com o caminho não fundido.
+  2. **Isolamento de RNG na inicialização do `NeuralContextMemory`**:
+     - `FractalRecursiveBlock` instancia `NeuralContextMemory(..., init_parameters=False)` sem consumir o RNG global antes de `self.apply(TransformerLM._init_weights)` em `FractalLatentModel.__init__`, executando `self.block.ncm.reset_parameters()` imediatamente após `self.apply`.
+     - Com isso, variantes com `ncm_slots=0` e `ncm_slots=16` possuem pesos iniciais **100% idênticos bit a bit (`torch.equal`)** em todos os parâmetros comuns (`embedding`, `cores`, `conditioning`, `interaction`, `comp4`, `comp16`, `norm`, `lm_head`) sob a mesma seed.
+  3. **Matriz Fatorial $2 \times 2$ Completa (`Fusão × NCM`) e suporte a `--compile`**:
+     - Adicionados os aliases `flrm_fused_k2` (`fused_film=True, ncm_slots=0`) e `flrm_ncm_k2` (`fused_film=False, ncm_slots=16`) em `campaign.py` e `presentation.py`, completando o desenho fatorial ortogonal ao lado de `flrm_compressed_grouped_no_jepa_k2` (`False, 0`) e `flrm_fused_ncm_k2` (`True, 16`).
+     - Adicionado argumento opcional `--compile` (`compile=False` por padrão) em `campaign.py` e `scripts/kaggle_notebook.py`.
+- Testes executados localmente (CPU, Python 3.12.2, Torch 2.14.1+cpu):
+  - `python -m pytest -q`: **169 passed, 18 skipped** em 131,99 s (incluindo `test_ncm_preserves_bit_identical_common_initial_weights`, `test_fused_film_and_native_numerical_equivalence` e `test_campaign_configs_for_vcycle_models`). Todos os 18 skips são testes `@pytest.mark.cuda`.

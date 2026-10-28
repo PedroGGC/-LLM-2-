@@ -155,12 +155,12 @@ class CrossScaleInteraction(nn.Module):
                 c1_3 = comp4.compress_stacked(s_fine)
                 c2_3 = comp16.compress_stacked(s_fine)
                 t1, t2 = c1_3.shape[2], c2_3.shape[2]
-            # Concatenate all 3 scales along time: (3, B, t0 + t1 + t2, D)
-            stacked_all = torch.cat((s_fine, c1_3, c2_3), dim=2)
             weights = self.mixing.softmax(-1)
-            # Single batched matmul/einsum across all 3 scales instead of 9 scalar muls:
-            mixed_3 = torch.einsum("ij,jbtd->ibtd", weights, stacked_all)
-            packed_mixed = torch.cat((mixed_3[0, :, :t0], mixed_3[1, :, t0:t0 + t1], mixed_3[2, :, t0 + t1:]), dim=1)
+            # Compute only the needed scale row per resolution (no wasted 2/3 combinations):
+            m0 = torch.einsum("j,jbtd->btd", weights[0], s_fine)
+            m1 = torch.einsum("j,jbtd->btd", weights[1], c1_3)
+            m2 = torch.einsum("j,jbtd->btd", weights[2], c2_3)
+            packed_mixed = torch.cat((m0, m1, m2), dim=1)
             # Single Linear projection call instead of 3 separate calls:
             projected = self.projection(packed_mixed)
             g = self.gate.sigmoid()
@@ -205,7 +205,11 @@ class FractalRecursiveBlock(nn.Module):
         if self.execution.startswith("compressed"):
             self.comp4 = CausalScaleCompressor(4, config.d_model)
             self.comp16 = CausalScaleCompressor(16, config.d_model)
-        self.ncm = NeuralContextMemory(research.ncm_slots, config.d_model) if research.ncm_slots > 0 else None
+        self.ncm = (
+            NeuralContextMemory(research.ncm_slots, config.d_model, init_parameters=False)
+            if research.ncm_slots > 0
+            else None
+        )
 
     def forward(self, states, contexts, step_index: int = 0, preconditioned: bool = False):
         if self.execution.startswith("compressed"):
@@ -285,6 +289,8 @@ class FractalLatentModel(Backbone):
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
         self.apply(TransformerLM._init_weights)
         self.lm_head.weight = self.embedding.weight
+        if self.block.ncm is not None:
+            self.block.ncm.reset_parameters()
         self.register_buffer("training_step", torch.tensor(0, dtype=torch.long))
 
     def active_iterations(self):
