@@ -444,6 +444,34 @@ def test_etapa3_paired_common_init_protocol_and_sampler_alignment(training_confi
     for alias in flrm_aliases[1:]:
         assert models[alias].paired_init_provenance["exclusive_combined_sha256"] == ref_excl_sha
 
+    # 3. Verify CUDA RNG isolation when CUDA is initialized (simulated mock if CUDA is unavailable locally).
+    from unittest.mock import patch
+    cuda_state = {"state": [torch.tensor([42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=torch.uint8)]}
+    def mock_get_all():
+        return [s.clone() for s in cuda_state["state"]]
+    def mock_set_all(states):
+        cuda_state["state"] = [s.clone() for s in states]
+    def mock_seed_all(s):
+        t = torch.zeros(16, dtype=torch.uint8)
+        t[0], t[1] = s % 256, (s // 256) % 256
+        cuda_state["state"] = [t]
+
+    with patch("torch.cuda.is_available", return_value=True), \
+         patch("torch.cuda.is_initialized", return_value=True), \
+         patch("torch.cuda.device_count", return_value=1), \
+         patch("torch.cuda.get_rng_state_all", side_effect=mock_get_all), \
+         patch("torch.cuda.set_rng_state_all", side_effect=mock_set_all), \
+         patch("torch.cuda.manual_seed_all", side_effect=mock_seed_all):
+        cfg_lrm = campaign_config(base, "lrm_no_jepa_k1", base.data.path, tmp_path / "mock-lrm", seed=42, steps=2, device="cpu", max_seconds=0, paired_common_init=True)
+        cfg_flrm = campaign_config(base, "flrm_compressed_grouped_no_jepa_k2", base.data.path, tmp_path / "mock-flrm", seed=42, steps=2, device="cpu", max_seconds=0, paired_common_init=True)
+        setup_runtime(cfg_lrm.train)
+        m_lrm = build_backbone(cfg_lrm)
+        rng_lrm = capture_rng()
+        setup_runtime(cfg_flrm.train)
+        m_flrm = build_backbone(cfg_flrm)
+        rng_flrm = capture_rng()
+        assert_nested_equal(rng_lrm, rng_flrm)
+
 
 @pytest.mark.parametrize(
     "alias,expected_exec,expected_cache",

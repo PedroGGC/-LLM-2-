@@ -107,6 +107,7 @@ def compute_paired_init_provenance(model, *, seed: int) -> dict:
 def build_paired_recurrent_backbone(config):
     """Construct `LatentRecursiveModel` or `FractalLatentModel` with explicit common-weight pairing."""
     from ..architectures.latent_recursive import LatentRecursiveModel
+    from ..runtime import capture_rng, restore_rng
 
     research = config.research
     if research is None or research.architecture not in ("recursive", "fractal"):
@@ -135,22 +136,32 @@ def build_paired_recurrent_backbone(config):
         model.paired_init_provenance = compute_paired_init_provenance(model, seed=seed)
         return model
 
-    # 1. Build canonical reference LRM in a deterministic seed scope and capture post-ref CPU RNG.
-    with torch.random.fork_rng(devices=[]):
-        torch.manual_seed(seed)
-        ref_lrm = LatentRecursiveModel(config.model, ref_research)
-        post_ref_cpu_rng = torch.get_rng_state()
+    # Save calling RNG state to isolate backbone construction completely.
+    initial_rng = capture_rng()
 
-    # 2. Construct target model in an isolated deterministic scope so exclusive modules never shift RNG.
-    with torch.random.fork_rng(devices=[]):
+    # 1. Build canonical reference LRM in a deterministic seed scope and capture post-ref RNG (CPU + CUDA).
+    try:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available() and torch.cuda.is_initialized():
+            torch.cuda.manual_seed_all(seed)
+        ref_lrm = LatentRecursiveModel(config.model, ref_research)
+        post_ref_rng = capture_rng()
+
+        # 2. Construct target model in an isolated deterministic scope so exclusive modules never shift RNG.
         if research.architecture == "recursive":
             torch.manual_seed(seed)
+            if torch.cuda.is_available() and torch.cuda.is_initialized():
+                torch.cuda.manual_seed_all(seed)
             target_model = LatentRecursiveModel(config.model, research)
         else:
             from ..architectures.fractal_recursive import FractalLatentModel
             exclusive_seed = (seed + FLRM_EXCLUSIVE_SEED_OFFSET) % (2**32)
             torch.manual_seed(exclusive_seed)
+            if torch.cuda.is_available() and torch.cuda.is_initialized():
+                torch.cuda.manual_seed_all(exclusive_seed)
             target_model = FractalLatentModel(config.model, research)
+    finally:
+        pass
 
     # 3. Explicitly copy all common parameters and buffers without sharing storage (`data_ptr`).
     with torch.no_grad():
@@ -185,8 +196,8 @@ def build_paired_recurrent_backbone(config):
         if target_model.lm_head.weight is not target_model.embedding.weight:
             raise RuntimeError("embedding/lm_head weight tying was broken")
 
-    # 4. Advance global CPU RNG to the exact post-reference state so all paired models leave RNG identical.
-    torch.set_rng_state(post_ref_cpu_rng)
+    # 4. Restore exact post-reference RNG state (CPU, CUDA, numpy, python) so all paired models leave RNG identical.
+    restore_rng(post_ref_rng)
 
     target_model.paired_init_provenance = compute_paired_init_provenance(target_model, seed=seed)
     return target_model
