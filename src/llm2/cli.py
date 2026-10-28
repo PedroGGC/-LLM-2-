@@ -81,7 +81,12 @@ def parser():
     experiment.add_argument("--seed", type=int)
     for name in ("evaluate", "generate", "reasoning", "benchmark", "diagnose"):
         cmd = commands.add_parser(name)
-        cmd.add_argument("--checkpoint", required=True)
+        if name == "diagnose":
+            src_group = cmd.add_mutually_exclusive_group(required=True)
+            src_group.add_argument("--checkpoint", help="saved checkpoint directory")
+            src_group.add_argument("--config", help="experiment config YAML to diagnose at random initialization")
+        else:
+            cmd.add_argument("--checkpoint", required=True)
         cmd.add_argument("--data", help="relocated prepared data; manifest must match checkpoint")
         cmd.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
         cmd.add_argument("--precision", choices=("fp32", "bf16"))
@@ -116,6 +121,16 @@ def parser():
 
 def _inference(args):
     # Metadata and safetensors only; does not unpickle the optimizer/RNG state.
+    if getattr(args, "checkpoint", None) is None:
+        cfg = load_config(args.config)
+        cfg.train.device = args.device
+        cfg.train.precision = args.precision or (cfg.train.precision if args.device == "cuda" else "fp32")
+        cfg.train.__post_init__()
+        device = setup_runtime(cfg.train)
+        data = PreparedData(args.data or cfg.data.path)
+        model = build_backbone(cfg).to(device)
+        metadata = {"files": {"model.safetensors": None}, "step": 0, "initialization_only": True}
+        return cfg, model, data, device, metadata
     metadata = read_checkpoint_metadata(args.checkpoint)
     cfg = ExperimentConfig.from_dict(metadata["config"])
     cfg.train.device = args.device
@@ -256,13 +271,21 @@ def main(argv=None):
                 elif args.command == "diagnose":
                     from .research.diagnostics import diagnose_model
                     batch = next(validation_batches(data.arrays["val"], cfg.data.seq_len, 1, 1, device))
-                    result = diagnose_model(model, batch["input_ids"], max_samples=args.samples,
-                                            precision=cfg.train.precision, deterministic=cfg.train.deterministic)
+                    result = diagnose_model(
+                        model,
+                        batch["input_ids"],
+                        targets=batch["targets"],
+                        batch_source="validation_first_window_b1",
+                        max_samples=args.samples,
+                        precision=cfg.train.precision,
+                        deterministic=cfg.train.deterministic,
+                    )
                 else:
                     result = benchmark_inference(model, data.tokenizer, args.prompt,
                         max_new_tokens=args.max_new_tokens, warmup_tokens=args.warmup_tokens,
                         precision=cfg.train.precision, deterministic=cfg.train.deterministic)
-                result["checkpoint"] = str(Path(args.checkpoint).resolve())
+                result["checkpoint"] = str(Path(args.checkpoint).resolve()) if getattr(args, "checkpoint", None) else None
+                result["config_source"] = str(Path(args.config).resolve()) if getattr(args, "config", None) else None
                 result["checkpoint_model_sha256"] = metadata["files"]["model.safetensors"]
                 path.parent.mkdir(parents=True, exist_ok=True)
                 write_json(path, result)

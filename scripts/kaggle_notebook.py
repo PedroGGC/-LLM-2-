@@ -25,7 +25,7 @@ if not WORK.is_dir():
 
 print("="*78)
 print("🚀 LLM2-Lab — comparação de modelos no Kaggle")
-print("Modo:", "AVALIAR CHECKPOINTS SALVOS — SEM NOVO TREINO" if MODE == "avaliar_salvos" else "PERFIL DE MATRIZ DE LOTES (8x4, 16x2, 32x1)" if MODE == "perfilar_lotes" else "NOVA CAMPANHA DE TREINO")
+print("Modo:", "AVALIAR CHECKPOINTS SALVOS — SEM NOVO TREINO" if MODE == "avaliar_salvos" else "PERFIL DE MATRIZ DE LOTES E TELEMETRIA (GPU 0)" if MODE == "perfilar_lotes" else "NOVA CAMPANHA DE TREINO")
 print("="*78)
 print("\n[Preparação 1/3] Conferir as GPUs")
 
@@ -92,8 +92,16 @@ elif MODE == "perfilar_lotes":
                "--seeds", *map(str, SETTINGS.get("seeds", [42]))]
     if SETTINGS.get("batch_matrix"):
         command += ["--batch-matrix", *SETTINGS["batch_matrix"]]
-    if SETTINGS.get("compile", False):
+    if SETTINGS.get("profile_backends"):
+        command += ["--profile-backends", *SETTINGS["profile_backends"]]
+    elif SETTINGS.get("compile", False):
         command += ["--compile"]
+    if SETTINGS.get("profile_repeats") is not None:
+        command += ["--profile-repeats", str(SETTINGS["profile_repeats"])]
+    if SETTINGS.get("diagnose_init", False):
+        command += ["--diagnose-init"]
+    if SETTINGS.get("evaluate_checkpoints"):
+        command += ["--evaluate-checkpoints", *map(str, SETTINGS["evaluate_checkpoints"])]
     data = SETTINGS.get("data")
     inputs = SETTINGS.get("input", [])
     if data and inputs:
@@ -137,6 +145,8 @@ else:
         command += ["--grad-accum-steps", str(SETTINGS["grad_accum_steps"])]
     if SETTINGS.get("compile", False):
         command += ["--compile"]
+    if SETTINGS.get("diagnose_init", False):
+        command += ["--diagnose-init"]
 
     data = SETTINGS.get("data")
     inputs = SETTINGS.get("input", [])

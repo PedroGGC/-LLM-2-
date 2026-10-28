@@ -211,12 +211,19 @@ class FractalRecursiveBlock(nn.Module):
             else None
         )
 
-    def forward(self, states, contexts, step_index: int = 0, preconditioned: bool = False):
+    def forward(
+        self,
+        states,
+        contexts,
+        step_index: int = 0,
+        preconditioned: bool = False,
+        context_is_projected: bool = False,
+    ):
         if self.execution.startswith("compressed"):
             s0, s1, s2 = states
             c0, c1, c2 = contexts
             T = c0.shape[1]
-            if self.conditioning is not None and not preconditioned:
+            if self.conditioning is not None and not preconditioned and not context_is_projected:
                 if self.fused_film:
                     c0, c1, c2 = self.conditioning.forward_scales(c0, c1, c2)
                 else:
@@ -224,7 +231,7 @@ class FractalRecursiveBlock(nn.Module):
                     c1 = self.conditioning(c1, 1)
                     c2 = self.conditioning(c2, 2)
             skip_fine_core = (self.v_cycle and step_index > 0) or (self.inv_vcycle and step_index == 0)
-            v0 = s0 if skip_fine_core else self.cores[0](s0, c0)
+            v0 = s0 if skip_fine_core else self.cores[0](s0, c0, context_is_projected=context_is_projected)
             if self.execution == "compressed_grouped":
                 # Pad only the shorter coarse branch. Causal valid queries cannot
                 # read this right padding. Dropout draws differ from separate calls.
@@ -236,7 +243,7 @@ class FractalRecursiveBlock(nn.Module):
                 grouped_c = torch.cat((c1, padded_c2))
                 if self.ncm is not None:
                     grouped_c = self.ncm(grouped_c)
-                values = self.cores[0](grouped_s, grouped_c)
+                values = self.cores[0](grouped_s, grouped_c, context_is_projected=context_is_projected)
                 if self.ncm is not None:
                     values = self.ncm(values)
                 v1, v2 = values.chunk(2, dim=0)
@@ -244,8 +251,8 @@ class FractalRecursiveBlock(nn.Module):
             else:
                 c1_in = self.ncm(c1) if self.ncm is not None else c1
                 c2_in = self.ncm(c2) if self.ncm is not None else c2
-                v1 = self.cores[0](s1, c1_in)
-                v2 = self.cores[0](s2, c2_in)
+                v1 = self.cores[0](s1, c1_in, context_is_projected=context_is_projected)
+                v2 = self.cores[0](s2, c2_in, context_is_projected=context_is_projected)
                 if self.ncm is not None:
                     v1 = self.ncm(v1)
                     v2 = self.ncm(v2)
@@ -260,16 +267,26 @@ class FractalRecursiveBlock(nn.Module):
             return (next_s0, next_s1, next_s2)
         if self.execution == "batched":
             stacked_states, stacked_contexts = torch.stack(states), torch.stack(contexts)
-            if self.conditioning is not None:
+            if self.conditioning is not None and not preconditioned and not context_is_projected:
                 stacked_contexts = self.conditioning.forward_batched(stacked_contexts)
             shape = stacked_states.shape
-            values = self.cores[0](stacked_states.flatten(0, 1), stacked_contexts.flatten(0, 1))
+            values = self.cores[0](
+                stacked_states.flatten(0, 1),
+                stacked_contexts.flatten(0, 1),
+                context_is_projected=context_is_projected,
+            )
             return self.interaction.forward_batched(values.reshape(shape)).unbind(0)
         values = []
         for index, (state, context) in enumerate(zip(states, contexts)):
-            if self.conditioning is not None:
+            if self.conditioning is not None and not preconditioned and not context_is_projected:
                 context = self.conditioning(context, index)
-            values.append(self.cores[0 if self.shared else index](state, context))
+            values.append(
+                self.cores[0 if self.shared else index](
+                    state,
+                    context,
+                    context_is_projected=context_is_projected,
+                )
+            )
         return self.interaction(tuple(values))
 
 
@@ -308,18 +325,37 @@ class FractalLatentModel(Backbone):
         if type(steps) is not int or steps <= 0:
             raise ValueError("iterations must be positive")
         preconditioned = False
+        context_is_projected = bool(
+            self.research.share_scales and getattr(self.research, "cache_context_projection", False)
+        )
         if self.research.scale_execution.startswith("compressed"):
             c0 = self.embedding(input_ids)
             c1 = self.block.comp4.compress(c0)
             c2 = self.block.comp16.compress(c0)
             states = (torch.zeros_like(c0), torch.zeros_like(c1), torch.zeros_like(c2))
-            if self.research.fused_film and self.block.conditioning is not None:
-                c0, c1, c2 = self.block.conditioning.forward_scales(c0, c1, c2)
+            if (self.research.fused_film or context_is_projected) and self.block.conditioning is not None:
+                if self.research.fused_film:
+                    c0, c1, c2 = self.block.conditioning.forward_scales(c0, c1, c2)
+                else:
+                    c0 = self.block.conditioning(c0, 0)
+                    c1 = self.block.conditioning(c1, 1)
+                    c2 = self.block.conditioning(c2, 2)
                 preconditioned = True
+            if context_is_projected:
+                c0 = self.block.cores[0].project_context(c0)
+                c1 = self.block.cores[0].project_context(c1)
+                c2 = self.block.cores[0].project_context(c2)
             contexts = (c0, c1, c2)
         else:
             contexts = self.encoder(self.embedding(input_ids))
             states = tuple(torch.zeros_like(context) for context in contexts)
+            if context_is_projected:
+                if self.block.conditioning is not None:
+                    contexts = tuple(
+                        self.block.conditioning(context, index) for index, context in enumerate(contexts)
+                    )
+                    preconditioned = True
+                contexts = tuple(self.block.cores[0].project_context(context) for context in contexts)
         history = []
         for index in range(steps):
             if self.training and self.research.detach_every and index and index % self.research.detach_every == 0:
@@ -331,11 +367,12 @@ class FractalLatentModel(Backbone):
                     contexts,
                     index,
                     preconditioned,
+                    context_is_projected,
                     use_reentrant=False,
                     preserve_rng_state=True,
                 )
             else:
-                states = self.block(states, contexts, index, preconditioned)
+                states = self.block(states, contexts, index, preconditioned, context_is_projected)
             if self.research.record_states or self.research.intermediate_weight:
                 history.append(self.norm(states[0]))
         hidden = self.norm(states[0])
@@ -345,6 +382,7 @@ class FractalLatentModel(Backbone):
     def analytical_cost(self, seq_len, *, include_logits=True):
         d, h, s = self.config.d_model, self.config.hidden_dim, seq_len
         count, steps = len(self.research.scales), self.active_iterations()
+        cached_ctx = bool(self.research.share_scales and getattr(self.research, "cache_context_projection", False))
         if self.research.scale_execution.startswith("compressed"):
             s1 = (s + 3) // 4
             s2 = (s + 15) // 16
@@ -361,16 +399,20 @@ class FractalLatentModel(Backbone):
                 skip_fine = (self.research.v_cycle and index > 0) or (self.research.inv_vcycle and index == 0)
                 active_lengths = macro_core_lengths if skip_fine else full_core_lengths
                 core_flops = sum(
-                    self.research.core_layers * (8 * si * d * d + 6 * si * d * h + 4 * si * si * d) + 2 * si * d * d
+                    self.research.core_layers * (8 * si * d * d + 6 * si * d * h + 4 * si * si * d)
+                    + (0 if cached_ctx else 2 * si * d * d)
                     for si in active_lengths
                 )
                 forward_iterations += core_flops + projection_flops + ncm_flops
-            forward = forward_iterations + (2 * s * d * self.config.vocab_size if include_logits else 0)
+            static_ctx_flops = sum(2 * si * d * d for si in full_core_lengths) if cached_ctx else 0
+            forward = static_ctx_flops + forward_iterations + (2 * s * d * self.config.vocab_size if include_logits else 0)
             recompute = forward_iterations if self.training and self.research.gradient_checkpointing else 0
             return forward, recompute, steps
-        per_core = self.research.core_layers*(8*s*d*d + 6*s*d*h + 4*s*s*d) + 2*s*d*d
-        per_iteration = count * (per_core + 2*s*d*d)
-        forward = steps * per_iteration + (2*s*d*self.config.vocab_size if include_logits else 0)
+        core_blocks = self.research.core_layers * (8 * s * d * d + 6 * s * d * h + 4 * s * s * d)
+        per_core = core_blocks + (0 if cached_ctx else 2 * s * d * d)
+        per_iteration = count * (per_core + 2 * s * d * d)
+        static_ctx_flops = (count * 2 * s * d * d) if cached_ctx else 0
+        forward = static_ctx_flops + steps * per_iteration + (2 * s * d * self.config.vocab_size if include_logits else 0)
         recompute = steps * per_iteration if self.training and self.research.gradient_checkpointing else 0
         return forward, recompute, steps
 

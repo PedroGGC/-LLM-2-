@@ -28,8 +28,12 @@ class SharedRecursiveCore(nn.Module):
         self.blocks = nn.ModuleList([DecoderBlock(config) for _ in range(depth)])
         self.gate = nn.Parameter(torch.full((config.d_model,), -2.0))
 
-    def forward(self, state, context):
-        value = self.state_norm(state) + self.context_projection(context)
+    def project_context(self, context):
+        return self.context_projection(context)
+
+    def forward(self, state, context, *, context_is_projected: bool = False):
+        projected_context = context if context_is_projected else self.context_projection(context)
+        value = self.state_norm(state) + projected_context
         for block in self.blocks:
             value = block(value)
         return state + self.gate.sigmoid() * value
@@ -75,17 +79,41 @@ class LatentRecursiveModel(Backbone):
             raise ValueError("invalid iteration count")
         context = self.embedding(input_ids)
         value = torch.zeros_like(context)
+        context_is_projected = bool(self.shared and getattr(self.research, "cache_context_projection", False))
+        if context_is_projected:
+            context = self.core.project_context(context)
         history = []
         for index in range(steps):
             if self.training and self.research.detach_every and index and index % self.research.detach_every == 0:
                 value = value.detach()
             core = self.core if self.shared else self.cores[index]
             if self.training and self.research.gradient_checkpointing:
-                value = checkpoint(core, value, context, use_reentrant=False, preserve_rng_state=True)
+                value = checkpoint(
+                    core,
+                    value,
+                    context,
+                    context_is_projected=context_is_projected,
+                    use_reentrant=False,
+                    preserve_rng_state=True,
+                )
             else:
-                value = core(value, context)
+                value = core(value, context, context_is_projected=context_is_projected)
             if self.research.record_states or self.research.intermediate_weight:
                 history.append(self.norm(value))
         hidden = self.norm(value)
         return ModelOutput(logits=self.lm_head(hidden) if return_logits else None, hidden_states=hidden,
                            state=LatentState(value, steps), intermediate_states=tuple(history))
+
+    def analytical_cost(self, seq_len, *, include_logits=True):
+        c, r, s = self.config, self.research, seq_len
+        d, h, steps = c.d_model, c.hidden_dim, self.active_iterations()
+        blocks_cost = r.core_layers * (8 * s * d * d + 6 * s * d * h + 4 * s * s * d)
+        ctx_proj_cost = 2 * s * d * d
+        if self.shared and getattr(r, "cache_context_projection", False):
+            forward_iterations = steps * blocks_cost + ctx_proj_cost
+            recompute = steps * blocks_cost if r.gradient_checkpointing and self.training else 0
+        else:
+            forward_iterations = steps * (blocks_cost + ctx_proj_cost)
+            recompute = forward_iterations if r.gradient_checkpointing and self.training else 0
+        forward = forward_iterations + (2 * s * d * c.vocab_size if include_logits else 0)
+        return forward, recompute, steps

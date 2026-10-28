@@ -153,6 +153,7 @@ class ResearchConfig:
     inv_vcycle: bool = False
     ncm_slots: int = 0
     fused_film: bool = False
+    cache_context_projection: bool = False
 
     def __post_init__(self):
         _types(self)
@@ -166,6 +167,12 @@ class ResearchConfig:
             raise ValueError("compressed modes require scales=[1,4,0]; native block factors are fixed at 1,4,16")
         if self.fused_film and self.architecture != "fractal":
             raise ValueError("fused_film requires a fractal model")
+        if self.cache_context_projection and self.architecture not in ("recursive", "fractal"):
+            raise ValueError("cache_context_projection requires a recursive or fractal model")
+        if self.cache_context_projection and self.architecture == "fractal" and not self.share_scales:
+            raise ValueError("cache_context_projection requires shared scale cores")
+        if self.cache_context_projection and self.ncm_slots > 0:
+            raise ValueError("cache_context_projection cannot be combined with ncm_slots > 0")
         if self.v_cycle and self.inv_vcycle:
             raise ValueError("v_cycle and inv_vcycle are mutually exclusive")
         if (self.v_cycle or self.inv_vcycle or self.ncm_slots > 0) and (

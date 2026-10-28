@@ -29,21 +29,36 @@ from .presentation import MODEL_NAMES, batch_comparison_text, comparison_text, l
 from .naming import numbered_output
 
 
-MODELS = ("baseline", "baseline_small", "baseline_jepa", "lrm", "lrm_no_jepa",
-          "flrm_reference", "flrm_batched", "flrm_compressed", "flrm_compressed_native",
-          "flrm_compressed_grouped", "flrm_compressed_grouped_no_jepa", "flrm_no_jepa",
-          "flrm_compressed_grouped_no_jepa_k1", "flrm_compressed_grouped_no_jepa_k2",
-          "flrm_fused_k2", "flrm_ncm_k2",
-          "flrm_vcycle_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2")
+MODELS = (
+    "baseline", "baseline_small", "baseline_jepa",
+    "lrm", "lrm_no_jepa", "lrm_no_jepa_k1", "lrm_no_jepa_k2",
+    "flrm_reference", "flrm_batched",
+    "flrm_compressed", "flrm_compressed_native",
+    "flrm_compressed_native_no_jepa", "flrm_compressed_native_no_jepa_k1", "flrm_compressed_native_no_jepa_k2",
+    "flrm_compressed_native_cached_no_jepa_k2",
+    "flrm_compressed_grouped", "flrm_compressed_grouped_no_jepa", "flrm_no_jepa",
+    "flrm_compressed_grouped_no_jepa_k1", "flrm_compressed_grouped_no_jepa_k2",
+    "flrm_compressed_grouped_cached_no_jepa_k2",
+    "flrm_fused_k2", "flrm_ncm_k2",
+    "flrm_vcycle_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2",
+)
 
-FIXED_ITERATIONS = {"flrm_compressed_grouped_no_jepa_k1": 1,
-                    "flrm_compressed_grouped_no_jepa_k2": 2,
-                    "flrm_fused_k2": 2,
-                    "flrm_ncm_k2": 2,
-                    "flrm_vcycle_k2": 2,
-                    "flrm_vcycle_ncm_k2": 2,
-                    "flrm_fused_ncm_k2": 2,
-                    "flrm_inv_vcycle_ncm_k2": 2}
+FIXED_ITERATIONS = {
+    "lrm_no_jepa_k1": 1,
+    "lrm_no_jepa_k2": 2,
+    "flrm_compressed_native_no_jepa_k1": 1,
+    "flrm_compressed_native_no_jepa_k2": 2,
+    "flrm_compressed_native_cached_no_jepa_k2": 2,
+    "flrm_compressed_grouped_no_jepa_k1": 1,
+    "flrm_compressed_grouped_no_jepa_k2": 2,
+    "flrm_compressed_grouped_cached_no_jepa_k2": 2,
+    "flrm_fused_k2": 2,
+    "flrm_ncm_k2": 2,
+    "flrm_vcycle_k2": 2,
+    "flrm_vcycle_ncm_k2": 2,
+    "flrm_fused_ncm_k2": 2,
+    "flrm_inv_vcycle_ncm_k2": 2,
+}
 DEFAULT_MODELS = ["flrm_compressed_grouped_no_jepa_k1", "flrm_compressed_grouped_no_jepa_k2", "baseline_small"]
 
 
@@ -95,7 +110,7 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
     # Fixed-K aliases remain distinct jobs/reports but share exactly one backbone.
     selected = model.rsplit("_k", 1)[0] if model in FIXED_ITERATIONS else model
     effective_iterations = 1 if architecture == "transformer" else FIXED_ITERATIONS.get(model, iterations)
-    variant = selected.removesuffix("_no_jepa")
+    variant = selected.removesuffix("_no_jepa").removesuffix("_cached")
     is_grouped_ablation = model in (
         "flrm_fused_k2", "flrm_ncm_k2",
         "flrm_vcycle_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2",
@@ -104,6 +119,7 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
     is_vcycle = model in ("flrm_vcycle_k2", "flrm_vcycle_ncm_k2")
     is_inv_vcycle = model == "flrm_inv_vcycle_ncm_k2"
     ncm_slots = 16 if model in ("flrm_ncm_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2") else 0
+    is_cached_ctx = model in ("flrm_compressed_native_cached_no_jepa_k2", "flrm_compressed_grouped_cached_no_jepa_k2")
     uses_jepa = not is_grouped_ablation and not selected.endswith("_no_jepa") and (
         selected in ("baseline_jepa", "lrm", "flrm_reference", "flrm_batched") or selected.startswith("flrm_compressed"))
     jepa = 0.1 if uses_jepa else 0.
@@ -113,10 +129,20 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
         else "batched" if model == "flrm_batched"
         else "reference"
     )
-    cfg.research = ResearchConfig(architecture=architecture, iterations=effective_iterations,
-        latent_steps=0, jepa_weight=jepa, scale_execution=scale_exec,
-        v_cycle=is_vcycle, inv_vcycle=is_inv_vcycle, ncm_slots=ncm_slots, fused_film=is_fused_film,
-        max_seconds=max_seconds, shutdown_reserve_seconds=min(30., max_seconds/10) if max_seconds else 0.)
+    cfg.research = ResearchConfig(
+        architecture=architecture,
+        iterations=effective_iterations,
+        latent_steps=0,
+        jepa_weight=jepa,
+        scale_execution=scale_exec,
+        v_cycle=is_vcycle,
+        inv_vcycle=is_inv_vcycle,
+        ncm_slots=ncm_slots,
+        fused_film=is_fused_film,
+        cache_context_projection=is_cached_ctx,
+        max_seconds=max_seconds,
+        shutdown_reserve_seconds=min(30., max_seconds / 10) if max_seconds else 0.,
+    )
     if model == "baseline_small":
         # At D=384 this is 2,164,224 parameters; inspect the resolved config for other widths.
         cfg.model.n_layers = 1
@@ -352,6 +378,12 @@ def parser():
     result.add_argument("--profile-batches", action="store_true", help="run batch matrix profiling study")
     result.add_argument("--batch-matrix", nargs="+", default=["8x4", "16x2", "32x1"],
                         help="batch matrix combinations in BxA format (microbatch x accum)")
+    result.add_argument("--profile-backends", nargs="+", choices=("eager", "inductor"), default=None,
+                        help="backends to profile in batch profile mode (defaults tocompile flag)")
+    result.add_argument("--profile-repeats", type=int, default=1,
+                        help="number of alternating-order repetitions per backend in batch profile mode")
+    result.add_argument("--diagnose-init", action="store_true",
+                        help="run Etapa 1 non-invasive magnitude/gradient diagnostics at random initialization")
     return result
 
 
@@ -372,11 +404,17 @@ def run_batch_profile(args):
     root = Path(__file__).resolve().parents[3]
     if args.warmup_steps < 0 or args.measure_steps < 1:
         raise ValueError("profiling requires nonnegative warmup and at least one measured step")
+    if getattr(args, "profile_repeats", 1) < 1:
+        raise ValueError("profile_repeats must be at least 1")
     if len(set(args.models)) != len(args.models):
         raise ValueError("models must not contain duplicates")
     if bool(args.data) == bool(args.input):
         raise ValueError("provide exactly one of --data or --input")
     batch_matrix = parse_batch_matrix(args.batch_matrix)
+    backends = getattr(args, "profile_backends", None)
+    if not backends:
+        backends = ["inductor" if getattr(args, "compile", False) else "eager"]
+    repeats = getattr(args, "profile_repeats", 1)
     base = load_config(Path(args.config) if Path(args.config).is_absolute() else root / args.config)
     if args.device == "cuda":
         if not torch.cuda.is_available():
@@ -385,6 +423,7 @@ def run_batch_profile(args):
         from ..architectures import fractal_recursive
     if not args.execute:
         return {"status": "not_started", "models": args.models, "batch_matrix": args.batch_matrix,
+                "backends": backends, "repeats": repeats,
                 "next": "Add --execute to run exactly this batch profile."}
     output = Path(args.output).resolve() if args.output else numbered_output(root / "runs")
     campaign = Campaign(root, output, device=args.device, gpus=args.gpus)
@@ -413,61 +452,114 @@ def run_batch_profile(args):
                 (sources / f"{index}-{raw_path.name}").write_bytes(raw_path.read_bytes())
             campaign.manifest["raw_sources"].append(entry)
 
-    stage(2, 4, "TESTES DE INTEGRAÇÃO")
+    stage(2, 4, "TESTES DE INTEGRAÇÃO E TELEMETRIA DE INICIALIZAÇÃO (ETAPA 1)")
     if args.cpu_tests:
         campaign.command(["-m", "pytest", "-q", "-m", "not cuda"], "tests-cpu.log", gpu=campaign.gpus[0])
     if args.cuda_tests and args.device == "cuda":
         campaign.command(["-m", "pytest", "-q", "-m", "cuda", "-k", "fp32"],
                          "tests-cuda-fp32.log", gpu=campaign.gpus[0])
 
-    stage(3, 4, "PERFIL DE MATRIZ DE LOTES ISOLADO (GPU 0)")
     (output / "configs").mkdir(parents=True, exist_ok=True)
     (output / "profiles").mkdir(parents=True, exist_ok=True)
-    results = []
     gpu_slot = campaign.gpus[0]
-    total_profiles = len(args.models) * len(batch_matrix)
+
+    init_diagnostics = []
+    if getattr(args, "diagnose_init", False):
+        (output / "diagnostics").mkdir(parents=True, exist_ok=True)
+        for seed in args.seeds:
+            for model in args.models:
+                diag_id = f"init-{model}-seed-{seed}"
+                cfg = campaign_config(base, model, data_path, output / "runs" / diag_id, seed=seed,
+                                      steps=max(100, args.warmup_steps + args.measure_steps + 1),
+                                      device=args.device, max_seconds=0, iterations=args.iterations,
+                                      batch_size=batch_matrix[0][0], grad_accum_steps=batch_matrix[0][1],
+                                      compile=False)
+                cfg_path = output / "configs" / f"{diag_id}.yaml"
+                cfg_path.write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=True), encoding="utf-8")
+                diag_out = output / "diagnostics" / f"{diag_id}.json"
+                campaign.command(["-m", "llm2", "diagnose", "--config", cfg_path,
+                                  "--data", data_path, "--device", args.device, "--precision", "fp32",
+                                  "--samples", "128", "--output", diag_out],
+                                 f"{diag_id}-diagnose.log", gpu=gpu_slot)
+                init_diagnostics.append({"model": model, "seed": seed, "path": str(diag_out)})
+        campaign.manifest["init_diagnostics"] = init_diagnostics
+
+    for index, checkpoint in enumerate(getattr(args, "evaluate_checkpoints", []) or []):
+        dest_dir = output / "checkpoint_diagnostics" / str(index)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        campaign.command(["-m", "llm2", "diagnose", "--checkpoint", checkpoint,
+                          "--data", data_path, "--device", args.device, "--precision", "fp32",
+                          "--samples", "128", "--output", dest_dir / "diagnostics.json"],
+                         f"ckpt-{index}-diagnose.log", gpu=gpu_slot)
+
+    stage(3, 4, "PERFIL DE MATRIZ DE LOTES ISOLADO (GPU 0)")
+    results = []
+    base_plan = [(model, b, a) for model in args.models for b, a in batch_matrix]
+    total_profiles = len(base_plan) * len(backends) * repeats
     count = 0
-    for model in args.models:
-        for b, a in batch_matrix:
-            count += 1
-            run_id = f"{model}-b{b}a{a}"
-            cfg = campaign_config(base, model, data_path, output / "runs" / run_id, seed=args.seeds[0],
-                                  steps=max(100, args.warmup_steps + args.measure_steps + 1),
-                                  device=args.device, max_seconds=0, iterations=args.iterations,
-                                  batch_size=b, grad_accum_steps=a, compile=getattr(args, "compile", False))
-            cfg.train.console_progress = False
-            cfg.optimizer.schedule_steps = max(cfg.optimizer.schedule_steps, cfg.train.max_steps)
-            cfg.research.max_seconds = cfg.research.max_train_flops = cfg.research.max_tokens = 0
-            cfg_path = output / "configs" / f"profile-{run_id}.yaml"
-            cfg_path.write_text(yaml.safe_dump(cfg.to_dict()), encoding="utf-8")
-            dest = output / "profiles" / run_id
-            print(f"[{count}/{total_profiles}] Medindo {MODEL_NAMES.get(model, model)} | Lote {b}×{a} ({b*a} seqs/passo)...", flush=True)
-            campaign.command(["-m", "llm2", "profile", "--config", cfg_path,
-                              "--output", dest, "--execute",
-                              "--warmup-steps", str(args.warmup_steps),
-                              "--measure-steps", str(args.measure_steps)],
-                             f"{run_id}-profile.log", gpu=gpu_slot)
-            profile_data = json.loads((dest / "profile.json").read_text(encoding="utf-8"))
-            timing = profile_data["timing"]
-            step_metrics = profile_data.get("step_metrics", {})
-            peak_vram = step_metrics.get("peak_vram_allocated_bytes")
-            entry = {
-                "model": model,
-                "batch_size": b,
-                "grad_accum_steps": a,
-                "effective_sequences": b * a,
-                "tokens_per_second": timing.get("mean_tokens_per_second"),
-                "mean_step_seconds": timing.get("mean_step_seconds"),
-                "peak_vram_allocated_bytes": peak_vram,
-                "profile_path": str(dest / "profile.json"),
-            }
-            results.append(entry)
-            ms_val = entry["mean_step_seconds"] * 1000 if entry["mean_step_seconds"] is not None else None
-            vram_mib = peak_vram / (1024 * 1024) if peak_vram is not None else None
-            print(f"  ✓ {MODEL_NAMES.get(model, model)} [{b}×{a}]: "
-                  f"{number(entry['tokens_per_second'], 0)} alvos/s, "
-                  f"{number(ms_val, 1)} ms/passo, "
-                  f"VRAM alocada {number(vram_mib, 1)} MiB", flush=True)
+    for backend in backends:
+        use_compile = backend == "inductor"
+        for rep in range(1, repeats + 1):
+            # Alternate execution order across repetitions to control for thermal/cache drift on GPU 0.
+            ordered_plan = base_plan if (rep % 2 == 1) else list(reversed(base_plan))
+            for model, b, a in ordered_plan:
+                count += 1
+                suffix = f"-{backend}-r{rep}" if (len(backends) > 1 or repeats > 1) else ""
+                run_id = f"{model}-b{b}a{a}{suffix}"
+                cfg = campaign_config(base, model, data_path, output / "runs" / run_id, seed=args.seeds[0],
+                                      steps=max(100, args.warmup_steps + args.measure_steps + 1),
+                                      device=args.device, max_seconds=0, iterations=args.iterations,
+                                      batch_size=b, grad_accum_steps=a, compile=use_compile)
+                cfg.train.console_progress = False
+                cfg.optimizer.schedule_steps = max(cfg.optimizer.schedule_steps, cfg.train.max_steps)
+                cfg.research.max_seconds = cfg.research.max_train_flops = cfg.research.max_tokens = 0
+                cfg_path = output / "configs" / f"profile-{run_id}.yaml"
+                cfg_path.write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=True), encoding="utf-8")
+                dest = output / "profiles" / run_id
+                print(
+                    f"[{count}/{total_profiles}] Medindo {MODEL_NAMES.get(model, model)} | "
+                    f"Backend {backend} (rep {rep}/{repeats}) | Lote {b}×{a} ({b*a} seqs/passo)...",
+                    flush=True,
+                )
+                campaign.command(["-m", "llm2", "profile", "--config", cfg_path,
+                                  "--output", dest, "--execute",
+                                  "--warmup-steps", str(args.warmup_steps),
+                                  "--measure-steps", str(args.measure_steps)],
+                                 f"{run_id}-profile.log", gpu=gpu_slot)
+                profile_data = json.loads((dest / "profile.json").read_text(encoding="utf-8"))
+                timing = profile_data["timing"]
+                warmup_timing = profile_data.get("warmup_timing", {})
+                step_metrics = profile_data.get("step_metrics", {})
+                peak_vram = step_metrics.get("peak_vram_allocated_bytes")
+                peak_vram_res = step_metrics.get("peak_vram_reserved_bytes")
+                entry = {
+                    "model": model,
+                    "backend": backend,
+                    "compile": use_compile,
+                    "repeat": rep,
+                    "batch_size": b,
+                    "grad_accum_steps": a,
+                    "effective_sequences": b * a,
+                    "tokens_per_second": timing.get("mean_tokens_per_second"),
+                    "median_tokens_per_second": timing.get("median_tokens_per_second"),
+                    "mean_step_seconds": timing.get("mean_step_seconds"),
+                    "median_step_seconds": timing.get("median_step_seconds"),
+                    "stdev_step_seconds": timing.get("stdev_step_seconds"),
+                    "first_warmup_step_seconds": warmup_timing.get("first_step_seconds"),
+                    "total_warmup_seconds": warmup_timing.get("total_warmup_seconds"),
+                    "peak_vram_allocated_bytes": peak_vram,
+                    "peak_vram_reserved_bytes": peak_vram_res,
+                    "cuda_launch_kernel_calls": profile_data.get("cuda_launch_kernel_calls"),
+                    "analytical_step_flops_estimate": profile_data.get("analytical_step_flops_estimate"),
+                    "profile_path": str(dest / "profile.json"),
+                }
+                results.append(entry)
+                ms_val = entry["mean_step_seconds"] * 1000 if entry["mean_step_seconds"] is not None else None
+                vram_mib = peak_vram / (1024 * 1024) if peak_vram is not None else None
+                print(f"  ✓ {MODEL_NAMES.get(model, model)} [{backend} | r{rep} | {b}×{a}]: "
+                      f"{number(entry['tokens_per_second'], 0)} alvos/s, "
+                      f"{number(ms_val, 1)} ms/passo, "
+                      f"VRAM alocada {number(vram_mib, 1)} MiB", flush=True)
 
     stage(4, 4, "TABELA COMPARATIVA DE LOTES — THROUGHPUT, TEMPO E MEMÓRIA")
     report_text = batch_comparison_text(results)
@@ -571,6 +663,17 @@ def run_campaign(args):
                              "batch_size": cfg.data.batch_size, "grad_accum_steps": cfg.train.grad_accum_steps,
                              "physical_gpu": worker_environment(root, slot).get("CUDA_VISIBLE_DEVICES"),
                              "directory": str(directory), "config": str(path), "status": "pending"})
+        if getattr(args, "diagnose_init", False):
+            (output / "diagnostics").mkdir(parents=True, exist_ok=True)
+            init_diagnostics = []
+            for job in jobs:
+                diag_out = output / "diagnostics" / f"init-{job['id']}.json"
+                campaign.command(["-m", "llm2", "diagnose", "--config", job["config"],
+                                  "--data", data_path, "--device", args.device, "--precision", "fp32",
+                                  "--samples", "128", "--output", diag_out],
+                                 f"init-{job['id']}-diagnose.log", gpu=campaign.gpus[0])
+                init_diagnostics.append({"job_id": job["id"], "model": job["model"], "seed": job["seed"], "path": str(diag_out)})
+            campaign.manifest["init_diagnostics"] = init_diagnostics
         campaign.manifest["status"] = "training"
         campaign.save()
         stage(3, 7, "TREINAMENTO — MODELOS DISTRIBUÍDOS ENTRE AS GPUs")
