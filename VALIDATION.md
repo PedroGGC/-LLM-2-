@@ -717,3 +717,12 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
      - Adicionado argumento opcional `--compile` (`compile=False` por padrão) em `campaign.py` e `scripts/kaggle_notebook.py`.
 - Testes executados localmente (CPU, Python 3.12.2, Torch 2.14.1+cpu):
   - `python -m pytest -q`: **169 passed, 18 skipped** em 131,99 s (incluindo `test_ncm_preserves_bit_identical_common_initial_weights`, `test_fused_film_and_native_numerical_equivalence` e `test_campaign_configs_for_vcycle_models`). Todos os 18 skips são testes `@pytest.mark.cuda`.
+
+### Evidência Kaggle recebida — Campanha 0008 (Opção 1: Reprodução do Legado em 8×4), 27/10/2026
+
+- ZIP recebido (`llm2-campaign-0008-results.zip`), SHA256 `b77b7e2a7d470268222347ade53214423a8ce5d01dbd33fdc36d6df7c099314b` (83 entradas, commit `7bcab2b93c0e7ffc9800e343162f1f747c0a88c5`).
+- Testes no Kaggle: CUDA FP32 **14 passed, 173 deselected** (54,98 s).
+- Resultados em 2.000 passos / 16.384.000 alvos supervisionados em lote `8×4`, seed 42, validação completa (437 janelas / 111.872 alvos):
+  - `baseline_small`: Loss completa **1,40050305** (vs `1,40049951` na Campanha 0003, delta `+3,5e-6`), treino **160.828 alvos/s** (101,87 s), perfil isolado **163.539 alvos/s** (50,09 ms/passo), VRAM **202,16 MiB**, geração **507,7 tok/s**.
+  - `flrm_compressed_grouped_no_jepa_k2`: Loss completa **1,39746688** (vs `1,39746689` na Campanha 0003, delta `-1,1e-8`, reprodução exata), treino **52.955 alvos/s** (309,39 s), perfil isolado **53.870 alvos/s** (152,07 ms/passo), VRAM **408,27 MiB**, geração **90,3 tok/s**.
+- Conclusão: a vitória de loss do FLRM simétrico $K=2$ sobre o Transformer pequeno em lote `8×4` (`1,397467` vs `1,400503`, delta de **−0,303% em perplexidade**) é 100% reproduzível e comprovada na revisão atual. O modelo levou **3,037× mais tempo** que o Transformer (`309,39 s` vs `101,87 s`). A Opção 2 no lote `32×1` isolará o formato do lote e a ablação fatorial 2×2 (Fusão × NCM).
