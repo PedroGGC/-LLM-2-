@@ -782,4 +782,38 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
 - Testes executados localmente (CPU, Python 3.12.2, Torch 2.14.1+cpu):
   - `python -m pytest tests/test_etapa1_etapa2_execution_plan.py -q`: **8 passed, 3 skipped** (zero efeitos colaterais em pesos/gradientes/modos/RNG, separação do padding de $s_2$, razões e gradientes nulos documentados, equivalência numérica forward/backward de `cache_context_projection` em comprimentos divisíveis e não divisíveis `[1, 4, 15, 16, 17, 31, 32, 33, 65]`, causalidade estrita de prefixo, invariância de parâmetros e GFLOPs analíticos, retomada exata CPU FP32 com dropout e acumulação ativos para `N0`, `G1` e `N1`, e execução de `run_batch_profile` com ordem alternada e diagnóstico de inicialização).
   - Suíte completa `python -m pytest -q`: **177 passed, 21 skipped** em 188,32 s. Todos os 21 skips são testes `@pytest.mark.cuda` (GPU indisponível localmente; serão executados no Kaggle nas Tesla T4).
-  - Limitações: os números empíricos de telemetria em $T=256$ e o comparativo de velocidade/VRAM entre `G0`, `G1`, `N0`, `N1` e `baseline_small` sob `eager` e `inductor` na Tesla T4 dependem da execução das células das Etapas 1 e 2 no Kaggle. As Etapas 3 e 4 permanecem aguardando esses resultados.
+  - Limitações resolvidas: os números empíricos de telemetria em $T=256$ e o comparativo de velocidade/VRAM entre `G0`, `G1`, `N0`, `N1` e `baseline_small` sob `eager` e `inductor` na Tesla T4 foram plenamente obtidos na Campanha 0013 abaixo.
+
+### Evidência Kaggle recebida — Campanha 0013 (Opção A: Etapas 1 e 2 na Tesla T4 GPU 0), 28/10/2026
+
+- ZIP recebido (`llm2-campaign-0013-results.zip`), SHA256 `52fa6b8f41b5c7a5990658fb0c783435914260f82c2247381f7fafd82961c2a4` (353 entradas, executando commit `a877799ee28f49f2825173da854b3a2f8a4c558e`).
+- **Resultados de Perfilamento Multi-Backend (Etapa 2 — 3 repetições completas em ordem alternada na GPU 0):**
+  - `baseline_small` (Transformer):
+    - `eager`: **178.664 (±6.942) alvos/s** / **45,90 (±1,82) ms/passo**, VRAM 491,9 MiB, 269 kernels.
+    - `inductor`: **204.485 (±222) alvos/s** / **40,06 (±0,04) ms/passo** (+14,6% speedup), VRAM 418,9 MiB (−73,0 MiB), 136 kernels (−49,4%), warmup 1º passo 8,53 s.
+  - `flrm_compressed_grouped_no_jepa_k2` (G0, Legado):
+    - `eager`: **59.412 (±2.537) alvos/s** / **138,05 (±5,75) ms/passo**, VRAM 1.285,3 MiB, 1.162 kernels.
+    - `inductor`: **73.217 (±851) alvos/s** / **111,90 (±1,30) ms/passo** (+23,4% speedup), VRAM 1.011,4 MiB (−273,9 MiB), 290 kernels (−75,0%), warmup 1º passo 33,72 s.
+  - `flrm_compressed_grouped_cached_no_jepa_k2` (G1, Grouped + Ctx Cache):
+    - `eager`: **60.630 (±2.692) alvos/s** / **135,29 (±5,95) ms/passo** (+2,0% speedup vs G0 eager), VRAM 1.270,7 MiB.
+    - `inductor`: **75.630 (±348) alvos/s** / **108,32 (±0,50) ms/passo** (+3,3% speedup vs G0 inductor), VRAM 1.002,2 MiB, 289 kernels.
+  - `flrm_compressed_native_no_jepa_k2` (N0, Native sem padding):
+    - `eager`: **64.459 (±2.885) alvos/s** / **127,26 (±5,71) ms/passo** (+8,5% speedup vs G0 eager), VRAM 1.169,9 MiB.
+    - `inductor`: **79.911 (±1.143) alvos/s** / **102,53 (±1,47) ms/passo** (+9,1% speedup vs G0 inductor), VRAM 921,0 MiB (−90,4 MiB vs G0 inductor), 335 kernels.
+  - `flrm_compressed_native_cached_no_jepa_k2` (N1, Native + Ctx Cache — **Candidato Promovido**):
+    - `eager`: **66.033 (±2.492) alvos/s** / **124,18 (±4,79) ms/passo** (+11,2% speedup vs G0 eager), VRAM 1.153,9 MiB.
+    - `inductor`: **81.349 (±355) alvos/s** / **100,70 (±0,44) ms/passo** (+11,1% speedup vs G0 inductor, **+37,1% speedup vs G0 eager**), VRAM 919,9 MiB (**−365,3 MiB / −28,4% vs G0 eager**), 329 kernels (−71,7% vs G0 eager), warmup 1º passo 28,09 s.
+  - Relação com o Transformer compilado: razão teórica de FLOPs $282,30 / 115,98 = 2,434\times$; razão empírica de tempo de passo em Inductor $100,70\text{ ms} / 40,06\text{ ms} = \mathbf{2,514\times}$ (desvio de apenas 3,3% em relação ao piso aritmético).
+- **Resultados da Telemetria Não-Invasiva de Magnitudes e Gradientes na Inicialização (Etapa 1, Seed 42, $T=256$):**
+  - Identidade de loss na inicialização: `G0 = G1 = N0 = N1 = 5,4176902771` (diferença estritamente $0,0000000000\text{e}+00$). Parâmetros e gradientes de parâmetros com concordância estrita em float32.
+  - O descompasso de magnitude ("Context Swamping"):
+    - Em $k=1$, $W_{\text{ctx}}(c)$ entra no núcleo com $\text{RMS} = 0,007842$ ($s_0$), $0,004047$ ($s_1$), $0,002614$ ($s_2$). O estado inicial é zero. Gradiente L2 de ativação em `core_input_sum` ($s_0$) é **4,9138**.
+    - Em $k=2$, $h^{(1)}$ tem amplitude $\text{RMS} = 0,008141$. A `RMSNorm(h^{(1)})` re-escalona para norma unitária: $\text{RMS} = 0,992273$ ($s_0$), $0,988325$ ($s_1$), $0,968361$ ($s_2$).
+    - A razão `RMS(state_norm) / RMS(projected_context)` atinge **126,53×** em $s_0$, **244,21×** em $s_1$ e **370,47×** em $s_2$. O contexto corresponde a apenas **0,79%** da soma de entrada em $s_0$, **0,41%** em $s_1$ e **0,27%** em $s_2$.
+    - Consequência direta: o gradiente L2 de ativação de `core_input_sum` em $k=2$ colapsa para **0,02258** em $s_0$ (queda de **217,6×**), e para $0,00037$ e $0,00048$ em $s_1, s_2$.
+  - Telemetria de preenchimento (padding) em $s_2$: confirmados 75% de posições de padding em `G0`/`G1` (48 posições nulas para 16 válidas); o modo `N0`/`N1` remove esse preenchimento sem alterar a predição válida.
+- **Decisões Metodológicas Consolidadas:**
+  1. Conforme a regra de promoção da Etapa 2, **N1 (`flrm_compressed_native_cached_no_jepa_k2`) é promovido como candidato único de eficiência** para a confirmação de qualidade na Etapa 3.
+  2. Próximo passo científico obrigatório: **Etapa 3** (Matriz $5 \times 3$ com 18 treinos científicos em 3 seeds: 42, 43, 44 com protocolo de pesos comuns pareados no backend Inductor).
+  3. A Etapa 4 (intervenção de qualidade) possui agora dados quantitativos precisos da magnitude do descompasso ($126\times$ a $370\times$), subsidiando formalmente a hipótese de rebalanceamento ou condicionamento após a conclusão da Etapa 3.
+
