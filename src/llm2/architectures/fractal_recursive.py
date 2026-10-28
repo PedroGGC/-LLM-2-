@@ -404,7 +404,8 @@ class FractalLatentModel(Backbone):
                     for si in active_lengths
                 )
                 forward_iterations += core_flops + projection_flops + ncm_flops
-            static_ctx_flops = sum(2 * si * d * d for si in full_core_lengths) if cached_ctx else 0
+            # Static cached context projection occurs before grouped padding on unpadded scale lengths (s, s1, s2).
+            static_ctx_flops = sum(2 * si * d * d for si in lengths) if cached_ctx else 0
             forward = static_ctx_flops + forward_iterations + (2 * s * d * self.config.vocab_size if include_logits else 0)
             recompute = forward_iterations if self.training and self.research.gradient_checkpointing else 0
             return forward, recompute, steps

@@ -74,18 +74,35 @@ def _lm_loss(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     return token_losses.sum() / count if count else logits.sum() * 0.0
 
 
-def _grad_summary(tensor: torch.Tensor | None, *, valid_slice=None, null_reason: str | None = None) -> dict:
+def _grad_summary(
+    tensor: torch.Tensor | None,
+    *,
+    valid_slice=None,
+    null_reason: str | None = None,
+    scope: str = "per_call",
+) -> dict:
     if tensor is None:
-        return {"grad_rms": None, "grad_l2_norm": None, "null_reason": null_reason or "tensor not recorded"}
+        return {
+            "grad_rms": None,
+            "grad_l2_norm": None,
+            "scope": None,
+            "null_reason": null_reason or "tensor not recorded",
+        }
     grad = getattr(tensor, "grad", None)
     if grad is None:
         return {
             "grad_rms": None,
             "grad_l2_norm": None,
+            "scope": None,
             "null_reason": null_reason or "tensor does not receive gradient in this pass",
         }
     g = grad[valid_slice] if valid_slice is not None else grad
-    return {"grad_rms": _rms(g), "grad_l2_norm": _l2_norm(g), "null_reason": None}
+    return {
+        "grad_rms": _rms(g),
+        "grad_l2_norm": _l2_norm(g),
+        "scope": scope,
+        "null_reason": None,
+    }
 
 
 def _collect_fractal_telemetry(model, input_ids, targets, *, precision: str, deterministic: bool, include_gradients: bool):
@@ -101,6 +118,8 @@ def _collect_fractal_telemetry(model, input_ids, targets, *, precision: str, det
 
     # Track calls inside SharedFractalCore during each FractalRecursiveBlock iteration.
     current_iter = {"index": 0}
+    in_block = {"active": False}
+    preloop_cached_projections = []
     iter_records = {}
 
     def _ensure_iter(idx: int):
@@ -115,6 +134,7 @@ def _collect_fractal_telemetry(model, input_ids, targets, *, precision: str, det
     hooks = []
 
     def block_pre_hook(module, args):
+        in_block["active"] = True
         step_idx = args[2] if len(args) > 2 and isinstance(args[2], int) else current_iter["index"]
         current_iter["index"] = step_idx
         rec = _ensure_iter(step_idx)
@@ -134,6 +154,7 @@ def _collect_fractal_telemetry(model, input_ids, targets, *, precision: str, det
                     st.retain_grad()
         rec["post_states"] = output
         current_iter["index"] = step_idx + 1
+        in_block["active"] = False
 
     hooks.append(model.block.register_forward_pre_hook(block_pre_hook))
     hooks.append(model.block.register_forward_hook(block_post_hook))
@@ -141,6 +162,10 @@ def _collect_fractal_telemetry(model, input_ids, targets, *, precision: str, det
     for core_idx, core in enumerate(model.block.cores):
         def make_core_hooks(c_idx, core_mod):
             call_state = {}
+
+            def core_pre(mod, a, kwargs):
+                call_state.clear()
+                call_state["context_is_projected"] = bool(kwargs.get("context_is_projected", False))
 
             def sn_hook(mod, a, out):
                 if include_gradients and isinstance(out, torch.Tensor) and out.requires_grad:
@@ -150,7 +175,10 @@ def _collect_fractal_telemetry(model, input_ids, targets, *, precision: str, det
             def cp_hook(mod, a, out):
                 if include_gradients and isinstance(out, torch.Tensor) and out.requires_grad:
                     out.retain_grad()
-                call_state["ctx_proj_out"] = out
+                if in_block["active"]:
+                    call_state["ctx_proj_out"] = out
+                else:
+                    preloop_cached_projections.append(out)
 
             def b0_pre(mod, a):
                 tin = a[0]
@@ -171,17 +199,20 @@ def _collect_fractal_telemetry(model, input_ids, targets, *, precision: str, det
 
             def core_post(mod, a, out):
                 state_arg, ctx_arg = a[0], a[1]
+                is_proj = bool(call_state.get("context_is_projected", False))
+                ctx_proj_used = ctx_arg if is_proj else call_state.get("ctx_proj_out")
                 if include_gradients:
-                    for t_ref in (state_arg, ctx_arg, out):
+                    for t_ref in (state_arg, ctx_arg, ctx_proj_used, out):
                         if isinstance(t_ref, torch.Tensor) and t_ref.requires_grad:
                             t_ref.retain_grad()
                 rec = _ensure_iter(current_iter["index"])
                 rec["core_calls"].append({
                     "core_index": c_idx,
+                    "context_is_projected": is_proj,
                     "state_in": state_arg,
                     "ctx_arg": ctx_arg,
                     "state_norm_out": call_state.get("state_norm_out"),
-                    "ctx_proj_out": call_state.get("ctx_proj_out", ctx_arg),
+                    "ctx_proj_out": ctx_proj_used,
                     "core_input_sum": call_state.get("core_input_sum"),
                     "attn_norm_out": call_state.get("attn_norm_out"),
                     "ffn_norm_out": call_state.get("ffn_norm_out"),
@@ -191,6 +222,7 @@ def _collect_fractal_telemetry(model, input_ids, targets, *, precision: str, det
                 call_state.clear()
 
             return [
+                core_mod.register_forward_pre_hook(core_pre, with_kwargs=True),
                 core_mod.state_norm.register_forward_hook(sn_hook),
                 core_mod.context_projection.register_forward_hook(cp_hook),
                 core_mod.blocks[0].register_forward_pre_hook(b0_pre),
@@ -230,6 +262,7 @@ def _collect_fractal_telemetry(model, input_ids, targets, *, precision: str, det
 
         grad_ctx = torch.enable_grad() if include_gradients else torch.no_grad()
         with grad_ctx, attention_context(deterministic), autocast_context(input_ids.device, precision):
+            preloop_cached_projections.clear()
             if include_gradients:
                 for p in model.parameters():
                     p.grad = None
@@ -372,29 +405,61 @@ def _collect_fractal_telemetry(model, input_ids, targets, *, precision: str, det
                     if call is not None:
                         cp_ref = call["ctx_proj_out"] if call["ctx_proj_out"] is not None else call["ctx_arg"]
                         cp_slice = valid_sel if cp_ref.shape[0] > B else (slice(None), time_slice, slice(None))
-                        grads = {
-                            "state_in": _grad_summary(s_in, null_reason=init_reason),
-                            "state_norm_out": _grad_summary(
-                                call["state_norm_out"], valid_slice=valid_sel, null_reason=init_reason
-                            ),
-                            "projected_context": _grad_summary(
+                        is_cached_mode = bool(getattr(research, "cache_context_projection", False))
+                        is_reused_across_iters = steps > 1 and (
+                            is_cached_mode or any(cp_ref is cached_t for cached_t in preloop_cached_projections)
+                        )
+                        cp_scope = "accumulated_across_iterations" if is_reused_across_iters else "per_call"
+                        call_input_grad = (
+                            _grad_summary(call["core_input_sum"], valid_slice=valid_sel, scope="per_call")
+                            if is_reused_across_iters
+                            else _grad_summary(cp_ref, valid_slice=cp_slice, scope="per_call")
+                        )
+                        if is_cached_mode and len(preloop_cached_projections) > s_idx:
+                            cached_accum_grad = _grad_summary(
+                                preloop_cached_projections[s_idx],
+                                valid_slice=(slice(None), time_slice, slice(None)),
+                                scope="accumulated_across_iterations" if steps > 1 else "per_call",
+                            )
+                            proj_ctx_grad = cached_accum_grad
+                        else:
+                            cached_accum_grad = _grad_summary(
+                                None, null_reason="cache_context_projection is disabled"
+                            )
+                            proj_ctx_grad = _grad_summary(
                                 cp_ref,
                                 valid_slice=cp_slice,
-                                null_reason=(
-                                    "static cached context projection gradient is accumulated across iterations on the shared tensor"
-                                    if getattr(research, "cache_context_projection", False)
-                                    else None
-                                ),
+                                scope=cp_scope,
+                            )
+                        grads = {
+                            "state_in": _grad_summary(s_in, null_reason=init_reason, scope="per_call"),
+                            "state_norm_out": _grad_summary(
+                                call["state_norm_out"], valid_slice=valid_sel, null_reason=init_reason, scope="per_call"
                             ),
-                            "core_input_sum": _grad_summary(call["core_input_sum"], valid_slice=valid_sel),
-                            "core_output": _grad_summary(call["core_output"], valid_slice=valid_sel),
-                            "post_interaction_state": _grad_summary(s_post, null_reason=final_macro_reason),
+                            "projected_context": proj_ctx_grad,
+                            "projected_context_call_input": call_input_grad,
+                            "cached_projected_context_accumulated": cached_accum_grad,
+                            "core_input_sum": _grad_summary(
+                                call["core_input_sum"], valid_slice=valid_sel, scope="per_call"
+                            ),
+                            "core_output": _grad_summary(
+                                call["core_output"], valid_slice=valid_sel, scope="per_call"
+                            ),
+                            "post_interaction_state": _grad_summary(
+                                s_post, null_reason=final_macro_reason, scope="per_call"
+                            ),
                         }
                     else:
                         grads = {
                             "state_in": _grad_summary(s_in, null_reason=init_reason or "core skipped on this iteration"),
                             "state_norm_out": _grad_summary(None, null_reason="core skipped on this iteration"),
                             "projected_context": _grad_summary(None, null_reason="core skipped on this iteration"),
+                            "projected_context_call_input": _grad_summary(
+                                None, null_reason="core skipped on this iteration"
+                            ),
+                            "cached_projected_context_accumulated": _grad_summary(
+                                None, null_reason="core skipped on this iteration"
+                            ),
                             "core_input_sum": _grad_summary(None, null_reason="core skipped on this iteration"),
                             "core_output": _grad_summary(None, null_reason="core skipped on this iteration"),
                             "post_interaction_state": _grad_summary(s_post, null_reason=final_macro_reason),
@@ -428,25 +493,30 @@ def _collect_fractal_telemetry(model, input_ids, targets, *, precision: str, det
         parameter_gradients = None
         if include_gradients:
             core0 = model.block.cores[0]
+            param_scope = "accumulated_across_all_scales_and_iterations_in_single_eval_pass"
             parameter_gradients = {
-                "scope": "accumulated_across_all_scales_and_iterations_in_single_eval_pass",
+                "scope": param_scope,
                 "eval_lm_loss": loss_val,
-                "embedding_weight": _grad_summary(model.embedding.weight),
-                "core_state_norm_weight": _grad_summary(core0.state_norm.weight),
-                "core_context_projection_weight": _grad_summary(core0.context_projection.weight),
-                "core_gate": _grad_summary(core0.gate),
-                "core_attn_qkv_weight": _grad_summary(core0.blocks[0].attn.qkv.weight),
-                "core_attn_proj_weight": _grad_summary(core0.blocks[0].attn.proj.weight),
-                "core_ffn_down_weight": _grad_summary(core0.blocks[0].ffn.down.weight),
-                "interaction_mixing": _grad_summary(model.block.interaction.mixing),
-                "interaction_projection_weight": _grad_summary(model.block.interaction.projection.weight),
-                "interaction_gate": _grad_summary(model.block.interaction.gate),
-                "final_norm_weight": _grad_summary(model.norm.weight),
+                "embedding_weight": _grad_summary(model.embedding.weight, scope=param_scope),
+                "core_state_norm_weight": _grad_summary(core0.state_norm.weight, scope=param_scope),
+                "core_context_projection_weight": _grad_summary(core0.context_projection.weight, scope=param_scope),
+                "core_gate": _grad_summary(core0.gate, scope=param_scope),
+                "core_attn_qkv_weight": _grad_summary(core0.blocks[0].attn.qkv.weight, scope=param_scope),
+                "core_attn_proj_weight": _grad_summary(core0.blocks[0].attn.proj.weight, scope=param_scope),
+                "core_ffn_down_weight": _grad_summary(core0.blocks[0].ffn.down.weight, scope=param_scope),
+                "interaction_mixing": _grad_summary(model.block.interaction.mixing, scope=param_scope),
+                "interaction_projection_weight": _grad_summary(
+                    model.block.interaction.projection.weight, scope=param_scope
+                ),
+                "interaction_gate": _grad_summary(model.block.interaction.gate, scope=param_scope),
+                "final_norm_weight": _grad_summary(model.norm.weight, scope=param_scope),
             }
             if model.block.conditioning is not None:
-                parameter_gradients["conditioning_film"] = _grad_summary(model.block.conditioning.film)
+                parameter_gradients["conditioning_film"] = _grad_summary(
+                    model.block.conditioning.film, scope=param_scope
+                )
             if model.block.ncm is not None:
-                parameter_gradients["ncm_memory"] = _grad_summary(model.block.ncm.memory)
+                parameter_gradients["ncm_memory"] = _grad_summary(model.block.ncm.memory, scope=param_scope)
 
         return output.logits.detach().clone(), {
             "ratio_definitions": {
@@ -470,6 +540,8 @@ def _collect_lrm_telemetry(model, input_ids, targets, *, precision: str, determi
     research = model.research
     steps = model.active_iterations()
     current_iter = {"index": 0}
+    in_core = {"active": False}
+    preloop_cached_projections = []
     iter_records = []
     hooks = []
 
@@ -477,6 +549,11 @@ def _collect_lrm_telemetry(model, input_ids, targets, *, precision: str, determi
     for c_idx, core_mod in enumerate(cores):
         def make_hooks(core_index, mod):
             call_state = {}
+
+            def core_pre(m, a, kwargs):
+                call_state.clear()
+                in_core["active"] = True
+                call_state["context_is_projected"] = bool(kwargs.get("context_is_projected", False))
 
             def sn_hook(m, a, out):
                 if include_gradients and isinstance(out, torch.Tensor) and out.requires_grad:
@@ -486,7 +563,10 @@ def _collect_lrm_telemetry(model, input_ids, targets, *, precision: str, determi
             def cp_hook(m, a, out):
                 if include_gradients and isinstance(out, torch.Tensor) and out.requires_grad:
                     out.retain_grad()
-                call_state["ctx_proj_out"] = out
+                if in_core["active"]:
+                    call_state["ctx_proj_out"] = out
+                else:
+                    preloop_cached_projections.append(out)
 
             def b0_pre(m, a):
                 tin = a[0]
@@ -507,16 +587,19 @@ def _collect_lrm_telemetry(model, input_ids, targets, *, precision: str, determi
 
             def core_post(m, a, out):
                 s_in, c_in = a[0], a[1]
+                is_proj = bool(call_state.get("context_is_projected", False))
+                ctx_proj_used = c_in if is_proj else call_state.get("ctx_proj_out")
                 if include_gradients:
-                    for t_ref in (s_in, c_in, out):
+                    for t_ref in (s_in, c_in, ctx_proj_used, out):
                         if isinstance(t_ref, torch.Tensor) and t_ref.requires_grad:
                             t_ref.retain_grad()
                 iter_records.append({
                     "iteration": current_iter["index"] + 1,
+                    "context_is_projected": is_proj,
                     "state_in": s_in,
                     "ctx_arg": c_in,
                     "state_norm_out": call_state.get("state_norm_out"),
-                    "ctx_proj_out": call_state.get("ctx_proj_out", c_in),
+                    "ctx_proj_out": ctx_proj_used,
                     "core_input_sum": call_state.get("core_input_sum"),
                     "attn_norm_out": call_state.get("attn_norm_out"),
                     "ffn_norm_out": call_state.get("ffn_norm_out"),
@@ -524,9 +607,11 @@ def _collect_lrm_telemetry(model, input_ids, targets, *, precision: str, determi
                     "core_output": out,
                 })
                 current_iter["index"] += 1
+                in_core["active"] = False
                 call_state.clear()
 
             return [
+                mod.register_forward_pre_hook(core_pre, with_kwargs=True),
                 mod.state_norm.register_forward_hook(sn_hook),
                 mod.context_projection.register_forward_hook(cp_hook),
                 mod.blocks[0].register_forward_pre_hook(b0_pre),
@@ -544,6 +629,7 @@ def _collect_lrm_telemetry(model, input_ids, targets, *, precision: str, determi
 
         grad_ctx = torch.enable_grad() if include_gradients else torch.no_grad()
         with grad_ctx, attention_context(deterministic), autocast_context(input_ids.device, precision):
+            preloop_cached_projections.clear()
             if include_gradients:
                 for p in model.parameters():
                     p.grad = None
@@ -582,13 +668,33 @@ def _collect_lrm_telemetry(model, input_ids, targets, *, precision: str, determi
             )
             grads = None
             if include_gradients:
+                is_reused_across_iters = (
+                    steps > 1 and any(cp_out is cached_t for cached_t in preloop_cached_projections)
+                )
+                cp_scope = "accumulated_across_iterations" if is_reused_across_iters else "per_call"
+                call_input_grad = (
+                    _grad_summary(c_sum, scope="per_call")
+                    if is_reused_across_iters
+                    else _grad_summary(cp_out, scope="per_call")
+                )
+                if getattr(research, "cache_context_projection", False) and preloop_cached_projections:
+                    cached_accum_grad = _grad_summary(
+                        preloop_cached_projections[0],
+                        scope="accumulated_across_iterations" if steps > 1 else "per_call",
+                    )
+                else:
+                    cached_accum_grad = _grad_summary(
+                        None, null_reason="cache_context_projection is disabled"
+                    )
                 grads = {
-                    "state_in": _grad_summary(s_in, null_reason=init_reason),
-                    "state_norm_out": _grad_summary(sn_out, null_reason=init_reason),
-                    "projected_context": _grad_summary(cp_out),
-                    "core_input_sum": _grad_summary(c_sum),
-                    "core_output": _grad_summary(c_out),
-                    "post_interaction_state": _grad_summary(c_out),
+                    "state_in": _grad_summary(s_in, null_reason=init_reason, scope="per_call"),
+                    "state_norm_out": _grad_summary(sn_out, null_reason=init_reason, scope="per_call"),
+                    "projected_context": _grad_summary(cp_out, scope=cp_scope),
+                    "projected_context_call_input": call_input_grad,
+                    "cached_projected_context_accumulated": cached_accum_grad,
+                    "core_input_sum": _grad_summary(c_sum, scope="per_call"),
+                    "core_output": _grad_summary(c_out, scope="per_call"),
+                    "post_interaction_state": _grad_summary(c_out, scope="per_call"),
                 }
 
             telemetry_iterations.append({
@@ -626,14 +732,15 @@ def _collect_lrm_telemetry(model, input_ids, targets, *, precision: str, determi
         parameter_gradients = None
         if include_gradients:
             core0 = cores[0]
+            param_scope = "accumulated_across_all_iterations_in_single_eval_pass"
             parameter_gradients = {
-                "scope": "accumulated_across_all_iterations_in_single_eval_pass",
+                "scope": param_scope,
                 "eval_lm_loss": loss_val,
-                "embedding_weight": _grad_summary(model.embedding.weight),
-                "core_state_norm_weight": _grad_summary(core0.state_norm.weight),
-                "core_context_projection_weight": _grad_summary(core0.context_projection.weight),
-                "core_gate": _grad_summary(core0.gate),
-                "final_norm_weight": _grad_summary(model.norm.weight),
+                "embedding_weight": _grad_summary(model.embedding.weight, scope=param_scope),
+                "core_state_norm_weight": _grad_summary(core0.state_norm.weight, scope=param_scope),
+                "core_context_projection_weight": _grad_summary(core0.context_projection.weight, scope=param_scope),
+                "core_gate": _grad_summary(core0.gate, scope=param_scope),
+                "final_norm_weight": _grad_summary(model.norm.weight, scope=param_scope),
             }
 
         return output.logits.detach().clone(), {
@@ -786,6 +893,8 @@ def diagnose_model(
                     "gamma_gain_max": float((1 + 0.1 * film[:, 0].tanh()).max()),
                     "beta_rms": float((0.1 * film[:, 1]).square().mean().sqrt()),
                 }
+        if getattr(model, "paired_init_provenance", None) is not None:
+            result["paired_init_provenance"] = model.paired_init_provenance
         return result
     finally:
         if hook is not None:

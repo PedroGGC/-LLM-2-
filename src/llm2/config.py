@@ -154,6 +154,7 @@ class ResearchConfig:
     ncm_slots: int = 0
     fused_film: bool = False
     cache_context_projection: bool = False
+    paired_common_init: bool = False
 
     def __post_init__(self):
         _types(self)
@@ -173,6 +174,12 @@ class ResearchConfig:
             raise ValueError("cache_context_projection requires shared scale cores")
         if self.cache_context_projection and self.ncm_slots > 0:
             raise ValueError("cache_context_projection cannot be combined with ncm_slots > 0")
+        if self.paired_common_init and self.architecture not in ("recursive", "fractal"):
+            raise ValueError("paired_common_init requires a recursive or fractal model")
+        if self.paired_common_init and not self.share_weights:
+            raise ValueError("paired_common_init requires share_weights=True")
+        if self.paired_common_init and self.architecture == "fractal" and not self.share_scales:
+            raise ValueError("paired_common_init requires shared scale cores")
         if self.v_cycle and self.inv_vcycle:
             raise ValueError("v_cycle and inv_vcycle are mutually exclusive")
         if (self.v_cycle or self.inv_vcycle or self.ncm_slots > 0) and (

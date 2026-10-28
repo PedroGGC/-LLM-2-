@@ -110,6 +110,8 @@ def parser():
             cmd.add_argument("--output", required=True)
         elif name == "diagnose":
             cmd.add_argument("--samples", type=_positive, default=128)
+            cmd.add_argument("--batch-size", type=_positive, default=1,
+                             help="number of contiguous validation windows in the fixed diagnostic batch")
             cmd.add_argument("--output", required=True)
         else:
             cmd.add_argument("--prompt", default="The laboratory")
@@ -270,12 +272,19 @@ def main(argv=None):
                         seen_examples=seen, iterations=args.iterations)
                 elif args.command == "diagnose":
                     from .research.diagnostics import diagnose_model
-                    batch = next(validation_batches(data.arrays["val"], cfg.data.seq_len, 1, 1, device))
+                    diag_bs = getattr(args, "batch_size", 1)
+                    batch = next(validation_batches(data.arrays["val"], cfg.data.seq_len, diag_bs, 1, device))
+                    actual_bs = int(batch["input_ids"].shape[0])
+                    batch_source = (
+                        "validation_first_window_b1"
+                        if actual_bs == 1
+                        else f"validation_first_{actual_bs}_windows_b{actual_bs}"
+                    )
                     result = diagnose_model(
                         model,
                         batch["input_ids"],
                         targets=batch["targets"],
-                        batch_source="validation_first_window_b1",
+                        batch_source=batch_source,
                         max_samples=args.samples,
                         precision=cfg.train.precision,
                         deterministic=cfg.train.deterministic,

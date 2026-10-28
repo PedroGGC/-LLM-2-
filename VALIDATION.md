@@ -774,7 +774,7 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
      - `llm2 diagnose` aceita `--checkpoint` ou `--config` (para diagnosticar o modelo na inicialização aleatória na primeira janela de validação de comprimento $T=256$).
   2. **Etapa 2 — Cache Estático da Projeção de Contexto (`cache_context_projection`) e Aliases `compressed_native` sem JEPA**:
      - Adicionado `cache_context_projection: bool = False` em `ResearchConfig`, suportado em `SharedRecursiveCore`, `LatentRecursiveModel` e `FractalLatentModel`. Pré-computa $W_{\text{ctx}}(c)$ uma única vez por sequência antes do laço recorrente $k=1 \dots K$, preservando exatamente os logits, estados ocultos, gradientes de parâmetros e contagem de parâmetros (**2.168.076** em $D=384, H=1024, V=257$).
-     - Contabilidade analítica em `FractalLatentModel.analytical_cost`: em $B=32, T=256, K=2$, o custo estimado por optimizer-step passa de **328,281883 GFLOPs** (`G0`: `flrm_compressed_grouped_no_jepa_k2`) para **317,410247 GFLOPs** (`G1`: `flrm_compressed_grouped_cached_no_jepa_k2`, **−3,3117%**), **291,816604 GFLOPs** (`N0`: `flrm_compressed_native_no_jepa_k2`, **−11,1079%** vs `G0`) e **282,303922 GFLOPs** (`N1`: `flrm_compressed_native_cached_no_jepa_k2`, **−14,0056%** vs `G0`).
+     - Contabilidade analítica em `FractalLatentModel.analytical_cost`: em $B=32, T=256, K=2$, o custo estimado por optimizer-step passa de **328,281883 GFLOPs** (`G0`: `flrm_compressed_grouped_no_jepa_k2`) para **316,051292 GFLOPs** (`G1`: `flrm_compressed_grouped_cached_no_jepa_k2`, **−3,7256%**, com projeção estática de contexto nas 336 posições antes do padding de $s_2$), **291,816604 GFLOPs** (`N0`: `flrm_compressed_native_no_jepa_k2`, **−11,1079%** vs `G0`) e **282,303922 GFLOPs** (`N1`: `flrm_compressed_native_cached_no_jepa_k2`, **−14,0056%** vs `G0`).
      - Adicionados os aliases `flrm_compressed_native_no_jepa`, `flrm_compressed_native_no_jepa_k1`, `flrm_compressed_native_no_jepa_k2` (`N0`), `flrm_compressed_grouped_cached_no_jepa_k2` (`G1`), `flrm_compressed_native_cached_no_jepa_k2` (`N1`), `lrm_no_jepa_k1` e `lrm_no_jepa_k2` em `campaign.py` e `presentation.py`.
   3. **Perfilamento Multi-Backend com Ordem Alternada (`profiling.py`, `campaign.py`, `scripts/kaggle_notebook.py`)**:
      - `profile_step` registra `warmup_timing` (incluindo o tempo do 1º passo de compilação/aquecimento e o total de warmup) separadamente de `timing` (média, mediana, desvio-padrão, mínimo e máximo do passo medido) e `cuda_launch_kernel_calls`.
@@ -787,33 +787,35 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
 ### Evidência Kaggle recebida — Campanha 0013 (Opção A: Etapas 1 e 2 na Tesla T4 GPU 0), 28/10/2026
 
 - ZIP recebido (`llm2-campaign-0013-results.zip`), SHA256 `52fa6b8f41b5c7a5990658fb0c783435914260f82c2247381f7fafd82961c2a4` (353 entradas, executando commit `a877799ee28f49f2825173da854b3a2f8a4c558e`).
-- **Resultados de Perfilamento Multi-Backend (Etapa 2 — 3 repetições completas em ordem alternada na GPU 0):**
-  - `baseline_small` (Transformer):
-    - `eager`: **178.664 (±6.942) alvos/s** / **45,90 (±1,82) ms/passo**, VRAM 491,9 MiB, 269 kernels.
-    - `inductor`: **204.485 (±222) alvos/s** / **40,06 (±0,04) ms/passo** (+14,6% speedup), VRAM 418,9 MiB (−73,0 MiB), 136 kernels (−49,4%), warmup 1º passo 8,53 s.
-  - `flrm_compressed_grouped_no_jepa_k2` (G0, Legado):
-    - `eager`: **59.412 (±2.537) alvos/s** / **138,05 (±5,75) ms/passo**, VRAM 1.285,3 MiB, 1.162 kernels.
-    - `inductor`: **73.217 (±851) alvos/s** / **111,90 (±1,30) ms/passo** (+23,4% speedup), VRAM 1.011,4 MiB (−273,9 MiB), 290 kernels (−75,0%), warmup 1º passo 33,72 s.
-  - `flrm_compressed_grouped_cached_no_jepa_k2` (G1, Grouped + Ctx Cache):
-    - `eager`: **60.630 (±2.692) alvos/s** / **135,29 (±5,95) ms/passo** (+2,0% speedup vs G0 eager), VRAM 1.270,7 MiB.
-    - `inductor`: **75.630 (±348) alvos/s** / **108,32 (±0,50) ms/passo** (+3,3% speedup vs G0 inductor), VRAM 1.002,2 MiB, 289 kernels.
-  - `flrm_compressed_native_no_jepa_k2` (N0, Native sem padding):
-    - `eager`: **64.459 (±2.885) alvos/s** / **127,26 (±5,71) ms/passo** (+8,5% speedup vs G0 eager), VRAM 1.169,9 MiB.
-    - `inductor`: **79.911 (±1.143) alvos/s** / **102,53 (±1,47) ms/passo** (+9,1% speedup vs G0 inductor), VRAM 921,0 MiB (−90,4 MiB vs G0 inductor), 335 kernels.
-  - `flrm_compressed_native_cached_no_jepa_k2` (N1, Native + Ctx Cache — **Candidato Promovido**):
-    - `eager`: **66.033 (±2.492) alvos/s** / **124,18 (±4,79) ms/passo** (+11,2% speedup vs G0 eager), VRAM 1.153,9 MiB.
-    - `inductor`: **81.349 (±355) alvos/s** / **100,70 (±0,44) ms/passo** (+11,1% speedup vs G0 inductor, **+37,1% speedup vs G0 eager**), VRAM 919,9 MiB (**−365,3 MiB / −28,4% vs G0 eager**), 329 kernels (−71,7% vs G0 eager), warmup 1º passo 28,09 s.
-  - Relação com o Transformer compilado: razão teórica de FLOPs $282,30 / 115,98 = 2,434\times$; razão empírica de tempo de passo em Inductor $100,70\text{ ms} / 40,06\text{ ms} = \mathbf{2,514\times}$ (desvio de apenas 3,3% em relação ao piso aritmético).
-- **Resultados da Telemetria Não-Invasiva de Magnitudes e Gradientes na Inicialização (Etapa 1, Seed 42, $T=256$):**
-  - Identidade de loss na inicialização: `G0 = G1 = N0 = N1 = 5,4176902771` (diferença estritamente $0,0000000000\text{e}+00$). Parâmetros e gradientes de parâmetros com concordância estrita em float32.
-  - O descompasso de magnitude ("Context Swamping"):
-    - Em $k=1$, $W_{\text{ctx}}(c)$ entra no núcleo com $\text{RMS} = 0,007842$ ($s_0$), $0,004047$ ($s_1$), $0,002614$ ($s_2$). O estado inicial é zero. Gradiente L2 de ativação em `core_input_sum` ($s_0$) é **4,9138**.
-    - Em $k=2$, $h^{(1)}$ tem amplitude $\text{RMS} = 0,008141$. A `RMSNorm(h^{(1)})` re-escalona para norma unitária: $\text{RMS} = 0,992273$ ($s_0$), $0,988325$ ($s_1$), $0,968361$ ($s_2$).
-    - A razão `RMS(state_norm) / RMS(projected_context)` atinge **126,53×** em $s_0$, **244,21×** em $s_1$ e **370,47×** em $s_2$. O contexto corresponde a apenas **0,79%** da soma de entrada em $s_0$, **0,41%** em $s_1$ e **0,27%** em $s_2$.
-    - Consequência direta: o gradiente L2 de ativação de `core_input_sum` em $k=2$ colapsa para **0,02258** em $s_0$ (queda de **217,6×**), e para $0,00037$ e $0,00048$ em $s_1, s_2$.
-  - Telemetria de preenchimento (padding) em $s_2$: confirmados 75% de posições de padding em `G0`/`G1` (48 posições nulas para 16 válidas); o modo `N0`/`N1` remove esse preenchimento sem alterar a predição válida.
-- **Decisões Metodológicas Consolidadas:**
-  1. Conforme a regra de promoção da Etapa 2, **N1 (`flrm_compressed_native_cached_no_jepa_k2`) é promovido como candidato único de eficiência** para a confirmação de qualidade na Etapa 3.
-  2. Próximo passo científico obrigatório: **Etapa 3** (Matriz $5 \times 3$ com 18 treinos científicos em 3 seeds: 42, 43, 44 com protocolo de pesos comuns pareados no backend Inductor).
-  3. A Etapa 4 (intervenção de qualidade) possui agora dados quantitativos precisos da magnitude do descompasso ($126\times$ a $370\times$), subsidiando formalmente a hipótese de rebalanceamento ou condicionamento após a conclusão da Etapa 3.
+- Ambiente real registrado no manifesto Kaggle: **Python 3.13.15, PyTorch 2.11.0+cu128, CUDA 12.8, cuDNN 91900**, Tesla T4 GPU 0 (`UUID: GPU-d390f32e-a3a2-8283-4271-ca8a9616aa82`).
+- Testes executados no Kaggle antes dos perfis: `tests-cpu.log` **177 passed, 21 deselected** (195,97 s); `tests-cuda-fp32.log` **17 passed, 181 deselected** (40,62 s).
+- **Resultados de Perfilamento Multi-Backend (Etapa 2 — 3 repetições completas em ordem alternada na GPU 0, lote `32×1`):**
+  - `baseline_small` (Transformer pequeno, `n_layers=1`, `d_model=384`, `hidden_dim=1280`, **2.164.224** parâmetros, **115,98 GFLOPs**):
+    - `eager`: **178.664 (±6.942) alvos/s** / **45,90 (±1,82) ms/passo**, VRAM alocada 491,93 MiB, 269 kernels.
+    - `inductor`: **204.485 (±222) alvos/s** / **40,06 (±0,04) ms/passo** (+14,6% speedup), VRAM alocada 418,90 MiB (−73,0 MiB), 136 kernels (−49,4%), warmup 1º passo 8,53 s.
+  - `flrm_compressed_grouped_no_jepa_k2` (G0, Legado, **328,28 GFLOPs**):
+    - `eager`: **59.412 (±2.537) alvos/s** / **138,05 (±5,75) ms/passo**, VRAM alocada 1.285,26 MiB, 1.162 kernels.
+    - `inductor`: **73.217 (±851) alvos/s** / **111,90 (±1,30) ms/passo** (+23,4% speedup), VRAM alocada 1.011,42 MiB (−273,8 MiB), 290 kernels (−75,0%), warmup 1º passo 33,72 s.
+  - `flrm_compressed_grouped_cached_no_jepa_k2` (G1, Grouped + Ctx Cache, **316,05 GFLOPs** após correção do estimador para 336 posições pré-padding):
+    - `eager`: **60.630 (±2.692) alvos/s** / **135,29 (±5,95) ms/passo** (+2,0% speedup vs G0 eager), VRAM alocada 1.270,69 MiB.
+    - `inductor`: **75.630 (±348) alvos/s** / **108,32 (±0,50) ms/passo** (+3,3% speedup vs G0 inductor), VRAM alocada 1.002,23 MiB, 289 kernels.
+  - `flrm_compressed_native_no_jepa_k2` (N0, Native sem padding, **291,82 GFLOPs**):
+    - `eager`: **64.459 (±2.885) alvos/s** / **127,26 (±5,71) ms/passo** (+8,5% speedup vs G0 eager), VRAM alocada 1.169,87 MiB.
+    - `inductor`: **79.911 (±1.143) alvos/s** / **102,53 (±1,47) ms/passo** (+9,1% speedup vs G0 inductor), VRAM alocada 920,99 MiB (−90,4 MiB vs G0 inductor), 335 kernels.
+  - `flrm_compressed_native_cached_no_jepa_k2` (N1, Native + Ctx Cache — **Candidato Promovido**, **282,30 GFLOPs**):
+    - `eager`: **66.033 (±2.492) alvos/s** / **124,18 (±4,79) ms/passo** (+11,1% speedup vs G0 eager), VRAM alocada 1.153,93 MiB.
+    - `inductor`: **81.349 (±355) alvos/s** / **100,70 (±0,44) ms/passo** (**+11,1% throughput / −10,0% tempo/passo vs G0 inductor**; +36,9% vs G0 eager), VRAM alocada **919,93 MiB** (**−91,49 MiB vs G0 inductor**), 329 kernels.
+  - Custo relativo frente ao Transformer compilado: `N1` ainda demanda **2,514× o tempo por passo** do `baseline_small` (`100,70 ms` vs `40,06 ms`) e **2,196× a VRAM alocada** (`919,93 MiB` vs `418,90 MiB`), próximo à razão de FLOPs analíticos ($282,30 / 115,98 = 2,434\times$).
+- **Resultados da Telemetria Não-Invasiva na Inicialização e Correções da Segunda Opinião (Etapa 1, Seed 42, janela `validation_first_window_b1`, $B=1, T=256$):**
+  - **Escopo real:** a medição da Campanha 0013 ocorreu apenas na inicialização (passo 0), sobre 1 janela de validação ($B=1, 256$ alvos, dropout desativado). Não há diagnóstico de checkpoints treinados na 0013; os checkpoints de `500` e `2000` passos serão diagnosticados na Etapa 3.
+  - **Identidade de loss na inicialização:** `G0 = G1 = N0 = N1 = 5,4176902771` ($\Delta = 0,0$). Isso confirma a equivalência do forward inicial em modo `eval`, mas não garante mesma trajetória após 2.000 passos com dropout ativo.
+  - **Correção do coletor para `G1`/`N1`:** na Campanha 0013, o hook `cp_hook` sobrescrevia `call_state["ctx_proj_out"]` nas 3 projeções estáticas pré-laço, fazendo `s0` em $k=1$ registrar o RMS de `s2` (`0,002614` em vez de `0,007842`). Corrigido em `src/llm2/research/diagnostics.py` (separando `preloop_cached_projections`, limpando `call_state` em `core_pre` e adicionando `"scope": "per_call"` vs `"accumulated_across_iterations"`). Na telemetria reexecutada sobre o mesmo `val.bin`, `G0, G1, N0, N1` têm exatamente $\text{RMS}(W_{\text{ctx}}(c)) = 0,007842$ ($s_0$), $0,004047$ ($s_1$) e $0,002614$ ($s_2$) em $k=1$ e $k=2$.
+  - **Magnitudes e qualificação dos gradientes sob `RMSNorm`:**
+    - Na inicialização, `state_norm` eleva $s_{\text{in}}$ em $k=2$ para $\text{RMS} = 0,992273$ ($s_0$), $0,988325$ ($s_1$) e $0,968361$ ($s_2$), gerando razões $\text{RMS}(\text{state\_norm}) / \text{RMS}(W_{\text{ctx}}(c))$ de **126,53×** ($s_0$), **244,21×** ($s_1$) e **370,47×** ($s_2$).
+    - A queda da norma L2 bruta do gradiente de `core_input_sum` em $s_0$ de `4,913823` ($k=1$) para `0,022578` ($k=2$) reflete o escalonamento $1/\text{RMS}(x)$ do jacobiano da `RMSNorm` seguinte (`blocks[0].attn_norm`) quando o RMS de entrada sobe de `0,007842` para `0,993286` ($126,7\times$), e **não** um colapso patológico de gradientes nem indiferença aos tokens (o produto invariante de escala $\text{RMS}(\text{in}) \times \|\nabla_{\text{in}} \mathcal{L}\|_2$ passa de `0,038535` em $k=1$ para `0,022426` em $k=2$, razão de apenas **1,72×**).
+- **Preparação da Etapa 3 (Pareamento Explícito de Pesos Comuns e Matriz 6×3):**
+  1. Implementado `src/llm2/research/pairing.py` (`paired_common_init=True` / `--paired-common-init`): garante que, para cada seed (`42, 43, 44`), todos os 5 modelos recorrentes (`lrm_no_jepa_k1`, `lrm_no_jepa_k2`, `flrm_compressed_grouped_no_jepa_k1`, `flrm_compressed_grouped_no_jepa_k2`, `flrm_compressed_native_cached_no_jepa_k2`) recebam **exatamente os mesmos 12 tensores de parâmetros comuns** (**2.071.681 parâmetros**, `common_combined_sha256` idêntico por seed), sem compartilhar `data_ptr()` entre modelos, preservando `lm_head.weight is embedding.weight`, inicializando os **96.395 parâmetros exclusivos do FLRM** em escopo RNG isolado e mantendo o RNG pós-init e o `RandomBatchStream` idênticos.
+  2. `campaign.py` verifica o pareamento antes do treino (`paired_init_verification` em `campaign.json`), avalia todos os 4 checkpoints (`500, 1000, 1500, 2000`) nas 437 janelas completas (`--evaluate-all-checkpoints`) e coleta a telemetria corrigida nos passos `0`, `500` e `2000` (`--diagnose-init --diagnose-steps 500 2000 --diagnose-batch-size 4`).
+  3. Suíte CPU completa após as correções e testes de regressão: `python -m pytest -q -m "not cuda"` -> **180 passed, 21 deselected** (188,43 s).
+  4. Qualquer alteração de normalização/condicionamento (Etapa 4) permanece estritamente adiada até a análise dos 18 treinos e diagnósticos pós-treino da Etapa 3.
 

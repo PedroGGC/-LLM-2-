@@ -264,11 +264,185 @@ def test_etapa2_analytical_flops_and_parameter_invariance():
         step_gflops[key] = (est.training_per_sequence * 32) / 1e9
 
     # Verify exact analytical GFLOPs per step at B=32, T=256:
-    # G0 = 328.281883 GFLOPs, G1 = 317.410247 GFLOPs (-3.3117%), N0 = 291.816604 GFLOPs (-11.1079%), N1 = 282.303922 GFLOPs
+    # G0 = 328.281883 GFLOPs, G1 = 316.051292 GFLOPs (context projected before padding: 336 pos vs 384),
+    # N0 = 291.816604 GFLOPs, N1 = 282.303922 GFLOPs
     assert abs(step_gflops["G0"] - 328.281883) < 1e-4
-    assert abs(step_gflops["G1"] - 317.410247) < 1e-4
+    assert abs(step_gflops["G1"] - 316.051292) < 1e-4
     assert abs(step_gflops["N0"] - 291.816604) < 1e-4
     assert abs(step_gflops["N1"] - 282.303922) < 1e-4
+
+    # Verify via actual forward hooks on small dimensions (T=256, B=1) that context_projection
+    # processes the exact number of token positions counted by the analytical FLOPs estimator.
+    small_cfg = ModelConfig(vocab_size=32, d_model=16, n_layers=2, n_heads=2, hidden_dim=32, max_seq_len=256)
+    expected_positions = {"G0": 768, "G1": 336, "N0": 672, "N1": 336}
+    ids = torch.randint(0, 32, (1, 256))
+    for key, r_cfg in variants.items():
+        real_model = FractalLatentModel(small_cfg, r_cfg)
+        real_model.eval()
+        observed_positions = []
+        h = real_model.block.cores[0].context_projection.register_forward_hook(
+            lambda m, a, o: observed_positions.append(int(a[0].shape[0] * a[0].shape[1]))
+        )
+        try:
+            with torch.no_grad():
+                real_model(ids)
+        finally:
+            h.remove()
+        assert sum(observed_positions) == expected_positions[key], (key, observed_positions)
+
+
+@pytest.mark.parametrize("scale_execution", ["compressed_grouped", "compressed_native"])
+@attention_context(True)
+def test_etapa1_cached_context_telemetry_regression_matches_uncached_rms_and_reports_scopes(tiny_config, scale_execution):
+    tiny_config.max_seq_len = 33
+    tiny_config.dropout = 0.0
+    uncached = FractalLatentModel(
+        tiny_config,
+        ResearchConfig(
+            architecture="fractal",
+            scale_execution=scale_execution,
+            iterations=2,
+            jepa_weight=0.0,
+            cache_context_projection=False,
+        ),
+    )
+    cached = FractalLatentModel(
+        tiny_config,
+        ResearchConfig(
+            architecture="fractal",
+            scale_execution=scale_execution,
+            iterations=2,
+            jepa_weight=0.0,
+            cache_context_projection=True,
+        ),
+    )
+    cached.load_state_dict(uncached.state_dict())
+
+    ids = torch.randint(0, 32, (2, 33))
+    targets = torch.randint(0, 32, (2, 33))
+    diag_u = diagnose_model(uncached, ids, targets=targets, batch_source="reg_uncached")
+    diag_c = diagnose_model(cached, ids, targets=targets, batch_source="reg_cached")
+
+    for it_idx in range(2):
+        for s_name in ("s0", "s1", "s2"):
+            su = diag_u["stage1_telemetry"]["iterations"][it_idx]["scales"][s_name]
+            sc = diag_c["stage1_telemetry"]["iterations"][it_idx]["scales"][s_name]
+            # Regression check: cached G1/N1 must NOT record s2's projection on s0!
+            # Every scale and iteration must have identical projected_context RMS between uncached and cached.
+            torch.testing.assert_close(
+                su["activations_rms"]["projected_context"],
+                sc["activations_rms"]["projected_context"],
+                rtol=1e-5,
+                atol=1e-6,
+            )
+            torch.testing.assert_close(
+                su["ratios"]["state_norm_over_projected_context"],
+                sc["ratios"]["state_norm_over_projected_context"],
+                rtol=1e-5,
+                atol=1e-6,
+            )
+            # Scope checks:
+            assert su["gradients"]["projected_context"]["scope"] == "per_call"
+            assert su["gradients"]["projected_context_call_input"]["scope"] == "per_call"
+            assert su["gradients"]["cached_projected_context_accumulated"]["grad_rms"] is None
+
+            assert sc["gradients"]["projected_context"]["scope"] == "accumulated_across_iterations"
+            assert sc["gradients"]["projected_context_call_input"]["scope"] == "per_call"
+            assert sc["gradients"]["cached_projected_context_accumulated"]["scope"] == "accumulated_across_iterations"
+
+            # Per-call gradient contribution to projected_context in cached mode must equal uncached per-call grad!
+            torch.testing.assert_close(
+                su["gradients"]["projected_context"]["grad_rms"],
+                sc["gradients"]["projected_context_call_input"]["grad_rms"],
+                rtol=1e-5,
+                atol=1e-6,
+            )
+            torch.testing.assert_close(
+                su["gradients"]["projected_context"]["grad_l2_norm"],
+                sc["gradients"]["projected_context_call_input"]["grad_l2_norm"],
+                rtol=1e-5,
+                atol=1e-6,
+            )
+
+
+def test_etapa3_paired_common_init_protocol_and_sampler_alignment(training_config, tmp_path):
+    from llm2.research.factory import build_backbone
+    from llm2.research.pairing import iter_common_named_buffers, iter_common_named_parameters
+    from llm2.runtime import setup_runtime
+
+    base = training_config
+    base.model.max_seq_len = base.data.seq_len = 17
+    recurrent_aliases = [
+        "lrm_no_jepa_k1",
+        "lrm_no_jepa_k2",
+        "flrm_compressed_grouped_no_jepa_k1",
+        "flrm_compressed_grouped_no_jepa_k2",
+        "flrm_compressed_native_cached_no_jepa_k2",
+    ]
+
+    # 1. Verify that WITHOUT paired_common_init, LRM and FLRM have different common weights under the same seed.
+    cfg_lrm_unpaired = campaign_config(
+        base, "lrm_no_jepa_k2", base.data.path, tmp_path / "u-lrm",
+        seed=42, steps=2, device="cpu", max_seconds=0, paired_common_init=False,
+    )
+    cfg_flrm_unpaired = campaign_config(
+        base, "flrm_compressed_grouped_no_jepa_k2", base.data.path, tmp_path / "u-flrm",
+        seed=42, steps=2, device="cpu", max_seconds=0, paired_common_init=False,
+    )
+    setup_runtime(cfg_lrm_unpaired.train)
+    m_lrm_u = build_backbone(cfg_lrm_unpaired)
+    setup_runtime(cfg_flrm_unpaired.train)
+    m_flrm_u = build_backbone(cfg_flrm_unpaired)
+    assert not torch.equal(m_lrm_u.core.attn.qkv.weight if hasattr(m_lrm_u.core, "attn") else m_lrm_u.core.blocks[0].attn.qkv.weight,
+                           m_flrm_u.block.cores[0].blocks[0].attn.qkv.weight)
+
+    # 2. Verify that WITH paired_common_init=True, all 5 recurrent models share bit-for-bit identical common parameters & buffers,
+    # distinct storage pointers across instances, intact internal weight tying, identical FLRM-exclusive weights across FLRM variants,
+    # identical post-init RNG state, and identical initial RandomBatchStream training batches.
+    models = {}
+    post_init_rngs = {}
+    first_batches = {}
+    for alias in recurrent_aliases:
+        cfg = campaign_config(
+            base, alias, base.data.path, tmp_path / f"paired-{alias}",
+            seed=42, steps=2, device="cpu", max_seconds=0, paired_common_init=True,
+        )
+        setup_runtime(cfg.train)
+        m = build_backbone(cfg)
+        post_init_rngs[alias] = capture_rng()
+        models[alias] = m
+        assert m.lm_head.weight is m.embedding.weight
+        assert m.paired_init_provenance is not None
+        assert m.paired_init_provenance["paired_common_init"] is True
+        assert m.paired_init_provenance["common_parameter_tensor_count"] == 12
+
+        with Trainer(cfg) as trainer:
+            first_batches[alias] = trainer.sampler.next(torch.device("cpu"))
+
+    ref_alias = "lrm_no_jepa_k1"
+    ref_model = models[ref_alias]
+    ref_common_params = dict(iter_common_named_parameters(ref_model))
+    ref_common_bufs = dict(iter_common_named_buffers(ref_model))
+    ref_sha = ref_model.paired_init_provenance["common_combined_sha256"]
+
+    for alias, m in models.items():
+        assert m.paired_init_provenance["common_combined_sha256"] == ref_sha
+        assert_nested_equal(post_init_rngs[ref_alias], post_init_rngs[alias])
+        assert torch.equal(first_batches[ref_alias]["input_ids"], first_batches[alias]["input_ids"])
+        assert torch.equal(first_batches[ref_alias]["targets"], first_batches[alias]["targets"])
+        for cname, cparam in iter_common_named_parameters(m):
+            assert torch.equal(ref_common_params[cname], cparam), (alias, cname)
+            if alias != ref_alias:
+                assert ref_common_params[cname].data_ptr() != cparam.data_ptr(), (alias, cname)
+        for bname, cbuf in iter_common_named_buffers(m):
+            assert torch.equal(ref_common_bufs[bname], cbuf), (alias, bname)
+
+    # All FLRM variants of the same seed must also have identical FLRM-exclusive weights.
+    flrm_aliases = [a for a in recurrent_aliases if a.startswith("flrm")]
+    ref_excl_sha = models[flrm_aliases[0]].paired_init_provenance["exclusive_combined_sha256"]
+    assert ref_excl_sha is not None
+    for alias in flrm_aliases[1:]:
+        assert models[alias].paired_init_provenance["exclusive_combined_sha256"] == ref_excl_sha
 
 
 @pytest.mark.parametrize(

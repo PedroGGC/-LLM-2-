@@ -86,7 +86,7 @@ def worker_environment(root, gpu=None):
 
 
 def campaign_config(base, model, data, output, *, seed, steps, device, max_seconds, iterations=2,
-                    batch_size=None, grad_accum_steps=None, compile=False):
+                    batch_size=None, grad_accum_steps=None, compile=False, paired_common_init=False):
     if model not in MODELS:
         raise ValueError(f"unknown campaign model: {model}")
     cfg = ExperimentConfig.from_dict(base.to_dict())
@@ -129,6 +129,7 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
         else "batched" if model == "flrm_batched"
         else "reference"
     )
+    use_paired = bool(paired_common_init) and architecture in ("recursive", "fractal")
     cfg.research = ResearchConfig(
         architecture=architecture,
         iterations=effective_iterations,
@@ -140,6 +141,7 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
         ncm_slots=ncm_slots,
         fused_film=is_fused_film,
         cache_context_projection=is_cached_ctx,
+        paired_common_init=use_paired,
         max_seconds=max_seconds,
         shutdown_reserve_seconds=min(30., max_seconds / 10) if max_seconds else 0.,
     )
@@ -281,38 +283,76 @@ class Campaign:
                 self.abort()
                 raise
 
-    def evaluate_run(self, job, *, benchmark=True, diagnostics=True):
+    def evaluate_run(self, job, *, benchmark=True, diagnostics=True, evaluate_all_checkpoints=False,
+                     diagnose_steps=None, diagnose_batch_size=1):
         # Sequential post-training measurements on the SAME physical GPU for every model.
         gpu = self.gpus[0]
-        checkpoint = Path(job["checkpoint"])
-        destination = Path(job["directory"]) / "evaluations" / checkpoint.name
-        destination.mkdir(parents=True, exist_ok=False)
-        common = ["--checkpoint", str(checkpoint), "--device", self.device, "--precision", "fp32"]
-        self.command(["-m", "llm2", "evaluate", *common, "--output", destination / "language.json",
-                      "--windows-output", destination / "windows.jsonl"],
-                     f"{job['id']}-evaluate.log", gpu=gpu)
-        result = json.loads((destination / "language.json").read_text(encoding="utf-8"))
-        if result["validation_scope"] != "all_full_windows" or result["dataset_sha256"] != self.manifest["dataset_sha256"]:
-            raise ValueError("final evaluation scope/dataset mismatch")
-        if result["checkpoint_model_sha256"] != job["checkpoint_model_sha256"]:
-            raise ValueError("final evaluation belongs to different weights")
-        print(f"  ✓ Loss LM COMPLETA: {number(result['validation_loss'], 6)} (menor = melhor); "
-              f"{number(result['validation_tokens'], 0)} alvos avaliados.", flush=True)
-        if benchmark:
-            self.command(["-m", "llm2", "benchmark", *common, "--prompt", "First Citizen:",
-                          "--warmup-tokens", "8", "--max-new-tokens", "64",
-                          "--output", destination / "benchmark.json"],
-                         f"{job['id']}-benchmark.log", gpu=gpu)
-            self.command(["-m", "llm2", "generate", *common, "--prompt", "First Citizen:",
-                          "--seed", "42", "--temperature", "0.8", "--max-new-tokens", "64"],
-                         f"{job['id']}-generation.log", gpu=gpu)
-        if diagnostics:
-            self.command(["-m", "llm2", "diagnose", *common, "--samples", "128",
-                          "--output", destination / "diagnostics.json"],
-                         f"{job['id']}-diagnostics.log", gpu=gpu)
-        job.update(status="complete", evaluation=str(destination / "language.json"),
-                   full_validation_loss=result["validation_loss"], validation_tokens=result["validation_tokens"],
-                   evaluation_physical_gpu=worker_environment(self.root, gpu).get("CUDA_VISIBLE_DEVICES"))
+        final_checkpoint = Path(job["checkpoint"]).resolve()
+        run_dir = Path(job["directory"])
+        ckpt_dir = run_dir / "checkpoints"
+        if evaluate_all_checkpoints and ckpt_dir.is_dir():
+            checkpoints = sorted(
+                (p.resolve() for p in ckpt_dir.glob("step-*") if p.is_dir()),
+                key=lambda p: int(p.name.split("-")[-1]),
+            )
+            if final_checkpoint not in checkpoints:
+                checkpoints.append(final_checkpoint)
+        else:
+            checkpoints = [final_checkpoint]
+
+        diag_step_set = None if diagnose_steps is None else {int(s) for s in diagnose_steps}
+        checkpoint_evaluations = []
+
+        for ckpt in checkpoints:
+            step_num = int(ckpt.name.split("-")[-1])
+            is_final = (ckpt == final_checkpoint)
+            meta = read_checkpoint_metadata(ckpt)
+            destination = run_dir / "evaluations" / ckpt.name
+            destination.mkdir(parents=True, exist_ok=False)
+            common = ["--checkpoint", str(ckpt), "--device", self.device, "--precision", "fp32"]
+            self.command(["-m", "llm2", "evaluate", *common, "--output", destination / "language.json",
+                          "--windows-output", destination / "windows.jsonl"],
+                         f"{job['id']}-{ckpt.name}-evaluate.log" if not is_final else f"{job['id']}-evaluate.log",
+                         gpu=gpu)
+            result = json.loads((destination / "language.json").read_text(encoding="utf-8"))
+            if result["validation_scope"] != "all_full_windows" or result["dataset_sha256"] != self.manifest["dataset_sha256"]:
+                raise ValueError("evaluation scope/dataset mismatch")
+            if result["checkpoint_model_sha256"] != meta["files"]["model.safetensors"]:
+                raise ValueError("evaluation belongs to different weights")
+            if is_final and result["checkpoint_model_sha256"] != job["checkpoint_model_sha256"]:
+                raise ValueError("final evaluation belongs to different weights")
+            print(f"  ✓ [Passo {step_num}] Loss LM COMPLETA: {number(result['validation_loss'], 6)} (menor = melhor); "
+                  f"{number(result['validation_tokens'], 0)} alvos avaliados.", flush=True)
+            if is_final and benchmark:
+                self.command(["-m", "llm2", "benchmark", *common, "--prompt", "First Citizen:",
+                              "--warmup-tokens", "8", "--max-new-tokens", "64",
+                              "--output", destination / "benchmark.json"],
+                             f"{job['id']}-benchmark.log", gpu=gpu)
+                self.command(["-m", "llm2", "generate", *common, "--prompt", "First Citizen:",
+                              "--seed", "42", "--temperature", "0.8", "--max-new-tokens", "64"],
+                             f"{job['id']}-generation.log", gpu=gpu)
+            should_diagnose = diagnostics and (is_final if diag_step_set is None else (step_num in diag_step_set))
+            if should_diagnose:
+                diag_cmd = ["-m", "llm2", "diagnose", *common, "--samples", "128",
+                            "--batch-size", str(diagnose_batch_size),
+                            "--output", destination / "diagnostics.json"]
+                self.command(diag_cmd,
+                             f"{job['id']}-{ckpt.name}-diagnostics.log" if not is_final else f"{job['id']}-diagnostics.log",
+                             gpu=gpu)
+            checkpoint_evaluations.append({
+                "step": step_num,
+                "checkpoint": str(ckpt),
+                "checkpoint_model_sha256": meta["files"]["model.safetensors"],
+                "validation_loss": result["validation_loss"],
+                "validation_tokens": result["validation_tokens"],
+                "evaluation": str(destination / "language.json"),
+                "diagnostics": str(destination / "diagnostics.json") if should_diagnose else None,
+            })
+            if is_final:
+                job.update(status="complete", evaluation=str(destination / "language.json"),
+                           full_validation_loss=result["validation_loss"], validation_tokens=result["validation_tokens"],
+                           evaluation_physical_gpu=worker_environment(self.root, gpu).get("CUDA_VISIBLE_DEVICES"))
+        job["checkpoint_evaluations"] = checkpoint_evaluations
         self.save()
 
     def profile_runs(self, jobs, warmup, measured):
@@ -384,6 +424,14 @@ def parser():
                         help="number of alternating-order repetitions per backend in batch profile mode")
     result.add_argument("--diagnose-init", action="store_true",
                         help="run Etapa 1 non-invasive magnitude/gradient diagnostics at random initialization")
+    result.add_argument("--paired-common-init", action="store_true",
+                        help="initialize common parameters identically across LRM and FLRM per seed")
+    result.add_argument("--evaluate-all-checkpoints", action="store_true",
+                        help="evaluate all saved milestone checkpoints (e.g. 500, 1000, 1500, 2000) on full validation")
+    result.add_argument("--diagnose-steps", nargs="+", type=int, default=None,
+                        help="specific checkpoint steps to run diagnostics on (defaults to final step only)")
+    result.add_argument("--diagnose-batch-size", type=int, default=1,
+                        help="number of contiguous validation windows in the fixed diagnostic batch")
     return result
 
 
@@ -466,6 +514,7 @@ def run_batch_profile(args):
     init_diagnostics = []
     if getattr(args, "diagnose_init", False):
         (output / "diagnostics").mkdir(parents=True, exist_ok=True)
+        diag_bs = getattr(args, "diagnose_batch_size", 1)
         for seed in args.seeds:
             for model in args.models:
                 diag_id = f"init-{model}-seed-{seed}"
@@ -473,13 +522,14 @@ def run_batch_profile(args):
                                       steps=max(100, args.warmup_steps + args.measure_steps + 1),
                                       device=args.device, max_seconds=0, iterations=args.iterations,
                                       batch_size=batch_matrix[0][0], grad_accum_steps=batch_matrix[0][1],
-                                      compile=False)
+                                      compile=False,
+                                      paired_common_init=getattr(args, "paired_common_init", False))
                 cfg_path = output / "configs" / f"{diag_id}.yaml"
                 cfg_path.write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=True), encoding="utf-8")
                 diag_out = output / "diagnostics" / f"{diag_id}.json"
                 campaign.command(["-m", "llm2", "diagnose", "--config", cfg_path,
                                   "--data", data_path, "--device", args.device, "--precision", "fp32",
-                                  "--samples", "128", "--output", diag_out],
+                                  "--samples", "128", "--batch-size", str(diag_bs), "--output", diag_out],
                                  f"{diag_id}-diagnose.log", gpu=gpu_slot)
                 init_diagnostics.append({"model": model, "seed": seed, "path": str(diag_out)})
         campaign.manifest["init_diagnostics"] = init_diagnostics
@@ -646,6 +696,7 @@ def run_campaign(args):
                              "tests-cuda-fp32.log", gpu=campaign.gpus[0])
         (output / "configs").mkdir()
         jobs = campaign.manifest["runs"]
+        use_paired_init = getattr(args, "paired_common_init", False)
         for seed in args.seeds:
             for model in args.models:
                 run_id = f"{model}-seed-{seed}"
@@ -654,23 +705,59 @@ def run_campaign(args):
                 cfg = campaign_config(base, model, data_path, directory, seed=seed, steps=args.steps,
                                       device=args.device, max_seconds=args.max_seconds, iterations=args.iterations,
                                       batch_size=args.batch_size, grad_accum_steps=args.grad_accum_steps,
-                                      compile=getattr(args, "compile", False))
+                                      compile=getattr(args, "compile", False),
+                                      paired_common_init=use_paired_init)
                 path = output / "configs" / f"{run_id}.yaml"
                 path.write_text(yaml.safe_dump(cfg.to_dict(), sort_keys=True), encoding="utf-8")
                 jobs.append({"id": run_id, "model": model, "seed": seed, "gpu_slot": slot,
                              "max_steps": cfg.train.max_steps, "checkpoint_interval": cfg.train.checkpoint_interval, "progress_interval": args.progress_interval,
                              "iterations": cfg.research.iterations+cfg.research.latent_steps,
                              "batch_size": cfg.data.batch_size, "grad_accum_steps": cfg.train.grad_accum_steps,
+                             "paired_common_init": bool(cfg.research.paired_common_init),
                              "physical_gpu": worker_environment(root, slot).get("CUDA_VISIBLE_DEVICES"),
                              "directory": str(directory), "config": str(path), "status": "pending"})
+        if use_paired_init:
+            from .factory import build_backbone
+            from ..runtime import setup_runtime
+            paired_verification = {}
+            for seed in args.seeds:
+                seed_jobs = [j for j in jobs if j["seed"] == seed and j["paired_common_init"]]
+                if not seed_jobs:
+                    continue
+                hashes = {}
+                exclusive_hashes = {}
+                for j in seed_jobs:
+                    j_cfg = load_config(j["config"])
+                    j_cfg.train.device = "cpu"
+                    j_cfg.train.__post_init__()
+                    setup_runtime(j_cfg.train)
+                    m_inst = build_backbone(j_cfg)
+                    prov = getattr(m_inst, "paired_init_provenance", None)
+                    if not prov:
+                        raise RuntimeError(f"paired_init_provenance missing for {j['id']}")
+                    hashes[j["model"]] = prov["common_combined_sha256"]
+                    if prov.get("exclusive_combined_sha256"):
+                        exclusive_hashes[j["model"]] = prov["exclusive_combined_sha256"]
+                unique_common = set(hashes.values())
+                if len(unique_common) != 1:
+                    raise RuntimeError(f"paired_common_init verification failed for seed {seed}: {hashes}")
+                paired_verification[str(seed)] = {
+                    "verified_equal_common_weights": True,
+                    "common_combined_sha256": next(iter(unique_common)),
+                    "models_verified": list(hashes.keys()),
+                    "exclusive_combined_sha256_by_model": exclusive_hashes,
+                }
+                print(f"  ✓ Pareamento de pesos comuns verificado para seed {seed}: SHA256={next(iter(unique_common))[:16]}... ({len(hashes)} modelos)", flush=True)
+            campaign.manifest["paired_init_verification"] = paired_verification
         if getattr(args, "diagnose_init", False):
             (output / "diagnostics").mkdir(parents=True, exist_ok=True)
+            diag_bs = getattr(args, "diagnose_batch_size", 1)
             init_diagnostics = []
             for job in jobs:
                 diag_out = output / "diagnostics" / f"init-{job['id']}.json"
                 campaign.command(["-m", "llm2", "diagnose", "--config", job["config"],
                                   "--data", data_path, "--device", args.device, "--precision", "fp32",
-                                  "--samples", "128", "--output", diag_out],
+                                  "--samples", "128", "--batch-size", str(diag_bs), "--output", diag_out],
                                  f"init-{job['id']}-diagnose.log", gpu=campaign.gpus[0])
                 init_diagnostics.append({"job_id": job["id"], "model": job["model"], "seed": job["seed"], "path": str(diag_out)})
             campaign.manifest["init_diagnostics"] = init_diagnostics
@@ -692,7 +779,14 @@ def run_campaign(args):
         print("A segunda GPU pode ficar ociosa nesta etapa. Isso é esperado.", flush=True)
         for index, job in enumerate(jobs, 1):
             print(f"\nModelo {index}/{len(jobs)}: {MODEL_NAMES.get(job['model'], job['model'])} / seed {job['seed']}", flush=True)
-            campaign.evaluate_run(job, benchmark=not args.no_benchmark, diagnostics=not args.no_diagnostics)
+            campaign.evaluate_run(
+                job,
+                benchmark=not args.no_benchmark,
+                diagnostics=not args.no_diagnostics,
+                evaluate_all_checkpoints=getattr(args, "evaluate_all_checkpoints", False),
+                diagnose_steps=getattr(args, "diagnose_steps", None),
+                diagnose_batch_size=getattr(args, "diagnose_batch_size", 1),
+            )
         if len({job["validation_tokens"] for job in jobs}) != 1:
             raise ValueError("models were not evaluated on the same number of tokens")
         stage(5, 7, "PERFIL DE DESEMPENHO ISOLADO")

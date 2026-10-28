@@ -100,6 +100,10 @@ elif MODE == "perfilar_lotes":
         command += ["--profile-repeats", str(SETTINGS["profile_repeats"])]
     if SETTINGS.get("diagnose_init", False):
         command += ["--diagnose-init"]
+    if SETTINGS.get("paired_common_init", False):
+        command += ["--paired-common-init"]
+    if SETTINGS.get("diagnose_batch_size") is not None:
+        command += ["--diagnose-batch-size", str(SETTINGS["diagnose_batch_size"])]
     if SETTINGS.get("evaluate_checkpoints"):
         command += ["--evaluate-checkpoints", *map(str, SETTINGS["evaluate_checkpoints"])]
     data = SETTINGS.get("data")
@@ -147,6 +151,14 @@ else:
         command += ["--compile"]
     if SETTINGS.get("diagnose_init", False):
         command += ["--diagnose-init"]
+    if SETTINGS.get("paired_common_init", False):
+        command += ["--paired-common-init"]
+    if SETTINGS.get("evaluate_all_checkpoints", False):
+        command += ["--evaluate-all-checkpoints"]
+    if SETTINGS.get("diagnose_steps"):
+        command += ["--diagnose-steps", *map(str, SETTINGS["diagnose_steps"])]
+    if SETTINGS.get("diagnose_batch_size") is not None:
+        command += ["--diagnose-batch-size", str(SETTINGS["diagnose_batch_size"])]
 
     data = SETTINGS.get("data")
     inputs = SETTINGS.get("input", [])

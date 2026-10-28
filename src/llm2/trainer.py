@@ -120,6 +120,8 @@ class Trainer:
                                      "attention_policy": "math" if cfg.train.deterministic else "automatic",
                                      "actual_attention_backend": "inspect profiler operators; policy alone is not observation",
                                      "scale_execution": cfg.research.scale_execution if cfg.research else None}
+        if getattr(self.model, "paired_init_provenance", None) is not None:
+            run_metadata["paired_init_provenance"] = self.model.paired_init_provenance
         name = "run.json" if resume is None else f"resume-{uuid.uuid4().hex}.json"
         write_json(self.output_dir / name, run_metadata)
         if hasattr(self.data, "root"):
