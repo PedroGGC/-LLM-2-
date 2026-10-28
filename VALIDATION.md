@@ -742,3 +742,22 @@ mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmu
   2. No formato `32×1`, tanto o FLRM $K=2$ (`1,397467` $\to$ `1,396738`) quanto o Transformer (`1,400503` $\to$ `1,399217`) melhoraram em relação ao `8×4`, mantendo uma vantagem de `-0,002479` nats (`-0,248%` em perplexidade) para a Variante A na seed 42.
   3. A fusão manual (`fused_film=True`) é matematicamente equivalente ao caminho legado (`delta ~ 1,5e-8`) e acelera a geração batch-1 em `+12%`, mas em modo eager no lote 32 adiciona cópias de concatenação que custam ~3,3 ms/passo e ~36 MiB de VRAM no treino.
   4. Como uma simples mudança de inicialização aleatória dos pesos do tronco (na 0007) deslocou a loss em `+0,004334` nats, a replicação com seeds `43` e `44` em `32×1` é obrigatória antes de atribuir significância estatística aos `-0,002479` nats (FLRM vs Transformer) ou `-0,000051` nats (NCM vs sem NCM).
+
+### Evidência Kaggle recebida — Campanhas 0010 e 0011 (Passo 1: Replicação Multi-Seed 43 e 44 em 32×1), 28/10/2026
+
+- ZIPs recebidos: `llm2-campaign-0010-results.zip` (SHA256 `07d2cc08...`) e `llm2-campaign-0011-results.zip` (SHA256 `5f367749...`), ambos executando commit `2d7eb45674bc4178fdd99517d158ac937aae0828`. A concordância de loss entre a 0010 e a 0011 é da ordem de $10^{-8}$.
+- Consolidação das 3 seeds (42, 43, 44) em lote `32×1`:
+  - `baseline_small`: Seed 42 = `1,399217`, Seed 43 = `1,393805`, Seed 44 = `1,396262`. **Média: 1,396428 ± 0,002710**.
+  - `flrm_ncm_k2` (Variante C): Seed 42 = `1,396687`, Seed 43 = `1,398843`, Seed 44 = `1,397447`. **Média: 1,397659 ± 0,001093**.
+  - `flrm_compressed_grouped_no_jepa_k2` (Variante A): Seed 42 = `1,396738`, Seed 43 = `1,399073`, Seed 44 = `1,397716`. **Média: 1,397843 ± 0,001173**.
+- Conclusão estatística:
+  1. O NCM-16 superou a Variante A em 100% das seeds (ganho médio de `-0,000184 ± 0,000116` nats).
+  2. Na média das 3 seeds, o Transformer pequeno é superior em qualidade (`1,3964` vs `1,3976`), além de ser $3\times$ mais rápido no treino e $5,5\times$ na inferência. A vitória do FLRM na seed 42 era uma flutuação amostral.
+
+### Evidência Kaggle recebida — Campanha 0012 (Passo 2: Efeito do torch.compile/Inductor em 32×1, seed 42), 28/10/2026
+
+- ZIP recebido (`llm2-campaign-0012-results.zip`), SHA256 `e1fb6d1da25be6a36d21d4a6a761ca71df6d5c032dab531a52f8a8600a698cb6` (82 entradas, commit `2d7eb45674bc4178fdd99517d158ac937aae0828`).
+- Resultados com `compile: True` (`backend: inductor`) vs modo eager (Campanha 0009):
+  - `flrm_compressed_grouped_no_jepa_k2`: Loss completa **1,397512** (vs `1,396738` eager), perfil isolado **72.359 alvos/s** / **113,21 ms/passo** (+25,1% vs `57.830 alvos/s`), VRAM alocada **1.011,42 MiB** (−273,7 MiB vs `1.285,1 MiB`), `cudaLaunchKernel` cortado de **1.162 para 290** (−75,0%), treino total **280,33 s** (vs `307,22 s`).
+  - `baseline_small`: Loss completa **1,398501** (vs `1,399217` eager), perfil isolado **204.606 alvos/s** / **40,04 ms/passo** (+29,0% vs `158.597 alvos/s`), VRAM alocada **418,90 MiB** (−73,0 MiB vs `491,9 MiB`), `cudaLaunchKernel` cortado de **269 para 136** (−49,4%), treino total **93,93 s** (vs `106,08 s`).
+- Conclusão técnica do compilador: o Inductor atingiu e superou a meta de corte de kernels (290 < 350) e acelerou ambos os modelos. A razão de tempo por passo agora é $113,21 / 40,04 = 2,827\times$, idêntica à razão teórica de FLOPs ($328,28 / 115,98 = 2,830\times$). O gargalo remanescente é 100% de volume de FLOPs e arquitetura.
