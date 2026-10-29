@@ -31,11 +31,12 @@ from .naming import numbered_output
 
 MODELS = (
     "baseline", "baseline_small", "baseline_jepa",
-    "lrm", "lrm_no_jepa", "lrm_no_jepa_k1", "lrm_no_jepa_k2",
+    "lrm", "lrm_no_jepa", "lrm_no_jepa_k1", "lrm_no_jepa_k2", "lrm_no_jepa_k2_rms",
     "flrm_reference", "flrm_batched",
     "flrm_compressed", "flrm_compressed_native",
     "flrm_compressed_native_no_jepa", "flrm_compressed_native_no_jepa_k1", "flrm_compressed_native_no_jepa_k2",
     "flrm_compressed_native_cached_no_jepa_k2",
+    "flrm_compressed_native_cached_no_jepa_k2_rms",
     "flrm_compressed_grouped", "flrm_compressed_grouped_no_jepa", "flrm_no_jepa",
     "flrm_compressed_grouped_no_jepa_k1", "flrm_compressed_grouped_no_jepa_k2",
     "flrm_compressed_grouped_cached_no_jepa_k2",
@@ -46,9 +47,11 @@ MODELS = (
 FIXED_ITERATIONS = {
     "lrm_no_jepa_k1": 1,
     "lrm_no_jepa_k2": 2,
+    "lrm_no_jepa_k2_rms": 2,
     "flrm_compressed_native_no_jepa_k1": 1,
     "flrm_compressed_native_no_jepa_k2": 2,
     "flrm_compressed_native_cached_no_jepa_k2": 2,
+    "flrm_compressed_native_cached_no_jepa_k2_rms": 2,
     "flrm_compressed_grouped_no_jepa_k1": 1,
     "flrm_compressed_grouped_no_jepa_k2": 2,
     "flrm_compressed_grouped_cached_no_jepa_k2": 2,
@@ -106,27 +109,29 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
     cfg.train.console_progress = True
     cfg.train.accumulation_weighting = "tokens"
     cfg.train.checkpoint_interval = max(1, min(500, steps))
-    architecture = "transformer" if model.startswith("baseline") else "recursive" if model.startswith("lrm") else "fractal"
+    is_rms = model.endswith("_rms")
+    clean_model = model.removesuffix("_rms")
+    architecture = "transformer" if clean_model.startswith("baseline") else "recursive" if clean_model.startswith("lrm") else "fractal"
     # Fixed-K aliases remain distinct jobs/reports but share exactly one backbone.
-    selected = model.rsplit("_k", 1)[0] if model in FIXED_ITERATIONS else model
-    effective_iterations = 1 if architecture == "transformer" else FIXED_ITERATIONS.get(model, iterations)
+    selected = clean_model.rsplit("_k", 1)[0] if clean_model in FIXED_ITERATIONS else clean_model
+    effective_iterations = 1 if architecture == "transformer" else FIXED_ITERATIONS.get(model, FIXED_ITERATIONS.get(clean_model, iterations))
     variant = selected.removesuffix("_no_jepa").removesuffix("_cached")
-    is_grouped_ablation = model in (
+    is_grouped_ablation = clean_model in (
         "flrm_fused_k2", "flrm_ncm_k2",
         "flrm_vcycle_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2",
     )
-    is_fused_film = model in ("flrm_fused_k2", "flrm_vcycle_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2")
-    is_vcycle = model in ("flrm_vcycle_k2", "flrm_vcycle_ncm_k2")
-    is_inv_vcycle = model == "flrm_inv_vcycle_ncm_k2"
-    ncm_slots = 16 if model in ("flrm_ncm_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2") else 0
-    is_cached_ctx = model in ("flrm_compressed_native_cached_no_jepa_k2", "flrm_compressed_grouped_cached_no_jepa_k2")
+    is_fused_film = clean_model in ("flrm_fused_k2", "flrm_vcycle_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2")
+    is_vcycle = clean_model in ("flrm_vcycle_k2", "flrm_vcycle_ncm_k2")
+    is_inv_vcycle = clean_model == "flrm_inv_vcycle_ncm_k2"
+    ncm_slots = 16 if clean_model in ("flrm_ncm_k2", "flrm_vcycle_ncm_k2", "flrm_fused_ncm_k2", "flrm_inv_vcycle_ncm_k2") else 0
+    is_cached_ctx = clean_model in ("flrm_compressed_native_cached_no_jepa_k2", "flrm_compressed_grouped_cached_no_jepa_k2")
     uses_jepa = not is_grouped_ablation and not selected.endswith("_no_jepa") and (
         selected in ("baseline_jepa", "lrm", "flrm_reference", "flrm_batched") or selected.startswith("flrm_compressed"))
     jepa = 0.1 if uses_jepa else 0.
     scale_exec = (
         "compressed_grouped" if is_grouped_ablation
         else variant.removeprefix("flrm_") if variant.startswith("flrm_compressed")
-        else "batched" if model == "flrm_batched"
+        else "batched" if clean_model == "flrm_batched"
         else "reference"
     )
     use_paired = bool(paired_common_init) and architecture in ("recursive", "fractal")
@@ -141,6 +146,7 @@ def campaign_config(base, model, data, output, *, seed, steps, device, max_secon
         ncm_slots=ncm_slots,
         fused_film=is_fused_film,
         cache_context_projection=is_cached_ctx,
+        context_normalization="rms" if is_rms else "none",
         paired_common_init=use_paired,
         max_seconds=max_seconds,
         shutdown_reserve_seconds=min(30., max_seconds / 10) if max_seconds else 0.,
