@@ -169,3 +169,41 @@ O pareamento usa FLOPs estimados, com exclusões explícitas; não equivale a te
 ou número de parâmetros igualados. Warmup inclui compilação/aquecimento; tempo
 exclusivo de compilação e contador de recompilações não foram instrumentados.
 O launcher executará os testes T4/Inductor e piloto no hardware real antes do treino.
+
+## Correção de serialização Windows/Linux no ciclo 3 — 29/10/2026
+
+A tentativa Kaggle da revisão `855c8d2` falhou após preparar o dataset e antes de
+testes/treinos, no contrato de hashes. Causa reproduzida: `tokenizer.json` de 43 bytes
+com CRLF no Windows tinha SHA-256 `a9be2688d42639c5915aa9222fcd9a389acbe6483c47ce170f3b0405e7644667`;
+o JSON equivalente de 39 bytes com LF em Linux tem SHA-256
+`f88f84a387d00bb8027db376d50fff07c86c4ee137f1678351521fefe0f8d252`.
+O freeze local inicial foi incorreto para o Kaggle. Não era erro da configuração
+usada pelo usuário nem um resultado de treinamento.
+
+Correção: `write_json` agora grava UTF-8/LF explícito; protocolo exige o hash canônico,
+mantendo os três hashes binários e demais contratos. Uma falha informa campo,
+valor esperado e observado. Datasets existentes não foram migrados/sobrescritos;
+retomada continua exigindo a implementação e o ambiente originais.
+
+Verificações locais reais:
+
+- Antes da correção, testes de portabilidade reproduziram **2 falhas e 1 aprovação**;
+  depois, primeira rodada direcionada de JSON/dados/ciclo 3: **43 passed**, CUDA
+  fora dessa seleção. Novos testes simulam defaults LF/CRLF independentemente do host.
+- Suíte completa `python -m pytest -q -o faulthandler_timeout=90`: **280 passed,
+  29 skipped**, exit code 0. O diagnóstico de 90 s imprimiu uma pilha durante um teste
+  demorado; a suíte prosseguiu até aprovação. Skips são CUDA indisponível localmente.
+- Corpus real preparado novamente em `artifacts/cycle3-portability-20261029/`,
+  sem sobrescrever a preparação anterior. **Todos os hashes do protocolo passaram**;
+  os três `.bin` foram comparados byte a byte com os anteriores e são idênticos.
+  Tokens: 33.570.713 treino, 1.144.308 validação, 1.287.718 teste. Sem avaliar modelos.
+- Leitura de dataset legado CRLF preserva bytes e fingerprint; adulteração continua
+  rejeitada. Contrato do ciclo 3 rejeita tokenizer CRLF mesmo com semântica equivalente
+  e identifica exatamente `files.tokenizer.json` no diagnóstico.
+- Entrega de recuperação usa número 19, célula/notebook consistentes e pasta nova;
+  a tentativa 0018, datasets, cache e releases anteriores são preservados. A duração
+  máxima continua 14.400 s por execução. 45 links locais conferidos em cada checkout.
+
+Plano/risco anterior às alterações: [PLAN_CYCLE3_PORTABILITY_FIX.md](docs/PLAN_CYCLE3_PORTABILITY_FIX.md).
+CUDA não está disponível localmente; a correção de serialização não constitui
+validação de GPU. O launcher mantém os testes T4/Inductor antes do treino.

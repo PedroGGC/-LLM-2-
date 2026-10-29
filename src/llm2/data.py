@@ -26,8 +26,9 @@ def sha256_file(path):
 
 
 def write_json(path, value):
+    # Hash-bearing artifacts must have identical bytes on Windows and Linux.
     Path(path).write_text(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-                          encoding="utf-8")
+                          encoding="utf-8", newline="\n")
 
 
 class TextTokenizer:

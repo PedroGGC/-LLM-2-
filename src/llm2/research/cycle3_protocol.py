@@ -18,7 +18,7 @@ TRAIN_BYTES = 32*1024**2
 # Filled from the pinned real-corpus preparation before release, never from validation quality.
 DATA_HASHES = {
     'test.bin': 'ba26e93bca72e59dbd2f12a6b1758fdafb97ce3b652310cb44de218ff91536cf',
-    'tokenizer.json': 'a9be2688d42639c5915aa9222fcd9a389acbe6483c47ce170f3b0405e7644667',
+    'tokenizer.json': 'f88f84a387d00bb8027db376d50fff07c86c4ee137f1678351521fefe0f8d252',
     'train.bin': '0d4d9109a5acd6820a3a050a20da2f2073a3d5f0da2b25138c9c47a9bd28906c',
     'val.bin': 'b2ce29824a4e56d51d396231f467c22e0ac3cb8916f5a01c69833207f4340b97',
 }
@@ -29,6 +29,7 @@ PROTOCOL = {'cycle': 3, 'dataset_revision': REVISION, 'train_bytes': TRAIN_BYTES
             'cohorts': COHORTS, 'primary': 'matched_estimated_flops:anchor_flrm-minus-flops_transformer',
             'rounding': 'floor to multiple of four', 'test_evaluated': False,
             'dataset_files': DATA_HASHES, 'training_overlap_exclusions': sorted(TRAIN_EXCLUSIONS),
+            'json_serialization': 'UTF-8, sorted keys, indent 2, LF and final newline',
             'quality_margin': .005, 'equivalence_margin': .002,
             'deep_transformer': {'n_layers': 2, 'hidden_dim': 1024}}
 PROTOCOL_ID = hashlib.sha256(json.dumps(PROTOCOL,sort_keys=True).encode()).hexdigest()
@@ -96,8 +97,21 @@ def verify_dataset(path, *, smoke=False):
         raise ValueError('Cycle 3 requires explicit whole-document train/val/test splits')
     if not smoke:
         corpus=data.manifest.get('corpus',{})
-        if (not DATA_HASHES or data.manifest['files'] != DATA_HASHES or corpus.get('revision') != REVISION
-                or corpus.get('shard_sha256') != FILES or corpus.get('requested_train_bytes') != TRAIN_BYTES
-                or corpus.get('training_overlap_exclusions') != sorted(TRAIN_EXCLUSIONS)):
-            raise ValueError('dataset does not match the pinned Cycle 3 corpus/content')
+        if not DATA_HASHES:
+            raise ValueError('Cycle 3 protocol has no pinned dataset hashes')
+        expected = {
+            **{f'files.{name}': digest for name, digest in DATA_HASHES.items()},
+            'corpus.revision': REVISION, 'corpus.shard_sha256': FILES,
+            'corpus.requested_train_bytes': TRAIN_BYTES,
+            'corpus.training_overlap_exclusions': sorted(TRAIN_EXCLUSIONS),
+        }
+        observed = {
+            **{f'files.{name}': digest for name, digest in data.manifest['files'].items()},
+            **{key:corpus.get(key.split('.',1)[1]) for key in expected if key.startswith('corpus.')},
+        }
+        differences = [{'field': key, 'expected': expected.get(key), 'observed': observed.get(key)}
+                       for key in sorted(set(expected)|set(observed)) if expected.get(key)!=observed.get(key)]
+        if differences:
+            raise ValueError('dataset does not match the pinned Cycle 3 corpus/content: '
+                             + json.dumps(differences, sort_keys=True))
     return data

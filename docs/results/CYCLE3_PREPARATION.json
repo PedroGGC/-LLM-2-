@@ -1,5 +1,5 @@
 {
-  "purpose": "dataset preparation only; no trained model evaluation",
+  "code_sha256": "8ccf390955e3194a86539142f001714635512cc079272b9c28f8ffb10d12a34d",
   "corpus": {
     "config": "wikitext-103-raw-v1",
     "name": "Salesforce/wikitext",
@@ -43,14 +43,23 @@
   },
   "files": {
     "test.bin": "ba26e93bca72e59dbd2f12a6b1758fdafb97ce3b652310cb44de218ff91536cf",
-    "tokenizer.json": "a9be2688d42639c5915aa9222fcd9a389acbe6483c47ce170f3b0405e7644667",
+    "tokenizer.json": "f88f84a387d00bb8027db376d50fff07c86c4ee137f1678351521fefe0f8d252",
     "train.bin": "0d4d9109a5acd6820a3a050a20da2f2073a3d5f0da2b25138c9c47a9bd28906c",
     "val.bin": "b2ce29824a4e56d51d396231f467c22e0ac3cb8916f5a01c69833207f4340b97"
   },
+  "json_serialization": "UTF-8, sorted keys, indent 2, LF and final newline",
+  "portability_correction": {
+    "canonical_tokenizer_sha256": "f88f84a387d00bb8027db376d50fff07c86c4ee137f1678351521fefe0f8d252",
+    "failed_revision": "855c8d2a661b0d6b3fe6c4306e9255d48a2c5e34",
+    "previous_windows_tokenizer_sha256": "a9be2688d42639c5915aa9222fcd9a389acbe6483c47ce170f3b0405e7644667",
+    "reason": "Explicit LF serialization replaces OS-default CRLF/LF; strict hashes remain required.",
+    "token_binaries_unchanged": true,
+    "tokenizer_bytes": 39
+  },
+  "purpose": "dataset preparation only; no trained model evaluation",
   "tokens": {
     "test": 1287718,
     "train": 33570713,
     "val": 1144308
-  },
-  "code_sha256": "8ccf390955e3194a86539142f001714635512cc079272b9c28f8ffb10d12a34d"
+  }
 }

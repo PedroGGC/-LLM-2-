@@ -9,6 +9,7 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 | [Campanha 0017](results/CAMPAIGN_0017.md) | Ciclo 2 completo: comunicação × FiLM, custos e decisão de confirmação |
 | [Executar ciclo 3](CYCLE3_RUN.md) | WikiText-103, cinco seeds, alvos/FLOPs estimados, teto de quatro horas e dois ZIPs |
 | [Plano de implementação do ciclo 3](PLAN_CYCLE3.md) | Escopo, riscos e critérios registrados antes das mudanças |
+| [Correção Windows/Linux](PLAN_CYCLE3_PORTABILITY_FIX.md) | Serialização LF canônica, integridade estrita e recuperação da tentativa 0018 |
 | [Campanha 0016](results/CAMPAIGN_0016.md) | Auditoria do ciclo 1, efeito adverso da normalização e decisão para o ciclo 2 |
 | [Campanha 0015](results/CAMPAIGN_0015.md) | Referência anterior e correções dos relatórios históricos |
 | [Roadmap](RESEARCH_ROADMAP.md) | Perguntas em aberto, sem aprovação automática de tecnologias |

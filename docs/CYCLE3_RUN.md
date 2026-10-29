@@ -49,6 +49,22 @@ commit publicado. O bootstrap clona essa revisão, instala com o Python do noteb
 verifica que Torch foi preservado e baixa/prepara os shards. Não precisa anexar ZIP
 de código ou dataset. Cache válido pode ser reaproveitado; outputs não são sobrescritos.
 
+### Correção de portabilidade após a primeira tentativa
+
+A revisão `855c8d2` falhou no Kaggle antes de iniciar testes/treino: o hash fixado de
+`tokenizer.json` correspondia aos finais de linha CRLF do Windows, enquanto Linux
+gravava LF. Novos JSONs agora têm UTF-8/LF explícitos. O hash do tokenizer foi fixado
+no formato canônico; os três hashes binários, corpus, splits e protocolo de treino
+permanecem iguais. Verificações continuam estritas e agora identificam o campo,
+hash esperado e observado numa falha. Datasets antigos são lidos sem regravação.
+
+A entrega corrigida usa **`run_number=19`** para preservar a tentativa 0018. Rode a
+célula atualizada; o cache de shards baixados será reaproveitado e o dataset preparado
+será publicado em uma pasta nova. Não é necessário apagar a tentativa anterior.
+Nessa entrega, os ZIPs serão `llm2-campaign-0019-results.zip` e
+`llm2-campaign-0019-checkpoints.zip`; os nomes 0018 abaixo exemplificam a primeira
+entrega. Plano e riscos: [correção de portabilidade](PLAN_CYCLE3_PORTABILITY_FIX.md).
+
 O teto é **14.400 segundos desde o início da célula**, incluindo download do bootstrap,
 instalação, dados, testes, pilotos, treino, avaliação e exportação. Os 300 s finais
 são reservados para exportação. Pode terminar antes. Testes CPU e CUDA FP32 precedem
