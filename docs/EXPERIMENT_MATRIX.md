@@ -1,4 +1,7 @@
-# Matriz de experimentos independentes
+# Catálogo de configurações de ablação
+
+Estas configurações são exemplos smoke da V2, não o protocolo da campanha 0015 nem
+uma fila de execução. Consulte [estado](PROJECT_STATUS.md) e [roadmap](RESEARCH_ROADMAP.md).
 
 Configs em `configs/experiments/`; lista legível por máquina em `matrix.yaml`. Nunca são
 iniciadas em lote implicitamente. Sementes recomendadas: 17, 42, 123, passadas por `--seed`

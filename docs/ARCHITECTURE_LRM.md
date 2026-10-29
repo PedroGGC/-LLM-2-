@@ -1,4 +1,7 @@
-# LRM: hipótese e implementação V2
+# LRM: núcleo Transformer recorrente e objetivos opcionais
+
+Estado atual em [PROJECT_STATUS.md](PROJECT_STATUS.md). Na campanha 0015, JEPA/MTP e
+supervisão intermediária ficaram desligados; a saída segue autoregressiva.
 
 ## Caminho causal
 
@@ -50,10 +53,11 @@ MSE e penalidade. Isso **não prova** ausência de colapso ou superioridade; nã
 regularização VICReg, nem o protocolo multivista original LLM-JEPA. Aqui o alvo é hidden futuro,
 uma hipótese local própria que deve ser comparada a E0 e testada quanto a atalhos.
 
-O teacher custa um forward completo (incluindo a cabeça calculada pelo backbone atual).
+O teacher custa um forward adicional. Com `jepa_hidden_only=true` e backbone compatível,
+a cabeça de vocabulário é omitida; desligar a opção muda o custo, sem alterar os hidden targets.
 Contamos seus parâmetros frozen, predictor, cabeças extras e respectivas operações. A EMA,
 normas, variância e operações elementwise são excluídas da estimativa densa e declaradas como tal.
-Snapshots, `objective.safetensors` e `training_state.pt` preservam os auxiliares; a CLI de geração
+Snapshots, `training_state.pt` e `objective.safetensors` (quando há estado auxiliar) preservam os auxiliares; a CLI de geração
 usa somente o backbone. Validação reporta loss LM/perplexidade separadas da loss total do objetivo.
 
 ## MTP

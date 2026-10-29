@@ -1,138 +1,77 @@
-# Próxima campanha no Kaggle Notebooks — T4x2
+# Campanhas Kaggle T4 — operação atual
 
-Esta entrega implementa P01–P06. GPU é executada **no notebook do Kaggle pelo navegador**. Não é preciso instalar nada no computador pessoal. Localmente foram/serão feitos testes CPU; os testes CUDA deste pacote só confirmam suporte quando executados no Kaggle.
+Use a branch `experiment/fractal-lrm` para N1/G0, pareamento e telemetria da campanha
+0015. Consulte [resultados](results/CAMPAIGN_0015.md) e [roadmap](RESEARCH_ROADMAP.md)
+antes de escolher uma nova matriz. Os defaults históricos do runner **não selecionam
+N1 automaticamente**; declare modelos e flags explicitamente.
 
-## Próximo passo recomendado: comparar checkpoints já salvos
+## Planejar sem executar
 
-Esse modo não inicia treino. Compara a qualidade dos checkpoints de 500, 1.000, 1.500 e 2.000 passos, mantendo os pesos e dados originais. Loss de validação **menor = melhor** previsão dos próximos tokens. Não mede novamente velocidade.
+No checkout experimental, para inspecionar a seleção mesmo sem CUDA:
 
-Use esta célula com o commit informado na entrega e a pasta da campanha anterior:
-
-```python
-import os
-from urllib.request import urlopen
-
-REVISION = "COLE_O_COMMIT_DE_40_CARACTERES_DA_ENTREGA"
-os.environ["LLM2_REVISION"] = REVISION
-LLM2_SETTINGS = {
-    "mode": "avaliar_salvos",
-    "previous_campaign": "/kaggle/working/llm2-campaign-8f86ba9cc48b",
-    "review_steps": [500, 1000, 1500, 2000],
-}
-url = f"https://raw.githubusercontent.com/PedroGGC/-LLM-2-/{REVISION}/scripts/kaggle_notebook.py"
-exec(compile(urlopen(url, timeout=60).read().decode("utf-8-sig"), url, "exec"), globals())
+```powershell
+python scripts/run_kaggle.py --device cpu --input data/raw/tinyshakespeare.txt --models baseline_small flrm_compressed_native_cached_no_jepa_k2 --seeds 42 43 44 --steps 2000 --batch-size 32 --grad-accum-steps 1 --compile --paired-common-init --evaluate-all-checkpoints --diagnose-init --diagnose-steps 500 2000 --diagnose-batch-size 4
 ```
 
-Se a sessão anterior acabou, anexe os outputs da versão salva ao notebook e ajuste `previous_campaign` para a pasta restaurada, por exemplo em `/kaggle/input/.../llm2-campaign-8f86ba9cc48b`. Essa pasta deve conter `campaign.json`, `data` e `runs` com os pesos/estado dos checkpoints. O ZIP de análise contém apenas metadados e não basta. Se o dataset original foi salvo em outra pasta, informe também `"data": "/caminho/para/dados-originais"`; seu fingerprint precisa continuar igual.
+Sem `--execute`, esse comando apenas apresenta a seleção. `--device cpu` permite
+a inspeção local; não descreve o hardware do experimento. O runner exige `--input`
+ou `--data` mesmo no planejamento, mas só abre o dataset na execução. Para uma
+execução T4 futura, seria necessário escolher `--device cuda`, fornecer dados
+reais e revisar toda a configuração antes de adicionar `--execute`. Não é uma autorização para
+rodar novas campanhas. Não fornece uma variante de normalização ainda não implementada.
+O runner usa o Python e o src deste checkout, sem depender da instalação editável anterior.
 
-O bootstrap preserva ou recupera o checkout do commit original para avaliar os pesos antigos. O novo executor verifica hashes do código/dados/pesos e não carrega o pickle do optimizer. A avaliação completa de um checkpoint já presente pode ser reutilizada somente após conferir identidade, escopo e médias por janela. Novas avaliações e seu ZIP ficam em outra pasta `llm2-review-...`. A comparação seleciona o menor erro observado na validação; não substitui teste independente.
+## Notebook e revisão fixada
 
-## Executar uma nova campanha de treino
+`notebooks/kaggle_t4.ipynb` é a entrada atual. Ele apresenta os settings com execução
+desligada por padrão. A revisão de referência da 0015 é
+`aa51b7d9dc541b00b84f587075f757078ecca262`; um novo experimento deve fixar seu próprio
+commit publicado e registrar as configurações resolvidas. Não usar branch mutável como
+identidade de reprodução nem misturar módulos copiados de revisões diferentes.
 
-Ative Internet e o acelerador GPU T4 x2. Cole a célula abaixo, usando o **commit de 40 caracteres informado na entrega** em REVISION. A célula baixa o bootstrap daquele commit e executa o fluxo no Kaggle.
+Ao habilitar a execução no Kaggle, o bootstrap chama `scripts/kaggle_notebook.py` da
+revisão escolhida. Esse helper verifica GPUs/Torch, cria checkout fixado e diretórios
+novos, instala dependências, executa testes e inicia somente o modo solicitado.
+A inspeção local do notebook não valida seu funcionamento na GPU.
 
-    import os
-    from urllib.request import urlopen
+| Modo | Finalidade |
+|---|---|
+| `treinar` | Nova campanha; requer duas GPUs no helper |
+| `avaliar_salvos` | Avaliar checkpoints completos de uma campanha anterior, sem novo treino |
+| `perfilar_lotes` | Perfis e telemetria; usa uma GPU no helper |
 
-    REVISION = "COLE_O_COMMIT_DE_40_CARACTERES_DA_ENTREGA"
-    os.environ["LLM2_REVISION"] = REVISION
-    LLM2_SETTINGS = {
-        "mode": "treinar",
-        "steps": 2000,
-        "seeds": [42],
-        "models": ["baseline", "lrm", "flrm_reference", "flrm_batched"],
-        "profile": True,
-    }
-    url = f"https://raw.githubusercontent.com/PedroGGC/-LLM-2-/{REVISION}/scripts/kaggle_notebook.py"
-    exec(compile(urlopen(url, timeout=60).read().decode("utf-8-sig"), url, "exec"), globals())
+T4x2 são placas independentes; não oferecem 30 GiB unificados a um modelo. O protocolo
+usa FP32. Não presumir BF16/A100/FP16 validados por esses resultados.
 
-O bootstrap cria um checkout separado pelo commit, usa o Python do notebook para instalar dependências e não instala um wheel CPU de Torch por cima da instalação CUDA. Não faz pull sobre os experimentos existentes. O corpus padrão é tinyshakespeare (~1,1 MB) de uma revisão fixada de char-rnn. Documentos são parágrafos, com deduplicação exata antes do split; o tokenizer byte não usa validação para aprender vocabulário. Isso continua sendo um teste pequeno de modelagem de bytes, não linguagem geral.
+## Controles e nomes
 
-### Como acompanhar a saída
+| Alias experimental | Interpretação |
+|---|---|
+| `baseline_small` | Transformer de um bloco; FFN 1280 no perfil D=384 |
+| `lrm_no_jepa_k1`, `lrm_no_jepa_k2` | Núcleo Transformer recorrente, LM pura |
+| `flrm_compressed_grouped_no_jepa_k1` | FLRM agrupado K=1 |
+| `flrm_compressed_grouped_no_jepa_k2` | G0 |
+| `flrm_compressed_native_cached_no_jepa_k2` | N1 |
 
-- Preparação: hardware, código/dependências e início da campanha.
-- Treino: etapas numeradas, modelo/seed/GPU física e percentual a cada 100 passos. O tempo restante é uma estimativa, não uma promessa. Cada GPU recebe um processo por vez; as duas não somam VRAM para um único modelo.
-- Loss LM de validação: **menor = melhor** previsão. A saída durante o treino é marcada como **PARCIAL**; a tabela final usa todas as janelas completas.
-- Velocidade de treino/geração: **maior = melhor**, com unidades explícitas. Treino e geração são tarefas diferentes e suas velocidades não devem ser misturadas.
-- Memória VRAM: **menor = menor consumo de recurso** para a mesma tarefa. Parâmetros: menos significa modelo menor; não garante melhor qualidade.
-- Geração: mostra o texto produzido. Diagnósticos e medições técnicas ficam nos logs; a tabela em português também é salva em `report/resumo-pt.md`.
-- `n/d`: medição indisponível, não zero. Qualquer falha interrompe o processo; o indicador de conclusão só aparece após sucesso real.
+Aliases K fixo prevalecem sobre `iterations` global. `lrm` e vários aliases FLRM sem
+`no_jepa` ativam objetivo auxiliar; não usá-los inadvertidamente como controles LM pura.
+O pareamento de tensores comuns cobre somente modelos recorrentes.
 
-Para usar os dados preparados anteriores, acrescente a LLM2_SETTINGS:
+Nomes numéricos de campanha/revisão são reservados sem sobrescrita. Uma sessão sem outputs
+anteriores pode reiniciar a numeração; escolha `run_number` livre quando necessário.
+Não sugerir um número antigo fixo como se fosse a próxima campanha.
 
-    "data": "/kaggle/input/SEU_DATASET/processed-real",
+## Artefatos e métricas
 
-A pasta deve conter manifest.json, tokenizer.json, train.bin e val.bin originais. Para arquivos brutos próprios, use em vez de data:
+Preservar os outputs completos e checkpoints da sessão. O `*-results.zip` exporta
+relatórios, configs, hashes, logs e snapshots, mas exclui pesos/AdamW/binários de dados.
+Ele permite análise, não retomada. No computador local, guardar em `artifacts/campaigns/`.
 
-    "input": ["/kaggle/input/SEU_DATASET/corpus.txt"],
+`summary.json` contém validação periódica, possivelmente parcial. A avaliação completa
+fica em `evaluations/step-*/language.json` e pode ser reconstruída de `windows.jsonl`.
+Comparar LM com LM, sem misturar loss auxiliar. Tempos/VRAM são medições; FLOPs são estimativas.
 
-Nunca sobrescreva um dataset preparado. Dados novos ficam dentro do novo diretório da campanha. A preparação padrão não é uma reprodução garantida da campanha histórica: compare fingerprints. O nome do arquivo/origem também participa do manifest.
-
-Se os checkpoints antigos estiverem disponíveis e você selecionar o dataset preparado original, pode acrescentar:
-
-    "evaluate_checkpoints": [
-        "/kaggle/input/SEUS_CHECKPOINTS/baseline/step-00002000"
-    ],
-
-A avaliação exige que o manifest corresponda ao checkpoint; nenhuma verificação é relaxada. O processo de avaliação não carrega o pickle do optimizer, mas os arquivos esperados e seus hashes precisam estar presentes.
-
-## O que a execução faz
-
-1. Confere duas GPUs e o checkout fixado.
-2. Executa a suíte CPU e seleciona os testes CUDA FP32 para T4, que exercitam Transformer, LRM e, na branch fractal, os dois modos do FLRM. Testes BF16 não fazem parte dessa seleção; não se confunde emulação com validação de BF16 nativo.
-3. Executa quatro modelos, com no máximo um processo de treino por GPU. As duas T4 não formam VRAM unificada.
-4. Usa os resumos da execução recém-concluída para localizar/verificar checkpoints. Qualquer erro de subprocesso interrompe a campanha, preserva logs e gera um ZIP parcial.
-5. Após os treinos, avalia **toda a validação** e salva loss por janela para os quatro modelos.
-6. Mede geração sem KV cache e gera uma amostra; executa diagnósticos opcionais fora do treino.
-7. Mede os dois modos FLRM sequencialmente na mesma GPU, com aquecimento, amostras sem profiler e um passo separado instrumentado.
-8. Exporta report.json, comparisons.csv, séries, gráficos, logs, configurações, manifests e traces.
-
-Cada execução tem identificador e diretórios novos. As execuções de perfilamento são descartáveis e independentes do treino científico. O ganho de performance do modo agrupado ainda precisa ser medido na T4.
-
-Se a campanha parar em `tests-cpu.log`, antes de `training`, nenhum modelo foi treinado. O ZIP parcial contém os logs da falha. Na primeira entrega, um teste herdava a máscara unitária de GPU do subprocesso e pedia indevidamente o índice lógico 1; a correção isola essa premissa e valida índices sem escapar da máscara do processo pai. Use o novo commit informado na entrega e mantenha os testes habilitados. O bootstrap cria outro checkout e outra campanha; os diretórios anteriores ficam preservados. Os dados preparados podem ser reutilizados via `data` se os quatro arquivos originais ainda existirem.
-
-## Modelos e controles
-
-- baseline: Transformer 10.720.512 parâmetros no perfil padrão, sem JEPA.
-- lrm: núcleo compartilhado com duas iterações e JEPA.
-- flrm_reference: três escalas, uma iteração, execução sequencial e JEPA.
-- flrm_batched: mesmos parâmetros/operações matemáticas, escalas agrupadas e JEPA.
-- Opcionais: baseline_small (~2,164M no perfil padrão), baseline_jepa, lrm_no_jepa e flrm_no_jepa.
-
-O default reproduz uma comparação de pacotes próximos aos históricos. Não é uma comparação iso-parâmetros ou iso-FLOPs; auxiliares, profundidades e tamanho diferem. O controle reference/batched isola organização de execução, mas dropout e arredondamentos podem mudar a trajetória de treino. Não esperar a mesma loss final bit a bit entre esses dois treinos; testes numéricos controlados verificam a função/gradientes, e retomada exata é exigida dentro do mesmo modo.
-
-Depois do piloto, uma seleção com os braços sem/com JEPA e múltiplas seeds pode usar:
-
-    "models": ["baseline", "baseline_small", "lrm_no_jepa", "lrm", "flrm_no_jepa", "flrm_batched"],
-    "seeds": [17, 42, 123],
-
-Isso é uma campanha maior; não é executada implicitamente. Ajustar modelos ou seeds altera o número de treinos. Configurações resolvidas são exportadas para cada execução.
-
-## Resultados que devem voltar para a análise
-
-Baixe o arquivo indicado no fim, semelhante a:
-
-    /kaggle/working/llm2-campaign-IDENTIFICADOR-results.zip
-
-Envie esse ZIP para a próxima análise. Ele inclui as evidências pequenas e traces, mas **não** pesos safetensors, optimizer ou dados binários; portanto não é um backup retomável. Os checkpoints completos continuam no diretório da campanha. Salve uma versão do notebook Kaggle com outputs para preservá-los.
-
-Em caso de erro, o ZIP parcial é gerado e os logs integrais mostram a falha. Se a interrupção vier de desligamento do serviço/kernel, a exportação final pode não acontecer; os logs e checkpoints já escritos permanecem enquanto o armazenamento da sessão existir.
-
-## Semântica das métricas
-
-- validation_loss no summary de treino é a avaliação periódica limitada, marcada first_batches.
-- evaluations/step-*/language.json contém a avaliação final CE-only de todas as janelas completas, marcada all_full_windows.
-- windows.jsonl traz índice, offset do primeiro alvo, soma de NLL e número de alvos da janela. Reconstitua a média ponderada, admitindo arredondamento FP32.
-- tokens_per_second é a média acumulada de treino; step_tokens_per_second é só o passo.
-- optimization_loss é o escalar efetivamente acumulado para backward. training_loss mantém a agregação histórica ponderada pelos tokens; pode divergir da loss composta otimizada quando há máscaras.
-- accumulation_weighting=tokens pondera a componente LM por alvos válidos no batch efetivo. Auxiliares continuam médias por microbatch; a penalidade de variância não é aditiva. O modo microbatch histórico continua disponível.
-- jepa_hidden_only evita a projeção de vocabulário do teacher. Os pesos continuam compartilhados com o embedding; os FLOPs estimados foram ajustados, sem contar essa cabeça descartada.
-- GPU time por eventos é intervalo de execução, não soma dos tempos dos kernels. Pico allocated/reserved é do allocator PyTorch, não consumo total da placa.
-- A política SDPA solicitada não certifica backend usado: veja observed_attention_operators no perfil.
-- Diagnósticos CKA/variância/posto/gates não provam especialização ou qualidade. São calculados sobre amostra limitada de estados e ficam fora dos tempos de benchmark.
-
-## Preservação e próxima etapa
-
-As mudanças alteram o hash do código. Retomar exatamente uma execução antiga exige seu código/configuração/ambiente originais; não afrouxamos esse contrato. Avaliar pesos antigos compatíveis ou transferi-los é diferente de retomar seu treinamento.
-
-Fibonacci, multirrate/Haar, memória persistente, ACT/DEQ, Kronecker/Monarch e NCM continuam como experimentos posteriores, condicionados às medições desta entrega. Nenhuma redução de VRAM/tempo ou estabilidade BF16 foi presumida.
+Perfis precisam separar warmup/compilação, medição sem profiler e trace instrumentado.
+Registrar kernel SDPA observado, não apenas política solicitada. Atribuição fixa de
+modelos às placas e jobs concorrentes podem afetar tempo: alternar/isolá-los quando
+medir eficiência. Geração atual é eager, batch 1, sem KV cache.

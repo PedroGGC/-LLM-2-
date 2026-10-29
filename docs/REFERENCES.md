@@ -19,7 +19,7 @@ são das fontes consultadas, não uma atribuição automática de licença ao LL
 | [LearnHarness](https://github.com/amosblomqvist/learnharness) | Inspiração pedagógica de feedback; não evidência de aceleração de treino neural |
 | [Adaptive Computation Time](https://arxiv.org/abs/1603.08983) | Referência futura; nenhuma parada aprendida implementada |
 | [Deep Equilibrium Models](https://arxiv.org/abs/1909.01377) | Referência futura; não usamos solução de ponto fixo nem gradiente implícito |
-| [NCM](https://github.com/HazyResearch/ncm), [BLT](https://github.com/facebookresearch/blt), [Engram](https://github.com/deepseek-ai/Engram), [FLA](https://github.com/fla-org/flash-linear-attention) | Fontes consultadas para candidatos futuros, sem integrar código ou kernels |
+| [NCM](https://github.com/HazyResearch/ncm), [BLT](https://github.com/facebookresearch/blt), [Engram](https://github.com/deepseek-ai/Engram), [FLA](https://github.com/fla-org/flash-linear-attention) | Arquiteturas externas não reproduzidas; o banco local de protótipos não equivale a um NCM completo ou memória persistente |
 
 Consultar as licenças completas de código/pesos/datasets novamente antes de qualquer reutilização
 futura. Os resultados publicados por esses projetos pertencem aos seus protocolos; não são

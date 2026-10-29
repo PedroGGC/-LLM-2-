@@ -26,8 +26,9 @@ não transforma automaticamente a tarefa em um currículo universal de aritméti
 As respostas completas são supervisionadas; prompt/padding usam -100. Problemas que não cabem
 no contexto causam erro, nunca são truncados silenciosamente. O harness exige contexto >=128;
 configurações com dificuldades maiores devem verificar que cada exemplo cabe. O texto geral
-continua usando a loss usual. A acumulação calcula a média de losses dos microbatches; a mistura
-opera por microbatch, não promete uma proporção exata de tokens supervisionados. Ambos os
+continua usando a loss usual. A mistura opera por microbatch, não promete uma proporção exata de tokens supervisionados.
+Com `accumulation_weighting=tokens`, LM é ponderada por alvos válidos no batch efetivo;
+auxiliares conservam sua semântica própria. O modo legado `microbatch` faz média por microbatch. Ambos os
 contadores (inputs densos e alvos supervisionados) são registrados para não confundi-los.
 
 ## Políticas
