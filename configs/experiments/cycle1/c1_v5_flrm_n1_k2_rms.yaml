@@ -1,0 +1,47 @@
+# Ciclo 1 - Variante 5: FLRM N1 K=2 com contexto normalizado RMS
+# Parâmetros únicos calculados: 2.168.076
+model:
+  vocab_size: 257
+  d_model: 384
+  n_layers: 6
+  n_heads: 6
+  hidden_dim: 1024
+  max_seq_len: 256
+  dropout: 0.05
+data:
+  path: ../../../data/processed-byte
+  seq_len: 256
+  batch_size: 32
+  eval_batch_size: 32
+optimizer:
+  lr: 0.0004
+  min_lr_ratio: 0.1
+  weight_decay: 0.05
+  warmup_steps: 50
+  schedule_steps: 2000
+train:
+  seed: 71
+  device: cuda
+  precision: fp32
+  deterministic: false
+  compile: true
+  max_steps: 2000
+  grad_accum_steps: 1
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_batches: 8
+  checkpoint_interval: 500
+  log_interval: 20
+  output_dir: ../../../runs/cycle1/c1_v5_flrm_n1_k2_rms
+  cpu_threads: 2
+  accumulation_weighting: tokens
+research:
+  architecture: fractal
+  core_layers: 1
+  iterations: 2
+  jepa_weight: 0.0
+  latent_steps: 0
+  scale_execution: compressed_native
+  cache_context_projection: true
+  context_normalization: rms
+  paired_common_init: true
