@@ -1,12 +1,48 @@
+# Python and local tooling
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.egg-info/
-build/
-dist/
-data/processed*/
-data/raw/
-runs/
-.ipynb_checkpoints/
+/build/
+/dist/
 .coverage
+.coverage.*
+/htmlcov/
+/coverage.xml
+.ipynb_checkpoints/
+.venv/
+venv/
 
+# Local data, checkpoints, logs and analysis exports
+/data/
+/runs/
+/artifacts/
+/logs/
+events.out.tfevents.*
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+/source.zip
+/llm2-campaign-*-results.zip
+/llm2-review-*-results.zip
+/auditoria-*/
+
+# Experiment tracking and telemetry
+wandb/
+
+# Credentials, IDE and OS metadata (templates remain versionable)
+.env
+.env.*
+!.env.example
+!.env.template
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
