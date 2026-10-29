@@ -1,3 +1,7 @@
+> **Registro histórico — não é o plano vigente.** Arquivado em 28/10/2026.
+> O [estado atual](../PROJECT_STATUS.md), os [resultados corrigidos da 0015](../results/CAMPAIGN_0015.md)
+> e a [validação vigente](../../VALIDATION.md) prevalecem sobre descrições e conclusões antigas.
+
 # LLM2-Lab: Relatório Científico e Técnico Completo (Edição Integral)
 **Da Tese da "IA 2" aos Resultados na GPU, Auditoria do Argon e a Nova Fronteira Matemática**
 

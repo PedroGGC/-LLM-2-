@@ -1,3 +1,7 @@
+> **Registro histórico — não é o plano vigente.** Arquivado em 28/10/2026.
+> O [estado atual](../PROJECT_STATUS.md), os [resultados corrigidos da 0015](../results/CAMPAIGN_0015.md)
+> e a [validação vigente](../../VALIDATION.md) prevalecem sobre descrições e conclusões antigas.
+
 # Notebook Kaggle em português — plano, riscos e aceitação
 
 Solicitação de 26/10/2026: explicar quando maior/menor é melhor e tornar o script tão legível quanto o exemplo enviado, mantendo as garantias da campanha atual.

@@ -1,0 +1,210 @@
+> **Registro histórico — não é o plano vigente.** Arquivado em 28/10/2026.
+> O [estado atual](../PROJECT_STATUS.md), os [resultados corrigidos da 0015](../results/CAMPAIGN_0015.md)
+> e a [validação vigente](../../VALIDATION.md) prevalecem sobre descrições e conclusões antigas.
+
+# Validação executada — etapa 1
+
+## V2 — registro incremental em 25/10/2026
+
+- Auditoria antes de alterações: **29 passed, 1 skipped**, 22,80 s, CPU.
+- Infraestrutura comum após hooks/factories/contabilidade: suíte original **29 passed,
+  1 skipped**, 18,01 s; nenhuma atualização de PyTorch ou criação de venv.
+- Recursão/JEPA/LRM: `pytest tests/test_recursive.py tests/test_predictive.py -q`:
+  **18 passed**, 6,90 s. Inclui causalidade adversarial, profundidades 1/2/4, comparação
+  compartilhado/não compartilhado, BPTT/checkpointing/truncamento, memorização, geração,
+  teacher congelado/EMA, alinhamento MTP e retomada exata com progressão latente.
+- Os resultados V1 abaixo são preservados como histórico. CUDA/A100 seguem não validados.
+- Fractal isolado em `experiment/fractal-lrm`: **7 passed**, 5,92 s, CPU. F1–F4,
+  pooling causal de referência, memorização, custos por recursão e checkpoint com JEPA.
+- Harness curricular/orçamentos: **10 passed**, 12,82 s. DAG, verificadores, splits,
+  exploração/dificuldade, respostas completas, mistura e retomada em Transformer/LRM.
+- Integração principal após currículo: **57 passed, 1 skipped**, 37,91 s.
+- Ferramentas de benchmark/profiler/relatório: **4 passed**, 5,33 s; traces reais e SVGs.
+- Configs/perfis e notebook: **7 passed**, 6,49 s. O primeiro teste meta encontrou leitura
+  indevida de Tensor.item(); corrigido para representar explicitamente a etapa inicial 0.
+- Suíte principal ampliada: **66 passed, 3 skipped**, 59,75 s. Os três skips são testes
+  CUDA/BF16 (baseline, Transformer+auxiliares, LRM+auxiliares); nenhum crédito GPU foi gasto.
+- Perfis contados por código, sem alocar o futuro modelo: 352.359.936 parâmetros no perfil
+  planning_only; a referência continua exatamente 33.990.144. Estimativas não são benchmarks.
+
+### Fechamento integrado em 26/10/2026
+
+- Branch comum: **66 passed, 3 skipped**, 68,16 s; log `runs/v2-main-final-pytest.log`.
+- Worktree fractal: **74 passed, 4 skipped**, 73,48 s; log
+  `../LLM 2-fractal-lrm/runs/v2-fractal-final-pytest.log`. Inclui os sete YAMLs F0–F4/C5/C6,
+  retomada FLRM+JEPA+currículo adaptativo e causalidade nas fronteiras das janelas.
+- Todos os skips são CUDA/BF16; nenhuma execução CUDA, Inductor ou A100 foi feita.
+- CLI em processos separados: E0, E3, combined e F3 chegaram a quatro optimizer-steps.
+  C6 parou corretamente no passo 2 por `learning_flop_budget`, antes de exceder 2 bilhões
+  de FLOPs estimados de aprendizado (treino mais probes), preservando checkpoint completo.
+- E3 retomado 2+2 versus quatro passos ininterruptos: igualdade **exata** dos tensores do
+  modelo/objetivo/teacher, otimizador, scheduler, sampler, RNG e contadores sem temporização.
+  Artefato `runs/v2-20261026/resume-equivalence.json`. Dropout 0,1 ativo; acumulação 1 nesse
+  smoke externo, e acumulação 2 nos testes estritos da suíte. Safetensors pode mudar a ordem
+  das chaves JSON de metadados; igualdade de estado não requer bytes serializados idênticos.
+- Pesos V1 avaliados na CLI V2: checkpoint CPU etapa 20, um batch, validation loss
+  **4,0527744293**. Não houve migração silenciosa nem retomada V1 usando código V2.
+- Benchmarks de inferência e avaliações por respostas geradas executados para os cinco
+  smokes; relatórios JSON/CSV/Markdown/SVG exportados. Exact match no test foi 0 nos cinco
+  casos. Modelos tão pequenos e com tão poucas atualizações não validam as hipóteses.
+- Resultados, comandos e limitações: [RESULTS_CPU_SMOKE.md](RESULTS_CPU_SMOKE.md).
+  Datasets e execuções da etapa 1 permanecem preservados; somente CPU local foi utilizada.
+- Após os ajustes finais de documentação/notebook: **3 passed**, 2,98 s, nas verificações de
+  notebook e configs; `compileall` e `git diff --check` sem erros.
+
+Data: 22/10/2026 (America/Sao_Paulo). Os resultados abaixo são testes de infraestrutura,
+não benchmarks de qualidade ou comparação de desempenho entre arquiteturas.
+
+## Ambiente local
+
+- Windows, Python 3.12.2, instalado diretamente em
+  `C:\Users\Lux\.pyenv\pyenv-win\versions\3.12.2\python.exe`.
+- Verificado: `sys.prefix == sys.base_prefix`; nenhum ambiente virtual foi criado.
+- PyTorch **2.14.1+cpu**, pytest **9.1.1**, numpy **2.5.4**, PyYAML **6.0.3**,
+  tokenizers **0.22.2**, safetensors **0.8.0**, TensorBoard **2.21.0**.
+- Instalação do pacote em modo editável no mesmo Python, com `pip install -e ".[dev]"`.
+- CUDA indisponível nessa instalação CPU. Não houve execução em A100, BF16 CUDA ou Inductor.
+
+## Testes por etapa
+
+| Etapa | Comando | Resultado |
+| --- | --- | --- |
+| Backbone | `python -m pytest tests/test_model.py -q` | 6 aprovados |
+| Backbone + dados | `python -m pytest tests/test_data.py tests/test_model.py -q` | 12 aprovados |
+| Treino/checkpoint inicial | `python -m pytest tests/test_training.py -q` | 7 aprovados, 1 pulado por falta de CUDA |
+| Integração e regressões, suíte final | `python -m pytest -q` | **29 aprovados, 1 pulado**, 31,88 s |
+
+A suíte final inclui:
+
+- Shapes, comparação SDPA com referência explícita mascarada e causalidade por perturbação
+  dos tokens futuros; dropout desabilitado em avaliação.
+- RoPE preserva norma e posição zero; RMSNorm com entradas grandes e zero; gradientes finitos.
+- Forward/backward também no **modelo completo de 33.990.144 parâmetros**, em sequência curta
+  CPU, além dos modelos mínimos usados na maioria dos testes.
+- Memorização de um minibatch pequeno em 100 atualizações, loss final <0,05 e <1/20 da inicial.
+- Dados byte/BPE reproduzíveis, BPE treinado apenas no split de treino, round-trip UTF-8
+  incluindo caracteres não latinos, emoji e grafia literal de token especial.
+- Deduplicação antes do split, hashes/tamanhos/IDs, rejeição de corrupção, validação sequencial.
+- Preservação exata do amostrador; avaliação não altera RNGs, modos ou estado do sampler.
+- Retomada preserva pesos, objetivo, AdamW, scheduler, RNGs Python/NumPy/Torch e contadores.
+  A próxima atualização coincide exatamente, com dropout e acumulação ativos.
+- Equivalência numérica da acumulação com batch efetivo equivalente; clipping e contadores.
+- Backbone alternativo simples e objetivo parametrizado, com restauração de parâmetros/buffers
+  e estimativa de FLOPs nula para uma arquitetura desconhecida.
+- Rejeição de configuração, dataset ou ambiente incompatível; rejeição de checkpoint no meio
+  de uma atualização que falhou; preservação de logs de tentativas abandonadas.
+- CLI preparar/treinar/avaliar/gerar/retomar; saída Unicode mesmo sob `PYTHONIOENCODING=ascii`.
+- `torch.compile` com backend eager (Dynamo); notebook Colab em JSON válido e Python parseável.
+
+## Verificação em processos separados
+
+Executados os comandos documentados com `configs/cpu_smoke.yaml`, corpus sintético de
+128 documentos e amostragem byte. O modelo CPU de demonstração tem **98.688 parâmetros**.
+Os artefatos de demonstração estão ignorados pelo Git, em `data/` e `runs/`.
+
+1. Preparação byte: 203.568 tokens de treino e 21.048 de validação.
+2. Treino até a etapa 10 e retomada em outro processo até a etapa 20, em `runs/cpu-smoke/`.
+3. Treino ininterrupto de 20 etapas, em `runs/cpu-continuous/`.
+4. Comparação dos dois checkpoints finais: pesos safetensors, estado do objetivo, AdamW,
+   scheduler, sampler, RNGs, etapa, tokens, sequências e FLOPs estimados **exatamente iguais**.
+   Os tempos medidos foram excluídos dessa igualdade. Resultado persistido em
+   `runs/integration-verification.json`.
+5. Os eventos TensorBoard foram lidos com EventAccumulator: **20 pontos de training loss**
+   e **4 de validation loss** na execução retomada.
+6. Avaliação completa: **21.024 tokens**, **165 batches**, loss **4,022365317859969** nats/token.
+7. Geração textual executada com sucesso em outro processo, incluindo prompt acentuado;
+   o resultado após apenas 20 passos é texto sem qualidade linguística demonstrada.
+
+Ao final do treino de demonstração: 2.560 tokens alvos, 80 sequências, training loss
+4,0673301219940186, validation loss periódica 4,014386475086212 (512 tokens) e
+1.636.761.600 FLOPs **estimados**. A diferença para a avaliação completa decorre da amostra
+periódica limitada a quatro batches. VRAM e tempo GPU são `null` em CPU. Tempo de treino e
+tokens/s estão nos logs; execuções de verificação tiveram outros processos concorrentes
+e não formam um benchmark de throughput.
+
+Também foi preparado o BPE de demonstração: **553 tokens efetivos**, com 8.192 solicitados.
+Isso confirma o tratamento de corpus pequeno sem falsear a dimensão do modelo de referência.
+`inspect` para a configuração 34M calculou **33.990.144 parâmetros** por enumeração e fórmula.
+Com contexto 512, sua estimativa analítica é **118.883.352.576 FLOPs de treino por sequência**;
+não é medição de kernels, nem ganho de desempenho.
+
+## Correções durante a verificação
+
+O teste inicial de hashes de documentos foi ajustado para respeitar a política de `strip`
+do preparo. A execução externa de geração encontrou a codificação legada do stdout do
+Windows; a CLI passou a configurar UTF-8 e recebeu regressão em subprocesso ASCII. A suíte
+final e os dois treinos de comparação foram repetidos após a correção. Artefatos anteriores
+foram preservados em diretórios `*-before-console-fix`, com snapshots do código correspondente.
+
+## Dependências globais e limites
+
+`python -m pip check` encontrou conflitos **preexistentes** em pacotes externos ao projeto:
+
+- `aider-chat 0.86.2` requer numpy 1.26.4; o Python local já tinha numpy 2.5.4.
+- `scipy 1.15.3` requer numpy <2.5; o Python local já tinha numpy 2.5.4.
+- `virtualenv 21.2.0` requer filelock >=3.24.2,<4; já estava instalado filelock 3.20.3.
+
+Esses pacotes não foram alterados. As dependências declaradas do LLM2-Lab são satisfeitas
+e todos os testes CPU acima passaram; o ambiente global, como um todo, não tem `pip check`
+limpo. O freeze de cada execução registra também os pacotes externos instalados.
+
+O notebook e o ZIP Colab foram preparados para verificação real na A100. O teste CUDA/BF16
+é condicional e foi pulado; Inductor, seleção de kernel SDPA e pico de 40 GB não foram
+validados localmente. A CI CPU foi configurada, mas ainda não executada no GitHub.
+Renames atômicos locais e checksums não são uma garantia de durabilidade em Drive/FUSE.
+
+## Repetir a validação
+
+```powershell
+python -m pytest -q
+python -m llm2 inspect --config configs/transformer_34m_a100.yaml
+python scripts/package_colab.py
+```
+
+Use novos diretórios para repetir a preparação e o treino, ou retome checkpoints com o
+mesmo código/ambiente. O README documenta o protocolo, as métricas e as fórmulas.
+
+## P01–P06 — preparação da campanha Kaggle, 26/10/2026
+
+- Branch comum: `python -m pytest -q -r a`: **78 passed, 5 skipped**, 119,54 s, Python local 3.12.2/Torch 2.14.1+cpu. Log local ignorado pelo Git: `runs/p01-p06-common-pytest.log`.
+- Testes direcionados de campanha/CLI/objetivos/perfil: **17 passed, 2 skipped**, 51,04 s; `runs/p01-p06-targeted.log`. Inclui campanha CPU em subprocessos, falha explícita, exportação sem sobrescrita, avaliação por janela, teacher hidden-only, alinhamento JEPA, acumulação CE por tokens sem reponderar auxiliares e retomada exata com dropout/acumulação.
+- Adicionados testes CUDA **FP32** para Transformer/LRM, separados dos testes BF16 existentes. Os cinco skips são CUDA; não houve GPU local, medição T4, energia ou Inductor. O bootstrap executará esses checks no Kaggle.
+- Perfil agora separa warmup, amostras sem profiler e passo instrumentado. Seus FLOPs suportados e agregados de memória não são medições universais.
+- Fonte pequena tinyshakespeare fixada em char-rnn 6f9487a6fe5b420b7ca9afb0d7c078e37c1d1b4e: URL conferida HTTP 200; nenhum corpus grande foi baixado e não houve treino científico local.
+- Não foi afrouxada a retomada de checkpoints antigos. A origem dos dados, configurações, código e pesos permanece verificada; a correção dos objetivos abre execuções novas.
+- Uso no navegador: docs/KAGGLE_T4_CAMPAIGN.md. O código FLRM continua isolado na branch experimental; sua validação será registrada separadamente.
+
+### Fechamento P01–P06
+
+- Suíte comum final: **80 passed, 5 skipped**, 123,86 s; `runs/p01-p06-common-final-pytest.log`. Após revisão: **18 passed, 2 skipped**, 39,86 s nos testes de campanha, objetivos/CLI e ferramentas.
+- Suíte fractal final: **94 passed, 8 skipped**, 143,84 s; `../LLM 2-fractal-lrm/runs/p01-p06-fractal-final-pytest.log`. Direcionados fractal: **14 passed, 3 skipped**, 14,73 s.
+- Paridade sequencial/agrupado validada em CPU FP32 com SDPA math e dropout controlado; comparação de gradientes/parâmetros, causalidade, memorização e retomada exata dentro de cada modo com dropout ativo, acumulação 2, checkpointing, JEPA, MTP e progressão latente.
+- Campanha completa simulada em CPU, em processos separados: Transformer, LRM, FLRM reference e FLRM batched; dois optimizer-steps por modelo, corpus demo preservado, contexto 32. Todos os quatro chegaram a `complete`. Artefatos locais em `../LLM 2-fractal-lrm/runs/p01-p06-integration/` e ZIP de análise correspondente.
+- Cada avaliação completa processou **21.024 alvos em 657 janelas**. Diferença entre média reconstruída dos JSONLs e média agregada <= 5,57e-8. Houve geração, diagnóstico e perfis dos dois modos FLRM, com warmup 1, duas amostras sem profiler e um passo instrumentado.
+- O ZIP de integração passou em `ZipFile.testzip()`, com 112 arquivos e 1.339.174 bytes. Não contém tensores/checkpoints retomáveis. Essa execução e as suítes concorrentes são verificações de engenharia, não benchmarks de throughput/qualidade CPU.
+- Corrigidos na revisão o default de inferência para respeitar FP32 do checkpoint, mapeamento de GPUs sob CUDA_VISIBLE_DEVICES e rótulos de avaliação completa/parcial. O runner T4 seleciona testes CUDA FP32; não exige BF16 nativo/emulado.
+- `compileall`, parse do bootstrap e `git diff --check` passaram. Não houve execução CUDA/T4/BF16/Inductor, energia ou confirmação de ganho de velocidade/VRAM. O próximo resultado empírico de GPU virá do Kaggle pelo navegador.
+
+### Esclarecimento de dimensão e recursos — 26/10/2026
+
+- Corrigido o rótulo histórico incorreto de ~10,7M em `kaggle_t4_1h_fractal.yaml`: esse perfil usa 2.167.308 parâmetros no backbone FLRM. `research.core_layers: 1` agora está explícito nas duas configs Kaggle antigas; comentários esclarecem que `model.n_layers` não define a profundidade desse núcleo e que T4x2 não unifica VRAM.
+- Comparação das duas configurações antigas/novas via `ExperimentConfig.from_dict(...).to_dict()` retornou igualdade completa. Registro local: `runs/flrm-config-clarification.json`. Nenhuma mudança de configuração resolvida ou de código de treino; não houve novo treino nem repetição da suíte para essa clarificação.
+- Enumeração de parâmetros em dispositivo `meta`, sem treino ou alocação GPU, conferida com `fractal_parameter_formula`: núcleo 1/iteração 1 = **2.167.308**; núcleo 1/iterações 2 = **2.167.308**; núcleo 2/iteração 1 = **3.937.548**; núcleo 6/iteração 1 = **11.018.508**. Alterar apenas `model.n_layers` de 6 para 12 preservou 2.167.308 no FLRM. São contagens estruturais, não medições de qualidade/velocidade dessas variantes.
+
+### Notebook amigável e revisão de checkpoints — 26/10/2026
+
+- Plano/riscos/aceitação em `docs/KAGGLE_FRIENDLY_PLAN.md`. Mudanças de apresentação: etapas numeradas, GPU física/modelo/seed, progresso a cada 100 passos com ETA aproximado, loss parcial identificada, geração visível, direções/unidades das métricas e resumo final em português. Não houve alteração de modelos, objetivos, otimizador ou matemática do treino.
+- Novo modo `avaliar_salvos` executa apenas avaliação, usando o checkout original depois de conferir hashes de código, dados e pesos. Mantém os dados/checkpoints antigos, exporta outra pasta/ZIP e só reutiliza avaliação completa depois de verificar identidade, escopo e NLL reconstruída das janelas. Ausência de pesos ou incompatibilidade interrompe; não há fallback para treino.
+- Direcionados finais: **24 passed**, 33,06 s, sob `CUDA_VISIBLE_DEVICES=0`; `runs/kaggle-friendly-targeted-final.log`. Incluem avaliação CPU real de dois checkpoints em subprocessos, reutilização verificada sem subprocessos/treino, imutabilidade dos pesos, rejeição de cache com hash errado, dados incompatíveis, pesos ausentes e fonte alterada. A primeira rodada teve três falhas de leitura CP1252 em testes Windows; leituras UTF-8 explícitas corrigiram os testes.
+- Suíte comum completa: **99 passed, 5 skipped**, 130,23 s; `runs/kaggle-friendly-full-pytest.log`. Suíte fractal completa: **113 passed, 8 skipped**, 140,40 s; `../LLM 2-fractal-lrm/runs/kaggle-friendly-full-pytest.log`. Todos os skips locais são CUDA indisponível.
+- Integração adicional CPU com código arquivado do commit original `341421a3464fea090d69dc10f897a574ce1428f9`: campanha mínima Transformer/FLRM (um passo por modelo), seguida de conferência dos 34 hashes fonte e reutilização das avaliações pelo novo executor. Status `complete`; logs em `runs/kaggle-friendly-original-source-check/`. São verificações de engenharia, não resultados científicos de qualidade/performance.
+- `compileall`, parse do bootstrap e `git diff --check` passaram. O novo fluxo de revisão e apresentação ainda não foi executado em T4 localmente ou no Kaggle; as medições empíricas da campanha anterior permanecem identificadas por seu commit original. Não foi carregado pickle pelo modo de revisão.
+
+### Correção da máscara de GPU herdada — 26/10/2026
+
+- A execução Kaggle fixada em `10b05f554947efa1171d298e774608a25f20e0a7` detectou duas T4, mas parou na suíte CPU antes de qualquer treino: **1 failed, 93 passed, 8 deselected**. O teste de configuração sem máscara herdou `CUDA_VISIBLE_DEVICES=0` do subprocesso e pediu o índice lógico 1. Avisos de matplotlib/pyparsing não causaram a falha.
+- Reprodução CPU local com a mesma variável: **1 failed**, 0,69 s; `runs/kaggle-visible-gpu-repro.log`. O teste agora remove explicitamente a máscara ao verificar o cenário sem máscara. O helper valida índice lógico e disponibilidade, preserva UUID/MIG e nunca escapa de uma máscara vazia, desativada ou insuficiente por fallback.
+- Testes de campanha sob `CUDA_VISIBLE_DEVICES=0`: **20 passed**, 15,63 s; `runs/kaggle-visible-gpu-targeted.log`. Incluem mapeamento de máscara unitária/múltipla/UUID/MIG, índices inválidos, CUDA desativado, preservação de ambiente e a campanha CPU em subprocessos.
+- Suíte comum completa sob a mesma máscara: **95 passed, 5 skipped**, 111,08 s; `runs/kaggle-visible-gpu-full-pytest.log`.
+- Suíte fractal completa sob a mesma máscara: **109 passed, 8 skipped**, 124,72 s; `../LLM 2-fractal-lrm/runs/kaggle-visible-gpu-full-pytest.log`.
+- Todos os skips locais continuam sendo CUDA indisponível. `compileall` dos arquivos alterados e `git diff --check` passaram. A correção não modifica modelos, objetivos, treino ou retomada; os testes CUDA FP32 permanecem habilitados na próxima campanha Kaggle. Ainda não há resultado de treino ou benchmark T4 desta entrega.
