@@ -3,7 +3,7 @@
 ## Escopo científico
 
 Manter a etapa 1 e o Transformer causal como baseline. A V2 solicitada em 25/10/2026
-autoriza recursão, JEPA, estados contínuos, MTP e currículo conforme docs/RESEARCH_V2_PLAN.md.
+autoriza recursão, JEPA, estados contínuos, MTP e currículo conforme docs/archive/RESEARCH_V2_PLAN.md.
 Fractal deve ficar em experiment/fractal-lrm, separado da branch de desenvolvimento comum.
 Não adicionar JEPA, TRM/Coconut, NCM, MoE, servidores, aplicações web ou interfaces gráficas
 sem uma etapa explicitamente solicitada. Interfaces para extensões não autorizam implementá-las.
