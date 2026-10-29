@@ -1,3 +1,7 @@
+> **Registro histórico — não é o plano vigente.** Arquivado em 28/10/2026.
+> O [estado atual](../PROJECT_STATUS.md), os [resultados corrigidos da 0015](../results/CAMPAIGN_0015.md)
+> e a [validação vigente](../../VALIDATION.md) prevalecem sobre descrições e conclusões antigas.
+
 # Manifesto da "IA 2": Além do Próximo Token
 
 > **"A IA 1 aprendeu a imitar a linguagem superficial. A IA 2 precisa aprender a pensar em espaço latente antes de falar."**

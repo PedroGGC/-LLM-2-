@@ -1,3 +1,7 @@
+> **Registro histórico — não é o plano vigente.** Arquivado em 28/10/2026.
+> O [estado atual](../PROJECT_STATUS.md), os [resultados corrigidos da 0015](../results/CAMPAIGN_0015.md)
+> e a [validação vigente](../../VALIDATION.md) prevalecem sobre descrições e conclusões antigas.
+
 # Entrega Kaggle P01–P06 — plano, riscos e aceitação
 
 Data: 26/10/2026. Autorização: implementar a próxima entrega definida na conversa, publicar o necessário e fornecer uma célula para Kaggle Notebooks T4x2. O usuário executa GPU no site Kaggle; não depende de GPU local.

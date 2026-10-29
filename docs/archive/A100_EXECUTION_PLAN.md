@@ -1,3 +1,7 @@
+> **Registro histórico — não é o plano vigente.** Arquivado em 28/10/2026.
+> O [estado atual](../PROJECT_STATUS.md), os [resultados corrigidos da 0015](../results/CAMPAIGN_0015.md)
+> e a [validação vigente](../../VALIDATION.md) prevalecem sobre descrições e conclusões antigas.
+
 # Preparação A100 40 GB — sem consumo automático
 
 Nenhuma A100 foi usada nesta entrega. BF16 CUDA, SDPA fused, Inductor e VRAM real continuam

@@ -1,3 +1,7 @@
+> **Registro histórico — não é o plano vigente.** Arquivado em 28/10/2026.
+> O [estado atual](../PROJECT_STATUS.md), os [resultados corrigidos da 0015](../results/CAMPAIGN_0015.md)
+> e a [validação vigente](../../VALIDATION.md) prevalecem sobre descrições e conclusões antigas.
+
 # Plano Técnico — Primeira Entrega (Etapas 1 e 2 de `PLANO_FINAL_EXECUCAO_FLRM_2026-10-28.md`)
 
 Este documento registra no controle de versão o plano, os riscos e os critérios de aceitação para a execução das **Etapas 1 e 2** do consenso técnico de 28/10/2026.
