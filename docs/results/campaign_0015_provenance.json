@@ -1,0 +1,26 @@
+{
+  "campaign": "0015",
+  "archive": "llm2-campaign-0015-results.zip",
+  "archive_sha256": "8afb1969ea131ad3f724f642642c45a1d01a60eaad50c252f5a21bf18b83b7e8",
+  "archive_bytes": 10757180,
+  "commit": "aa51b7d9dc541b00b84f587075f757078ecca262",
+  "dataset_manifest_sha256": "beed0146113d17994cd94ddd246e8cabecf6c5eceb005c394526884df66a3ef7",
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "train_steps": 2000,
+  "train_targets_per_run": 16384000,
+  "validation_targets_per_checkpoint": 111872,
+  "validation_windows": 437,
+  "checkpoints": [
+    500,
+    1000,
+    1500,
+    2000
+  ],
+  "train": "T4, FP32, Inductor, batch 32, accumulation 1",
+  "generation": "eager, batch 1, no KV cache",
+  "scope": "Observed results from received archive; no new training. Full raw archives remain local."
+}
