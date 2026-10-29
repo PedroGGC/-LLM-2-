@@ -200,7 +200,7 @@ def export(campaign):
     try:
         with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for path in sorted(campaign.output.rglob("*")):
-                if path.is_file() and (path.suffix in (".json", ".jsonl", ".yaml", ".txt", ".md", ".csv", ".log") or path.name == "source.zip"):
+                if path.is_file() and (path.suffix in (".json", ".jsonl", ".yaml", ".txt", ".md", ".csv", ".log", ".png") or path.name == "source.zip"):
                     archive.write(path, arcname=path.relative_to(campaign.output).as_posix())
         with zipfile.ZipFile(temporary) as archive:
             if archive.testzip() is not None:

@@ -14,6 +14,9 @@ from ..document_data import prepare_documents
 
 
 REVISION = "b08601e04326c79dfdd32d625aee71d232d685c3"
+# Audited exact duplicate: The Hustler (film), also present in the official test split.
+# Only this documented training exclusion is permitted; unknown leakage still fails.
+TRAIN_EXCLUSIONS = {"c10b5100b0181cc148fa30970a9acaac0780277653f3288ee4883ed1c85bb78f"}
 FILES = {
     "train-00000-of-00002.parquet": "74da360f23826045b3e6ac6375411fdb15f003030aa74f2596ed08b857cb9212",
     "train-00001-of-00002.parquet": "ba090ac30dbf5461e8dcbdd1a1b8e6f3cf9c2c756d64f0c1220450acd514f720",
@@ -92,9 +95,12 @@ def import_wikitext(cache, output, *, train_bytes=32 * 1024**2, download=False):
         for split, prefix in (("train", "train"), ("val", "validation"), ("test", "test")):
             docs = {}
             paths = [Path(cache) / name for name in sorted(FILES) if name.startswith(prefix + "-")]
-            duplicates = 0
+            duplicates, excluded = 0, []
             for text in articles(parquet_lines(paths)):
                 digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                if split == "train" and digest in TRAIN_EXCLUSIONS:
+                    excluded.append(digest)
+                    continue
                 if digest in owners and owners[digest] != split:
                     raise ValueError("whole-article leakage across official WikiText splits")
                 if digest in docs:
@@ -109,19 +115,21 @@ def import_wikitext(cache, output, *, train_bytes=32 * 1024**2, download=False):
                 selected.append(digest); size += len(text.encode("utf-8"))
                 rows.append({"id": f"wikitext-103:{split}:{digest}", "split": split, "text": text})
             metadata[split] = {"available_articles": len(docs), "selected_articles": len(selected),
-                               "selected_utf8_bytes": size, "duplicates_removed": duplicates}
+                               "selected_utf8_bytes": size, "duplicates_removed": duplicates,
+                               "excluded_training_overlap_sha256": sorted(excluded)}
         raw = staging / "documents.jsonl"
         with raw.open("x", encoding="utf-8", newline="\n") as stream:
             for row in rows:
                 stream.write(json.dumps(row, ensure_ascii=False) + "\n")
         manifest = prepare_documents([raw], staging / "prepared", kind="byte")
-        (staging / "prepared").rename(output)
         # Metadata is part of the immutable prepared-data identity, not an unhashed sidecar.
         manifest["corpus"] = {"name": "Salesforce/wikitext", "config": "wikitext-103-raw-v1",
                               "revision": REVISION, "shard_sha256": FILES,
                               "selection": "ascending SHA-256 of whole article; include final article intact",
+                              "training_overlap_exclusions": sorted(TRAIN_EXCLUSIONS),
                               "requested_train_bytes": train_bytes, "splits": metadata}
-        write_json(output / "manifest.json", manifest)
+        write_json(staging / "prepared" / "manifest.json", manifest)
+        (staging / "prepared").rename(output)
     finally:
         shutil.rmtree(staging)
     return manifest

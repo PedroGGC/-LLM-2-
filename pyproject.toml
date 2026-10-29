@@ -15,6 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
 research = ["matplotlib>=3.8,<4"]
+wikitext = ["pyarrow>=19,<24"]
 
 [project.scripts]
 llm2 = "llm2.cli:main"

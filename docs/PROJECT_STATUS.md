@@ -41,33 +41,49 @@ proíbe `cache_context_projection` junto com `ncm_slots>0`.
 
 ## Evidência e decisão atual
 
-A [campanha 0016](results/CAMPAIGN_0016.md) é a referência mais recente. Executou o
-ciclo 1 no commit `d173bdea0d9b7b497fcf108dc1bb7ddc99148c62`, com cinco variantes,
-seeds 71/72/73 e 2.000 passos. Conteúdo e splits dos dados coincidem com a 0015;
-o hash do manifesto mudou somente pela proveniência do código de preparo.
+A [campanha 0017](results/CAMPAIGN_0017.md) concluiu a ablação comunicação × FiLM no
+commit `60219eafbceea09066dd05206adaa9f4ce865f96`: 18 treinos, seeds 81/82/83 e
+2.000 passos, com 72 avaliações completas. Fonte/configurações e dados conferidos;
+o dataset é idêntico à 0016. Tempo global registrado: 1h32min43s antes do relatório
+e exportação final, dentro de 7.200 s.
 
-Normalizar contexto após a projeção aumentou a NLL em 0,040738 no LRM e 0,042958
-no FLRM, com regressão nas três seeds. As normas ficaram equilibradas sem benefício
-na qualidade. Decisão: manter `context_normalization: none` para o ciclo 2.
+Transformer: NLL média 1,394574; FLRM completo: 1,398282; FLRM com comunicação e
+sem FiLM: 1,398978; LRM: 1,402445. O Transformer venceu o completo em duas seeds e
+tem menor custo medido. O completo melhorou frente ao LRM nas três seeds, mas
+essa comparação também envolve mais parâmetros/operações e cache diferente.
 
-Transformer venceu as três seeds. N1 melhorou NLL frente ao LRM, mas usa mais
-parâmetros/operações e cache diferente. Não há demonstração de superioridade fractal
-nem comparação confirmatória com custo igualado, corpus independente e cinco seeds.
+Ativar comunicação melhorou 0,003331 NLL com FiLM e 0,002498 sem FiLM, nas três
+seeds de cada contraste. Os intervalos exploratórios ainda cruzam zero. FiLM com
+comunicação ganhou 0,000695, abaixo da margem operacional de 0,002; sem comunicação
+não há ganho consistente. A conclusão é sinal específico favorável, ainda sem
+confirmação com custo igualado, corpus novo e cinco seeds.
 
-A infraestrutura experimental contém `context_normalization` e `cross_scale_exchange`,
-preparo documental com splits explícitos e importador WikiText. Isso não significa
-que os ciclos posteriores já foram executados ou toda a infraestrutura concluída.
-O runner recebido ainda precisa de piloto prévio e teto global de sessão; treinos
-0016 foram concorrentes, com perfis isolados posteriores. A100 permanece condicional.
+Decisão documental: preservar o pacote completo como referência e selecionar
+provisoriamente comunicação ligada/FiLM desligado como candidato mais simples à
+confirmação. Contexto continua sem RMS conforme a 0016. Os controles sem comunicação
+continuam apenas de atribuição: preservam projeção/gate e forward dos ramos grossos,
+mas esses ramos não contribuem para a loss fina. Não são controles de custo igualado.
 
-Próxima etapa: separar comunicação multiescala e FiLM conforme o
-[roadmap](RESEARCH_ROADMAP.md). Todas as execuções tiveram melhor checkpoint no passo
-final; convergência e generalidade continuam não demonstradas.
+Logs do Kaggle registram 250 testes CPU e 21 CUDA FP32 aprovados, incluindo os quatro
+braços compilados do ciclo 2. Treinos/pilotos usaram as duas T4 em série, com ordem
+rotacionada e alternância; avaliações usam a primeira GPU. Isso valida o protocolo
+executado no ambiente registrado, não BF16/A100 ou qualquer configuração futura.
 
-## Próximo teste preparado
+Todas as execuções tiveram o melhor checkpoint avaliado no passo final; convergência
+não foi demonstrada. Os pesos não estão no ZIP de análise: hashes de checkpoints e
+inicialização foram conferidos nos registros, sem rehash de pesos ausentes.
 
-A [célula curta do ciclo 2](CYCLE2_RUN.md) usa commit fixado de `experiment/fractal-lrm`,
-com piloto prévio, execução serial e teto global de duas horas, incluindo preparação.
-O bootstrap faz checkout por Git e não exige ZIP de fontes como Input. Testes CPU e
-simulação do fluxo passaram; a validação CUDA/Inductor será executada pelo bootstrap
-na T4. O runner usado na 0016 permanece histórico e não deve ser usado para esse ciclo.
+## Próxima etapa
+
+Executar o [ciclo 3](CYCLE3_RUN.md): WikiText-103 com documentos/splits explícitos,
+seeds 101–105, teste reservado e comparação separada de alvos iguais e FLOPs estimados
+igualados, incluindo Transformer de dois blocos. Dataset real preparado e hashes
+fixados; uma cópia exata treino/teste é excluída explicitamente só do treino.
+O executor faz testes e piloto na T4 antes da ciência, com teto total de quatro horas,
+seeds pendentes explícitas e backups de checkpoints. Treinos científicos desse ciclo
+continuam pendentes; não prolongar schedulers antigos.
+
+As próximas linhas científicas após a base sólida continuam profundidade variável
+e compressão adaptativa, em experimentos separados. KV cache é uma frente de engenharia;
+TTT e um baseline temporal moderno continuam condicionais. A100 não é promovida pelo
+resultado atual. O [guia do ciclo 2](CYCLE2_RUN.md) fica como reprodução da campanha 0017.

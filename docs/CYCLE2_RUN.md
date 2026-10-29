@@ -1,4 +1,7 @@
-# Próximo teste — ciclo 2 (29/10/2026)
+# Reprodução do ciclo 2 — campanha 0017 (29/10/2026)
+
+A [campanha 0017](results/CAMPAIGN_0017.md) terminou completa. Este guia preserva
+o protocolo de reprodução; a próxima etapa é executar a [confirmação independente do ciclo 3](CYCLE3_RUN.md), com teto de quatro horas.
 
 ## Entrega e uso no Kaggle
 
@@ -12,7 +15,7 @@ ele não contém este executor.
 3. `LLM2_SETTINGS["session_seconds"] = 7200` limita toda a sessão a duas horas. É teto, não duração obrigatória; se terminar antes, encerra imediatamente.
 4. Ao terminar, baixe o ZIP `llm2-campaign-0017-results.zip` indicado na saída e preserve os outputs completos do notebook. O ZIP de análise não contém pesos/AdamW e sozinho não permite retomar treino.
 
-O número 0017 é o próximo após a campanha auditada. Se já estiver ocupado/reservado
+A execução auditada usou o número 0017. Se já estiver ocupado/reservado
 nos Inputs ou working, escolha outro `run_number` em `LLM2_SETTINGS`; nada existente
 é sobrescrito. O antigo ZIP/launcher completo de quatro horas foi preservado como
 entrega anterior; ele não é a célula vigente de duas horas.

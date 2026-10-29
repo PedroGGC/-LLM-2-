@@ -1,0 +1,459 @@
+{
+  "archive_sha256": "8883f8213cb6eea11bd0890bd13dfef23c93310db5ee9b01793c3d41357c852f",
+  "archive_bytes": 17388696,
+  "commit": "60219eafbceea09066dd05206adaa9f4ce865f96",
+  "entries": 743,
+  "errors": [],
+  "source_files_matching_git": 46,
+  "bootstrap_files_matching_git": 178,
+  "snapshots": 30,
+  "snapshot_hash_checks": 1380,
+  "evaluations_reconstructed": 72,
+  "maximum_nll_reconstruction_error": 1.9288081798407575e-08,
+  "dataset_sha256": "aad7b6012a72aee8b01f5bbaee2fc61c5159e08ed27fc6c9c1825943fdf33b4d",
+  "reconstructed_binaries": {
+    "train": {
+      "tokens": 995268,
+      "sha256": "c4bd3f90105078794114101eee4fc520495901556e5be2540e00099d4f9e6232"
+    },
+    "val": {
+      "tokens": 111932,
+      "sha256": "4de78ff7f29f0ad075954f1a45a0f8c85dc097ddd603026f1496c0a4fe77a08b"
+    }
+  },
+  "dataset_identical_to_0016": true,
+  "parameter_enumeration_and_formula": {
+    "baseline_small": {
+      "registered_parameters": 2164224,
+      "parameters_formula": 2164224,
+      "step_flops_estimated": 115982991360,
+      "flops_exclusions": "elementwise/norms/RoPE/softmax/loss/optimizer; square dense attention; pooling/padding/FiLM/mixing omitted; grouped padding included in dense core lengths; backward=2x differentiable forward, conservative under detach or unused final branches; no compile cost",
+      "note": "registered parameters differ from tensors receiving gradients; backward estimate is conservative for disconnected branches"
+    },
+    "lrm_no_jepa_k2": {
+      "registered_parameters": 2017536,
+      "parameters_formula": 2017536,
+      "step_flops_estimated": 212619755520,
+      "flops_exclusions": "elementwise/norms/RoPE/softmax/loss/optimizer; square dense attention; pooling/padding/FiLM/mixing omitted; grouped padding included in dense core lengths; backward=2x differentiable forward, conservative under detach or unused final branches; no compile cost",
+      "note": "registered parameters differ from tensors receiving gradients; backward estimate is conservative for disconnected branches"
+    },
+    "flrm_exchange_film": {
+      "registered_parameters": 2168076,
+      "parameters_formula": 2168076,
+      "step_flops_estimated": 282303922176,
+      "flops_exclusions": "elementwise/norms/RoPE/softmax/loss/optimizer; square dense attention; pooling/padding/FiLM/mixing omitted; grouped padding included in dense core lengths; backward=2x differentiable forward, conservative under detach or unused final branches; no compile cost",
+      "note": "registered parameters differ from tensors receiving gradients; backward estimate is conservative for disconnected branches"
+    },
+    "flrm_exchange_no_film": {
+      "registered_parameters": 2165772,
+      "parameters_formula": 2165772,
+      "step_flops_estimated": 282303922176,
+      "flops_exclusions": "elementwise/norms/RoPE/softmax/loss/optimizer; square dense attention; pooling/padding/FiLM/mixing omitted; grouped padding included in dense core lengths; backward=2x differentiable forward, conservative under detach or unused final branches; no compile cost",
+      "note": "registered parameters differ from tensors receiving gradients; backward estimate is conservative for disconnected branches"
+    },
+    "flrm_no_exchange_film": {
+      "registered_parameters": 2168076,
+      "parameters_formula": 2168076,
+      "step_flops_estimated": 282303922176,
+      "flops_exclusions": "elementwise/norms/RoPE/softmax/loss/optimizer; square dense attention; pooling/padding/FiLM/mixing omitted; grouped padding included in dense core lengths; backward=2x differentiable forward, conservative under detach or unused final branches; no compile cost",
+      "note": "registered parameters differ from tensors receiving gradients; backward estimate is conservative for disconnected branches"
+    },
+    "flrm_no_exchange_no_film": {
+      "registered_parameters": 2165772,
+      "parameters_formula": 2165772,
+      "step_flops_estimated": 282303922176,
+      "flops_exclusions": "elementwise/norms/RoPE/softmax/loss/optimizer; square dense attention; pooling/padding/FiLM/mixing omitted; grouped padding included in dense core lengths; backward=2x differentiable forward, conservative under detach or unused final branches; no compile cost",
+      "note": "registered parameters differ from tensors receiving gradients; backward estimate is conservative for disconnected branches"
+    }
+  },
+  "aggregates": {
+    "baseline_small": {
+      "validation_loss": {
+        "mean": 1.3945741333368624,
+        "sd": 0.0027413416107009885
+      },
+      "train_wall_seconds": {
+        "mean": 75.74016134833361,
+        "sd": 1.6197471830780779
+      },
+      "vram_mib": {
+        "mean": 418.8955078125,
+        "sd": 0.0
+      },
+      "generation_tokens_per_second": {
+        "mean": 469.91701174457273,
+        "sd": 50.11641093111683
+      }
+    },
+    "lrm_no_jepa_k2": {
+      "validation_loss": {
+        "mean": 1.4024450523447753,
+        "sd": 0.0025236135738900176
+      },
+      "train_wall_seconds": {
+        "mean": 137.5242171790084,
+        "sd": 2.9869682067235566
+      },
+      "vram_mib": {
+        "mean": 648.40625,
+        "sd": 0.0
+      },
+      "generation_tokens_per_second": {
+        "mean": 262.4050751912606,
+        "sd": 13.405786727643559
+      }
+    },
+    "flrm_exchange_film": {
+      "validation_loss": {
+        "mean": 1.398282361794391,
+        "sd": 0.003145584039205433
+      },
+      "train_wall_seconds": {
+        "mean": 195.77593234099518,
+        "sd": 0.4178087124382704
+      },
+      "vram_mib": {
+        "mean": 920.26318359375,
+        "sd": 0.0
+      },
+      "generation_tokens_per_second": {
+        "mean": 76.62564905270165,
+        "sd": 2.654984399215496
+      }
+    },
+    "flrm_exchange_no_film": {
+      "validation_loss": {
+        "mean": 1.398977670298561,
+        "sd": 0.0030022856459939297
+      },
+      "train_wall_seconds": {
+        "mean": 190.85658636866114,
+        "sd": 2.5521219289868013
+      },
+      "vram_mib": {
+        "mean": 907.482421875,
+        "sd": 0.0
+      },
+      "generation_tokens_per_second": {
+        "mean": 78.86474485579882,
+        "sd": 1.22640229909495
+      }
+    },
+    "flrm_no_exchange_film": {
+      "validation_loss": {
+        "mean": 1.4016131810974657,
+        "sd": 0.0013032506471987002
+      },
+      "train_wall_seconds": {
+        "mean": 163.07474475533613,
+        "sd": 4.733802269961536
+      },
+      "vram_mib": {
+        "mean": 722.28271484375,
+        "sd": 0.0
+      },
+      "generation_tokens_per_second": {
+        "mean": 87.24970052483182,
+        "sd": 1.6378904923623046
+      }
+    },
+    "flrm_no_exchange_no_film": {
+      "validation_loss": {
+        "mean": 1.401475831718503,
+        "sd": 0.0010876988344118582
+      },
+      "train_wall_seconds": {
+        "mean": 159.08305208900416,
+        "sd": 2.5068776155846924
+      },
+      "vram_mib": {
+        "mean": 710.2548828125,
+        "sd": 0.0
+      },
+      "generation_tokens_per_second": {
+        "mean": 88.05414582180187,
+        "sd": 2.4096554764649785
+      }
+    }
+  },
+  "contrasts": {
+    "flrm_exchange_film minus flrm_no_exchange_film": {
+      "mean": -0.003330819303074698,
+      "sd": 0.002010208045024917,
+      "ci95_t_df2": [
+        -0.008324452916372798,
+        0.0016628143102234024
+      ],
+      "values_by_seed": {
+        "81": -0.001474390586399199,
+        "82": -0.0030523063934642103,
+        "83": -0.005465760929360686
+      },
+      "n": 3,
+      "favorable_negative": 3
+    },
+    "flrm_exchange_no_film minus flrm_no_exchange_no_film": {
+      "mean": -0.002498161419941969,
+      "sd": 0.002088531374879064,
+      "ci95_t_df2": [
+        -0.007686360970647933,
+        0.0026900381307639956
+      ],
+      "values_by_seed": {
+        "81": -0.0005991532546159029,
+        "82": -0.0021603080173380196,
+        "83": -0.004735022987871984
+      },
+      "n": 3,
+      "favorable_negative": 3
+    },
+    "flrm_exchange_film minus flrm_exchange_no_film": {
+      "mean": -0.0006953085041701002,
+      "sd": 0.00018727345845693074,
+      "ci95_t_df2": [
+        -0.0011605215647503661,
+        -0.00023009544358983412
+      ],
+      "values_by_seed": {
+        "81": -0.000488176498587789,
+        "82": -0.0008526666759081092,
+        "83": -0.0007450823380144023
+      },
+      "n": 3,
+      "favorable_negative": 3
+    },
+    "flrm_no_exchange_film minus flrm_no_exchange_no_film": {
+      "mean": 0.00013734937896262936,
+      "sd": 0.00021791543915412683,
+      "ci95_t_df2": [
+        -0.00040398258143312983,
+        0.0006786813393583885
+      ],
+      "values_by_seed": {
+        "81": 0.0003870608331955072,
+        "82": 3.933170021808152e-05,
+        "83": -1.4344396525700631e-05
+      },
+      "n": 3,
+      "favorable_negative": 1
+    },
+    "flrm_exchange_film minus baseline_small": {
+      "mean": 0.003708228457528643,
+      "sd": 0.005802805097331588,
+      "ci95_t_df2": [
+        -0.010706738519231913,
+        0.0181231954342892
+      ],
+      "values_by_seed": {
+        "81": 0.010230992151343266,
+        "82": 0.0017745183861772595,
+        "83": -0.0008808251649345955
+      },
+      "n": 3,
+      "favorable_negative": 1
+    },
+    "flrm_exchange_no_film minus baseline_small": {
+      "mean": 0.004403536961698744,
+      "sd": 0.005641262743926599,
+      "ci95_t_df2": [
+        -0.009610136562908489,
+        0.018417210486305978
+      ],
+      "values_by_seed": {
+        "81": 0.010719168649931055,
+        "82": 0.0026271850620853687,
+        "83": -0.00013574282692019324
+      },
+      "n": 3,
+      "favorable_negative": 1
+    },
+    "flrm_exchange_film minus lrm_no_jepa_k2": {
+      "mean": -0.004162690550384429,
+      "sd": 0.0006228489542360634,
+      "ci95_t_df2": [
+        -0.005709933126384678,
+        -0.00261544797438418
+      ],
+      "values_by_seed": {
+        "81": -0.003484937910084307,
+        "82": -0.004293169800695162,
+        "83": -0.004709963940373818
+      },
+      "n": 3,
+      "favorable_negative": 3
+    },
+    "flrm_exchange_no_film minus lrm_no_jepa_k2": {
+      "mean": -0.003467382046214329,
+      "sd": 0.0004846194726813231,
+      "ci95_t_df2": [
+        -0.004671243554195837,
+        -0.002263520538232821
+      ],
+      "values_by_seed": {
+        "81": -0.002996761411496518,
+        "82": -0.0034405031247870532,
+        "83": -0.003964881602359416
+      },
+      "n": 3,
+      "favorable_negative": 3
+    },
+    "flrm_no_exchange_no_film minus lrm_no_jepa_k2": {
+      "mean": -0.0009692206262723602,
+      "sd": 0.001606607648677916,
+      "ci95_t_df2": [
+        -0.0049602552744897905,
+        0.00302181402194507
+      ],
+      "values_by_seed": {
+        "81": -0.002397608156880615,
+        "82": -0.0012801951074490336,
+        "83": 0.0007701413855125683
+      },
+      "n": 3,
+      "favorable_negative": 2
+    }
+  },
+  "interaction": {
+    "mean": -0.0008326578831327295,
+    "sd": 8.866221873158632e-05,
+    "ci95_t_df2": [
+      -0.0010529070442996027,
+      -0.0006124087219658563
+    ],
+    "values_by_seed": {
+      "81": -0.0008752373317832962,
+      "82": -0.0008919983761261907,
+      "83": -0.0007307379414887016
+    },
+    "n": 3,
+    "favorable_negative": 3
+  },
+  "pilots": {
+    "baseline_small-gpu-0": {
+      "gpu": "0",
+      "model": "baseline_small",
+      "step_seconds": 0.03591004416668208,
+      "warmup_seconds": 9.067738007999992,
+      "subprocess_wall_seconds": 23.848140297999976,
+      "cuda_launch_calls": 136
+    },
+    "lrm_no_jepa_k2-gpu-0": {
+      "gpu": "0",
+      "model": "lrm_no_jepa_k2",
+      "step_seconds": 0.06412337383332366,
+      "warmup_seconds": 11.835925011999961,
+      "subprocess_wall_seconds": 27.309991323000077,
+      "cuda_launch_calls": 186
+    },
+    "flrm_exchange_film-gpu-0": {
+      "gpu": "0",
+      "model": "flrm_exchange_film",
+      "step_seconds": 0.09066316556665394,
+      "warmup_seconds": 34.194413686000075,
+      "subprocess_wall_seconds": 51.42484268199996,
+      "cuda_launch_calls": 329
+    },
+    "flrm_exchange_no_film-gpu-0": {
+      "gpu": "0",
+      "model": "flrm_exchange_no_film",
+      "step_seconds": 0.09063168940000045,
+      "warmup_seconds": 29.585852919000104,
+      "subprocess_wall_seconds": 46.849174324000046,
+      "cuda_launch_calls": 321
+    },
+    "flrm_no_exchange_film-gpu-0": {
+      "gpu": "0",
+      "model": "flrm_no_exchange_film",
+      "step_seconds": 0.07676242396666264,
+      "warmup_seconds": 20.93050534400004,
+      "subprocess_wall_seconds": 37.17207547299995,
+      "cuda_launch_calls": 243
+    },
+    "flrm_no_exchange_no_film-gpu-0": {
+      "gpu": "0",
+      "model": "flrm_no_exchange_no_film",
+      "step_seconds": 0.07641077876667926,
+      "warmup_seconds": 19.38596554899982,
+      "subprocess_wall_seconds": 35.80160573599994,
+      "cuda_launch_calls": 235
+    },
+    "baseline_small-gpu-1": {
+      "gpu": "1",
+      "model": "baseline_small",
+      "step_seconds": 0.034099984966678674,
+      "warmup_seconds": 2.7741518479995193,
+      "subprocess_wall_seconds": 17.725563919000024,
+      "cuda_launch_calls": 136
+    },
+    "lrm_no_jepa_k2-gpu-1": {
+      "gpu": "1",
+      "model": "lrm_no_jepa_k2",
+      "step_seconds": 0.060565652433319885,
+      "warmup_seconds": 3.136568491999469,
+      "subprocess_wall_seconds": 18.281161585999826,
+      "cuda_launch_calls": 186
+    },
+    "flrm_exchange_film-gpu-1": {
+      "gpu": "1",
+      "model": "flrm_exchange_film",
+      "step_seconds": 0.08562840559999738,
+      "warmup_seconds": 4.349154579999777,
+      "subprocess_wall_seconds": 20.541714906000152,
+      "cuda_launch_calls": 329
+    },
+    "flrm_exchange_no_film-gpu-1": {
+      "gpu": "1",
+      "model": "flrm_exchange_no_film",
+      "step_seconds": 0.08543828256663347,
+      "warmup_seconds": 4.29863202200022,
+      "subprocess_wall_seconds": 20.369836263000025,
+      "cuda_launch_calls": 321
+    },
+    "flrm_no_exchange_film-gpu-1": {
+      "gpu": "1",
+      "model": "flrm_no_exchange_film",
+      "step_seconds": 0.07264701996664372,
+      "warmup_seconds": 4.049783014999548,
+      "subprocess_wall_seconds": 19.768170672999986,
+      "cuda_launch_calls": 243
+    },
+    "flrm_no_exchange_no_film-gpu-1": {
+      "gpu": "1",
+      "model": "flrm_no_exchange_no_film",
+      "step_seconds": 0.07273495173329442,
+      "warmup_seconds": 3.944143819999681,
+      "subprocess_wall_seconds": 19.65409945400006,
+      "cuda_launch_calls": 235
+    }
+  },
+  "tests_received": {
+    "cpu": {
+      "passed": 250,
+      "deselected": 25,
+      "seconds": 384.17
+    },
+    "cuda-fp32": {
+      "passed": 21,
+      "deselected": 254,
+      "seconds": 153.66
+    }
+  },
+  "session_budget": {
+    "elapsed_seconds": 5562.958272788999,
+    "export_reserve_seconds": 300.0,
+    "limit_seconds": 7200.0,
+    "scope": "bootstrap/setup + tests + pilot + training + evaluation; export uses reserve",
+    "work_remaining_seconds": 1337.0417263530007
+  },
+  "created_at_utc": "2026-10-29T17:30:14.458345+00:00",
+  "finished_at_utc": "2026-10-29T19:02:16.893701+00:00",
+  "all_best_at_final_step": true,
+  "limitations": [
+    "No trained weights in archive; digest equality is checked across records, not recomputed from missing weights.",
+    "Three-seed exploratory intervals; no multiplicity correction or independent corpus.",
+    "Pilot samples are short, one profile per arm/GPU; not independent performance replications.",
+    "No equal-compute training comparison; disconnected-branch backward FLOPs estimates are conservative.",
+    "Warmup aggregates compilation and execution; no standalone compilation/recompilation counter is reported."
+  ],
+  "recorded_training_minimum_gap_seconds": 92.64344000816345
+}

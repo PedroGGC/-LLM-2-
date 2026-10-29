@@ -27,6 +27,7 @@ events.out.tfevents.*
 *.ckpt
 /source.zip
 /llm2-campaign-*-results.zip
+/llm2-campaign-*-checkpoints.zip
 /llm2-review-*-results.zip
 /auditoria-*/
 

@@ -151,6 +151,14 @@ def bootstrap_git(revision, *, run=False, run_number=17, session_seconds=7200., 
         raise ValueError("use a complete 40-character commit SHA")
     session = _BootstrapSession(session_seconds, started_at)
     hardware = _hardware()
+    source, parent, metadata = checkout_git_source(revision, session, hardware)
+    return _run_source(source, parent, metadata, session, hardware, run_number)
+
+
+def checkout_git_source(revision, session, hardware):
+    """Shared exact-revision checkout; callers supply their own campaign protocol."""
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("use a complete 40-character commit SHA")
     parent = Path(tempfile.mkdtemp(prefix="llm2-cycle2-git-", dir=hardware[0]))
     source = parent / "source"
     url = "https://github.com/PedroGGC/-LLM-2-.git"
@@ -172,7 +180,7 @@ def bootstrap_git(revision, *, run=False, run_number=17, session_seconds=7200., 
         hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
     metadata = {"source_mode": "git", "source_git_url": url, "source_git_revision": revision,
                 "source_files_sha256": hashes}
-    return _run_source(source, parent, metadata, session, hardware, run_number)
+    return source, parent, metadata
 
 
 def _run_source(source, parent, metadata, session, hardware, run_number):

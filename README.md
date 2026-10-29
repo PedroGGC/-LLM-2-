@@ -23,36 +23,40 @@ não instala esse código na branch comum. Confira `git branch --show-current` a
 
 ## Estado atual — 29/10/2026
 
-A campanha 0016 executou o ciclo 1: cinco variantes, seeds 71/72/73 e 2.000 passos,
-TinyShakespeare byte-level, T=256 e T4 FP32/Inductor. Médias de NLL completa:
+A [campanha 0017](docs/results/CAMPAIGN_0017.md) concluiu o ciclo 2: seis variantes,
+seeds 81/82/83, 2.000 passos, TinyShakespeare byte-level, T=256 e T4 FP32/Inductor.
+18 treinos e 72 avaliações completas foram auditados; a sessão levou cerca de 1h33,
+dentro do teto de duas horas. Médias de NLL completa:
 
 | Modelo | NLL ↓ |
 |---|---:|
-| Transformer pequeno | **1,394580** |
-| FLRM N1 K=2 | 1,400059 |
-| LRM K=2 | 1,403886 |
-| FLRM N1 K=2 + contexto RMS | 1,443017 |
-| LRM K=2 + contexto RMS | 1,444624 |
+| Transformer | **1,394574** |
+| FLRM: comunicação + FiLM | 1,398282 |
+| FLRM: comunicação, sem FiLM | 1,398978 |
+| FLRM: sem comunicação e sem FiLM | 1,401476 |
+| FLRM: sem comunicação, com FiLM | 1,401613 |
+| LRM K=2 | 1,402445 |
 
-A normalização piorou a qualidade nas três seeds em ambas as famílias. O próximo
-ciclo deve manter `context_normalization: none` e separar comunicação multiescala
-e FiLM. Transformer continua melhor; custo igualado e outro corpus permanecem
-pendentes. Treinos foram concorrentes e perfis isolados posteriores; o runner
-recebido ainda não implementava um teto global de sessão.
+Comunicação ajudou nas três seeds, mas seus intervalos exploratórios ainda cruzam
+zero. FiLM acrescentou apenas 0,000695 NLL quando há comunicação. O Transformer
+mantém a melhor média e menor custo medido; não há superioridade fractal confirmada.
+Todos os resultados são exploratórios no mesmo corpus, sem treino com custo igualado.
 
-JEPA/MTP/currículo/NCM e ciclos assimétricos ficaram desligados. Tecnologias futuras
-continuam condicionais. As extensões científicas permanecem no checkout experimental.
+Contexto permanece sem RMS após a [ablação negativa da 0016](docs/results/CAMPAIGN_0016.md).
+JEPA/MTP/currículo/NCM e ciclos assimétricos continuam desligados. O candidato
+simplificado para confirmação mantém comunicação e desliga FiLM; o pacote completo
+é preservado como referência de melhor média entre os FLRM.
 
-Veja [auditoria 0016](docs/results/CAMPAIGN_0016.md),
-[estado e decisões](docs/PROJECT_STATUS.md), [referência 0015](docs/results/CAMPAIGN_0015.md)
-e [próximas perguntas](docs/RESEARCH_ROADMAP.md).
+## Próxima etapa
 
-## Próximo teste — ciclo 2
-
-O novo executor específico está em `experiment/fractal-lrm`: seis variantes × seeds
-81/82/83, contexto sem RMS, piloto prévio, trabalhos seriais e orçamento global de
-duas horas. Use a célula curta com commit fixado do GitHub, sem Input ZIP de fontes;
-o bootstrap da 0016 não inclui esse executor. Instruções e limites: [guia do ciclo 2](docs/CYCLE2_RUN.md).
+O [ciclo 3](docs/CYCLE3_RUN.md) está preparado para confirmação em WikiText-103,
+com cinco seeds novas, teste reservado e ensaios separados de alvos iguais e FLOPs
+estimados igualados. O candidato mantém comunicação e desliga FiLM; o controle de
+custo inclui um Transformer de dois blocos. Sessões têm teto total de **quatro horas**,
+com piloto e exportação de resultados/checkpoints; podem exigir várias sessões.
+Treinos científicos e validação CUDA desse ciclo ainda serão executados no Kaggle.
+A100 e novas tecnologias continuam condicionais. [Estado e limites](docs/PROJECT_STATUS.md),
+[roadmap](docs/RESEARCH_ROADMAP.md) e [reprodução do ciclo 2](docs/CYCLE2_RUN.md).
 
 ## Começar localmente
 

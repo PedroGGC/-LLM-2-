@@ -1,27 +1,38 @@
 # Próximas perguntas de pesquisa
 
-Atualizado após a campanha 0016. Este documento lista possibilidades; não dispara
+Atualizado após a campanha 0017. Este documento lista possibilidades; não dispara
 treinos nem autoriza incorporar todas as tecnologias. Estado factual em
 [PROJECT_STATUS.md](PROJECT_STATUS.md); etapa atual em [PLAN.md](../PLAN.md).
 
-## Prioridade imediata após o ciclo 1
+## Prioridade após o ciclo 2
 
-A [campanha 0016](results/CAMPAIGN_0016.md) rejeitou, neste regime, a normalização RMS
-do contexto: piora nas três seeds de LRM e FLRM. Preservar a opção como ablação
-negativa e manter `context_normalization: none` no próximo ciclo.
+A [campanha 0017](results/CAMPAIGN_0017.md) concluiu comunicação × FiLM: há sinal
+favorável à comunicação nas três seeds, ainda com intervalo exploratório cruzando
+zero. FiLM acrescenta um benefício pequeno quando a comunicação está ativa; o
+Transformer mantém a melhor média e menor custo observado.
 
-O ciclo 2 deve comparar comunicação entre escalas ligada/desligada × FiLM
-ligado/desligado, mantendo referências Transformer/LRM. Sem comunicação, preservar
-transformações próprias dos ramos; não desligar todos os ramos como atalho.
+Preservar o completo como referência e levar comunicação ligada/FiLM desligado como
+candidato simplificado para confirmação. Manter contexto sem RMS, K=2 e mecanismos
+auxiliares desligados. A decisão é provisória no regime testado, não uma declaração
+de equivalência universal ou inutilidade de FiLM.
 
-O [novo executor do ciclo 2](CYCLE2_RUN.md) implementa piloto prévio, limite global
-de duas horas e execução isolada/alternada; sua validação T4 ocorrerá no Kaggle. A confirmação posterior permanece condicionada à seleção
-congelada, WikiText com documentos/splits reservados, cinco seeds novas e comparação
-com custo igualado. Não ampliar os schedulers dos checkpoints antigos.
+Executar o [ciclo 3](CYCLE3_RUN.md): WikiText com documentos completos e splits
+reservados, configuração congelada, cinco seeds novas e ensaios separados de alvos
+iguais e FLOPs estimados igualados. Executor e hashes do dataset estão preparados;
+o piloto e a ciência na T4 ainda serão executados. Cada sessão terá no máximo quatro
+horas; repartir o protocolo se necessário, sem mudar horizontes para ocupar o relógio.
 
-Normalização de contexto é um teste negativo específico. Residual, condicionamento
-de iteração e novas tecnologias continuam hipóteses; não entram automaticamente na
-matriz do ciclo 2. A infraestrutura completa dessas etapas ainda está pendente.
+O [executor do ciclo 2](CYCLE2_RUN.md) foi usado com sucesso na 0017 e permanece como
+reprodução. Antes de implementar tecnologias adicionais, confirmar o sinal em dados
+novos. A contribuição individual das escalas por 4/16 continua uma possível ablação
+posterior, condicionada à utilidade do pacote e ao orçamento.
+
+Depois da base sólida, manter profundidade variável (RINS como uma referência de
+organização da recorrência) e compressão adaptativa (BLT e ideias hierárquicas como
+referências) em experimentos separados. KV cache é prioridade de engenharia para
+geração; FractalLLM exige comparação posterior com cache. TTT e um baseline como
+RWKV/mLSTM/Gated DeltaNet permanecem candidatos de contexto/memória; escolher um
+antes de combiná-lo com FLRM. Nenhuma dessas ideias integra a configuração atual.
 
 ## Antes de aumentar a complexidade
 

@@ -101,3 +101,71 @@ Os 25 skips são de CUDA; não são suporte GPU verificado nesta máquina. Nenhu
 treino científico novo foi executado. O bootstrap fará os testes T4/Inductor antes
 da campanha. A entrega Git é publicada somente na branch experimental; documentação
 espelhada na base comum não acrescenta código FLRM a essa branch.
+
+## Auditoria da campanha 0017 — 29/10/2026
+
+[Relatório do ciclo 2](docs/results/CAMPAIGN_0017.md). ZIP de 17.388.696 bytes,
+743 entradas, CRC íntegro e sem duplicatas; SHA-256
+`8883f8213cb6eea11bd0890bd13dfef23c93310db5ee9b01793c3d41357c852f`.
+Commit executado `60219eafbceea09066dd05206adaa9f4ce865f96`, limpo no registro.
+
+Verificações locais desta auditoria: 178 hashes do bootstrap contra todo o commit;
+46 arquivos de fonte contra Git; 1.380 hashes em 30 snapshots; 72 avaliações completas
+reconstruídas de 437 janelas/111.872 alvos cada, erro máximo 1,92880818e−8; metadados
+dos checkpoints/configs; inicialização pareada pelos registros; enumeração em meta
+e fórmula de parâmetros dos seis modelos; dataset/manifesto idênticos à 0016 e
+binários reconstruídos do corpus incluído. Script independente terminou sem erros.
+
+Logs recebidos do Kaggle: **250 testes CPU aprovados**, 25 fora da seleção, 384,17 s;
+**21 CUDA FP32 aprovados**, 254 fora da seleção, 153,66 s. Incluem os quatro braços
+compilados do ciclo 2. São resultados no hardware real recebido, não testes CUDA
+executados nesta máquina local. Treinos/pilotos em duas T4, serial/alternado;
+protocolo FP32/Inductor, 18 treinos completos, 2.000 passos e três blocos de seed.
+
+Tempo global registrado de 5.562,96 s antes de relatório/exportação, dentro do teto
+de 7.200 s. Fonte, configs e pesos existentes preservados; nenhum treino, alteração
+de código científico ou commit/push nesta auditoria. Os pesos/AdamW não estão no ZIP:
+os hashes de pesos foram comparados entre registros, sem rehash dos arquivos ausentes.
+Estatísticas exploratórias, três seeds no mesmo corpus, sem custo igualado. FiLM
+fica opcional, comunicação é candidata à confirmação; superioridade não demonstrada.
+
+Auditoria/script, dados intermediários e figura em
+`artifacts/audits/campaign-0017-2026-10-29/` no checkout comum. Checks documentais:
+links locais, cópias dos cinco artefatos curados e `git diff --check` conferidos.
+
+## Preparação do ciclo 3 — 29/10/2026
+
+Plano registrado em [docs/PLAN_CYCLE3.md](docs/PLAN_CYCLE3.md); operação em
+[docs/CYCLE3_RUN.md](docs/CYCLE3_RUN.md). Sem mecanismos novos nem mudança de
+backbone/loss/otimizador. Treinos e comparação científica na T4 continuam pendentes.
+
+Verificações locais reais em Python 3.12.2 / Torch 2.14.1+cpu / PyArrow 23.0.0:
+
+- Download dos quatro shards WikiText fixados, SHA-256 integral conferido; preparo
+  real de 1.758/60/62 artigos e hashes tokenizados congelados. Detectada uma cópia
+  treino/teste, excluída explicitamente só do treino antes da seleção. As outras
+  442 duplicatas internas ao treino são deduplicadas. Nada foi avaliado no teste.
+  [Proveniência curta](docs/results/CYCLE3_PREPARATION.json).
+- Testes direcionados de ciclo 3, bootstrap anterior e dados: **49 passed, 4 skipped**.
+  Testes adicionais de relógio de quatro horas e validação antes de download:
+  **6 passed**. Os quatro skips são CUDA indisponível localmente.
+- Suíte completa `python -m pytest -q -o faulthandler_timeout=90`: **274 passed,
+  29 skipped**. Os 29 skips são de CUDA; não equivalem a testes GPU aprovados.
+- Causalidade, forward/backward finitos, memorização e retomada da próxima atualização
+  com dropout e acumulação CPU FP32/SDPA math, nas quatro famílias selecionadas,
+  incluindo Transformer de dois blocos. Equivalência exata entre avaliação agrupada
+  e CLI; publicação atômica do manifesto sob falha; rejeição de sobreposição desconhecida,
+  conflitos de agregação, seeds duplicadas e falsa confirmação com dados incompletos.
+- Simulação ponta a ponta CPU: **seis treinos pequenos / 24 avaliações completas**,
+  quatro perfis, piloto de duração de validação, relatório/CSV/curvas e dois ZIPs.
+  Status `complete`, `engineering_smoke=true`, `confirmation_eligible=false`,
+  `test_evaluated=false`. CRC dos dois ZIPs e hashes de todos os seis checkpoints
+  preservados no backup conferidos. Não é benchmark nem resultado científico.
+  Evidência ignorada em `artifacts/cycle3-engineering-20261029/verification.json`.
+- 57 links locais válidos nos guias/planos em cada checkout; `git diff --check` limpo.
+  Dados, ZIPs e releases antigos preservados; fonte experimental fica fora da base comum.
+
+O pareamento usa FLOPs estimados, com exclusões explícitas; não equivale a tempo
+ou número de parâmetros igualados. Warmup inclui compilação/aquecimento; tempo
+exclusivo de compilação e contador de recompilações não foram instrumentados.
+O launcher executará os testes T4/Inductor e piloto no hardware real antes do treino.
