@@ -264,6 +264,7 @@ class Trainer:
                 sequences += batch["input_ids"].shape[0]
                 for name, value in result.metrics.items():
                     auxiliary_metrics[name] = auxiliary_metrics.get(name, 0.0) + value / cfg.train.grad_accum_steps
+            parameters_with_gradients = sum(p.numel() for p in self.parameters if p.grad is not None)
             grad_norm = torch.nn.utils.clip_grad_norm_(self.parameters, cfg.train.grad_clip,
                                                       error_if_nonfinite=True)
             lr_used = self.optimizer.param_groups[0]["lr"]
@@ -315,6 +316,7 @@ class Trainer:
                 "model_parameters_calculated": self.model_parameters,
                 "total_parameters_calculated": self.total_parameters,
                 "active_parameters_calculated": active_parameters,
+                "parameters_with_gradients": parameters_with_gradients,
                 "internal_iterations": step_flops.get("internal_iterations", 1) if step_flops else None,
                 "step_auxiliary_flops_estimate": ((3*step_flops.get("auxiliary_forward", 0)+step_flops.get("target_forward", 0))*sequences) if step_flops else None,
                 **{k: v for k, v in self.counters.items() if k != "step"}}

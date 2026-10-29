@@ -1,28 +1,27 @@
 # Próximas perguntas de pesquisa
 
-Atualizado após a campanha 0015. Este documento lista possibilidades; não dispara
+Atualizado após a campanha 0016. Este documento lista possibilidades; não dispara
 treinos nem autoriza incorporar todas as tecnologias. Estado factual em
 [PROJECT_STATUS.md](PROJECT_STATUS.md); etapa atual em [PLAN.md](../PLAN.md).
 
-## Prioridade imediata
+## Prioridade imediata após o ciclo 1
 
-Organizar o projeto e decidir a próxima hipótese com o usuário. Preservar Transformer
-como controle e N1 como referência de investigação FLRM. Recursos opcionais existentes
-não devem ser removidos por uma campanha inconclusiva.
+A [campanha 0016](results/CAMPAIGN_0016.md) rejeitou, neste regime, a normalização RMS
+do contexto: piora nas três seeds de LRM e FLRM. Preservar a opção como ablação
+negativa e manter `context_normalization: none` no próximo ciclo.
 
-## Candidatos à próxima ablação — escolher um
+O ciclo 2 deve comparar comunicação entre escalas ligada/desligada × FiLM
+ligado/desligado, mantendo referências Transformer/LRM. Sem comunicação, preservar
+transformações próprias dos ramos; não desligar todos os ramos como atalho.
 
-- Normalizar somente a projeção de contexto antes da soma com o estado normalizado.
-  Hipótese: balanceamento facilita a aprendizagem. Risco: amplificar contexto pouco
-  informativo. Melhorar RMS sem melhorar qualidade/custo não basta.
-- Alterar isoladamente o caminho inicial/residual do embedding. Exige controles de FFN,
-  inicialização e parâmetros antes de atribuir toda a diferença K=1 a esse mecanismo.
-- Condicionamento explícito por índice de iteração. O estado já informa parcialmente
-  a fase; não presumir incapacidade do núcleo de distinguir iterações.
+O [novo executor do ciclo 2](CYCLE2_RUN.md) implementa piloto prévio, limite global
+de duas horas e execução isolada/alternada; sua validação T4 ocorrerá no Kaggle. A confirmação posterior permanece condicionada à seleção
+congelada, WikiText com documentos/splits reservados, cinco seeds novas e comparação
+com custo igualado. Não ampliar os schedulers dos checkpoints antigos.
 
-Definir antes controles, seeds, horizonte/scheduler, avaliação e critério de continuidade.
-Uma matriz possível compara Transformer, N1 e uma intervenção; controles adicionais LRM
-são necessários para atribuir o mecanismo. Confirmar com seeds novas e conjunto reservado.
+Normalização de contexto é um teste negativo específico. Residual, condicionamento
+de iteração e novas tecnologias continuam hipóteses; não entram automaticamente na
+matriz do ciclo 2. A infraestrutura completa dessas etapas ainda está pendente.
 
 ## Antes de aumentar a complexidade
 
@@ -43,3 +42,13 @@ compilado de geração eager. Melhor checkpoint no último passo não demonstra 
 
 Sem promoção automática ao atingir K ou T específicos; sem promessa de capacidade de
 um modelo maior com menos pesos. Planos antigos estão no [arquivo](archive/README.md).
+
+## Triagem de tecnologias externas
+
+A [revisão das ideias do Argon](REVIEW_TECHNOLOGIES_ARGON.md) analisa os 17 itens do
+catálogo recebido em 29/10/2026. Preserva o ciclo 2 e prioriza, depois da base sólida,
+profundidade variável e compressão adaptativa em experimentos separados. TTT e um
+baseline temporal como RWKV-7 ou mLSTM entram como candidatos posteriores para
+memória/contexto longo; não como dependências ou configurações ativas. As promessas
+de capacidade equivalente, contexto infinito e cancelamento semântico por fases não
+são premissas do projeto. Nenhum mecanismo adicional foi implementado nesta revisão.

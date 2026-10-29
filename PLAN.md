@@ -1,19 +1,19 @@
 # Plano vigente
 
-Atualizado em 28/10/2026. O projeto usa Transformer como baseline e como bloco do núcleo
+Atualizado em 29/10/2026. O projeto usa Transformer como baseline e como bloco do núcleo
 recorrente. Esta etapa organiza o repositório antes de decidir novos experimentos.
 
-1. Organização, documentação e política de artefatos concluídas conforme
-   [auditoria de limpeza](docs/CLEANUP_AUDIT.md).
-2. Usar o [estado atual](docs/PROJECT_STATUS.md) e a
-   [campanha 0015 corrigida](docs/results/CAMPAIGN_0015.md) como base da discussão.
-3. Definir uma hipótese, controles, orçamento e critério de continuidade antes de
-   implementar a próxima ablação. As opções estão no [roadmap](docs/RESEARCH_ROADMAP.md).
+1. Organização concluída, conforme a [auditoria de limpeza](docs/CLEANUP_AUDIT.md).
+2. Ciclo 1 executado e auditado: [campanha 0016](docs/results/CAMPAIGN_0016.md).
+   Manter contexto sem RMS; o ajuste piorou a qualidade nas três seeds.
+3. Executor do ciclo 2 preparado no checkout experimental: piloto prévio, limite
+   global de duas horas e matriz comunicação × FiLM. Executar a [célula curta no Kaggle](docs/CYCLE2_RUN.md)
+   e auditar os resultados antes de escolher variantes.
+4. Confirmar candidatos com dados independentes e custo igualado antes de A100.
 
-Nenhum novo mecanismo, treino científico, mudança de precisão ou ampliação de escala
-faz parte desta limpeza. Preservar Transformer, contratos de checkpoints, causalidade
-e separação da branch fractal. Recursos opcionais existentes não serão removidos só
-porque estão desligados na campanha atual.
+Implementação científica continua em `experiment/fractal-lrm`. Tecnologias futuras
+são condicionais; resultados novos não autorizam relaxar proveniência/retomada.
+A auditoria de 29/10 não iniciou nova campanha nem alterou código de treinamento.
 
 Plano original da etapa 1: [registro histórico](docs/archive/PLAN_STAGE1.md).
 Plano V2 de 25/10: [registro histórico](docs/archive/RESEARCH_V2_PLAN.md).

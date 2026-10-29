@@ -389,7 +389,9 @@ class FractalLatentModel(Backbone):
                 history.append(self.norm(states[0]))
         hidden = self.norm(states[0])
         return ModelOutput(logits=self.lm_head(hidden) if return_logits else None, hidden_states=hidden,
-                           state=LatentState(states[0], steps), intermediate_states=tuple(history))
+                           state=LatentState(states[0], steps,
+                               tuple(value.detach() for value in states) if not self.research.cross_scale_exchange else ()),
+                           intermediate_states=tuple(history))
 
     def analytical_cost(self, seq_len, *, include_logits=True):
         d, h, s = self.config.d_model, self.config.hidden_dim, seq_len

@@ -18,6 +18,8 @@ from ..model import DecoderBlock, RMSNorm, TransformerLM
 class LatentState:
     value: torch.Tensor
     iterations: int
+    # Optional observable scale outputs prevent compiler dead-code elimination in ablations.
+    scale_values: tuple = ()
 
 
 class SharedRecursiveCore(nn.Module):

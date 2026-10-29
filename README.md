@@ -21,28 +21,38 @@ Este checkout contém a pesquisa fractal: **`experiment/fractal-lrm`**.
 A implementação fractal permanece isolada. O identificador `fractal` em uma configuração
 não instala esse código na branch comum. Confira `git branch --show-current` antes de trabalhar.
 
-## Estado atual — 28/10/2026
+## Estado atual — 29/10/2026
 
-A campanha 0015 comparou seis variantes, três seeds e 2.000 passos em TinyShakespeare
-byte-level, T=256, T4 FP32/Inductor. Médias da avaliação completa:
+A campanha 0016 executou o ciclo 1: cinco variantes, seeds 71/72/73 e 2.000 passos,
+TinyShakespeare byte-level, T=256 e T4 FP32/Inductor. Médias de NLL completa:
 
-| Referência | NLL ↓ | Tempo acumulado de treino ↓ |
-|---|---:|---:|
-| Transformer pequeno | **1,394923** | **96,24 s** |
-| FLRM N1, nativo com cache, K=2 | 1,399268 | 220,93 s |
-| FLRM G0, agrupado, K=2 | 1,401717 | 261,61 s |
+| Modelo | NLL ↓ |
+|---|---:|
+| Transformer pequeno | **1,394580** |
+| FLRM N1 K=2 | 1,400059 |
+| LRM K=2 | 1,403886 |
+| FLRM N1 K=2 + contexto RMS | 1,443017 |
+| LRM K=2 + contexto RMS | 1,444624 |
 
-O Transformer venceu as três seeds. N1 melhorou custo de treino e loss frente a G0,
-mas gerou mais devagar no benchmark eager sem KV cache. Recorrência e multiescala
-continuam hipóteses úteis para investigação, não ganhos universais estabelecidos.
+A normalização piorou a qualidade nas três seeds em ambas as famílias. O próximo
+ciclo deve manter `context_normalization: none` e separar comunicação multiescala
+e FiLM. Transformer continua melhor; custo igualado e outro corpus permanecem
+pendentes. Treinos foram concorrentes e perfis isolados posteriores; o runner
+recebido ainda não implementava um teto global de sessão.
 
-JEPA, MTP e currículo são recursos opcionais; estão desligados nessa campanha. NCM
-de protótipos e ciclos assimétricos existem somente no experimento e também ficaram
-desligados. Fibonacci/φ-ALiBi, ACT/DEQ e Kronecker/Monarch são possibilidades futuras.
+JEPA/MTP/currículo/NCM e ciclos assimétricos ficaram desligados. Tecnologias futuras
+continuam condicionais. As extensões científicas permanecem no checkout experimental.
 
-Veja [estado e decisões](docs/PROJECT_STATUS.md),
-[resultados e errata da campanha 0015](docs/results/CAMPAIGN_0015.md) e
-[próximas perguntas](docs/RESEARCH_ROADMAP.md).
+Veja [auditoria 0016](docs/results/CAMPAIGN_0016.md),
+[estado e decisões](docs/PROJECT_STATUS.md), [referência 0015](docs/results/CAMPAIGN_0015.md)
+e [próximas perguntas](docs/RESEARCH_ROADMAP.md).
+
+## Próximo teste — ciclo 2
+
+O novo executor específico está em `experiment/fractal-lrm`: seis variantes × seeds
+81/82/83, contexto sem RMS, piloto prévio, trabalhos seriais e orçamento global de
+duas horas. Use a célula curta com commit fixado do GitHub, sem Input ZIP de fontes;
+o bootstrap da 0016 não inclui esse executor. Instruções e limites: [guia do ciclo 2](docs/CYCLE2_RUN.md).
 
 ## Começar localmente
 

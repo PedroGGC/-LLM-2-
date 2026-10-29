@@ -1,0 +1,26 @@
+{
+  "archive_sha256": "fc69f4241ef0b2c2db30de8bbcd8179a9d3a386dc3b2411db82fecde39f8ffd1",
+  "archive_bytes": 12265912,
+  "commit": "d173bdea0d9b7b497fcf108dc1bb7ddc99148c62",
+  "errors": [],
+  "source_files_matching_git": 41,
+  "snapshots": 20,
+  "snapshot_hash_checks": 820,
+  "evaluations_reconstructed": 60,
+  "maximum_nll_reconstruction_error": 1.685830230968577e-08,
+  "independent_binary_reconstruction": {
+    "train": {
+      "tokens": 995268,
+      "sha256": "c4bd3f90105078794114101eee4fc520495901556e5be2540e00099d4f9e6232",
+      "matches_recorded": true
+    },
+    "val": {
+      "tokens": 111932,
+      "sha256": "4de78ff7f29f0ad075954f1a45a0f8c85dc097ddd603026f1496c0a4fe77a08b",
+      "matches_recorded": true
+    }
+  },
+  "audit_date": "2026-10-29",
+  "local_tests": "28 passed; CPU; controls and document data",
+  "decision": "context_normalization=none for cycle 2; no scientific training in this audit"
+}

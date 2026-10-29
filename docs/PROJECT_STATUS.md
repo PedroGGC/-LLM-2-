@@ -1,4 +1,4 @@
-# Estado científico e técnico — 28/10/2026
+# Estado científico e técnico — 29/10/2026
 
 ## Já existe Transformer dentro do modelo
 
@@ -41,20 +41,33 @@ proíbe `cache_context_projection` junto com `ncm_slots>0`.
 
 ## Evidência e decisão atual
 
-A [campanha 0015](results/CAMPAIGN_0015.md) é a referência científica mais recente:
-três seeds, um corpus/split byte-level, contexto 256 e treino FP32/Inductor na T4.
-Transformer teve menor NLL nas três seeds. N1 melhorou custo e loss frente a G0,
-mas teve pior throughput de geração eager. Nenhum desses resultados prova capacidade
-geral, convergência final ou eficiência em outra escala/hardware.
+A [campanha 0016](results/CAMPAIGN_0016.md) é a referência mais recente. Executou o
+ciclo 1 no commit `d173bdea0d9b7b497fcf108dc1bb7ddc99148c62`, com cinco variantes,
+seeds 71/72/73 e 2.000 passos. Conteúdo e splits dos dados coincidem com a 0015;
+o hash do manifesto mudou somente pela proveniência do código de preparo.
 
-Recorrência ajudou após os mesmos alvos, usando mais computação. O pacote multiescala
-teve sinal favorável dentro da família recorrente, sem isolar cada componente nem
-igualar completamente parâmetros/FLOPs. Três seeds não eliminam incerteza e seleção
-por uso repetido da mesma validação.
+Normalizar contexto após a projeção aumentou a NLL em 0,040738 no LRM e 0,042958
+no FLRM, com regressão nas três seeds. As normas ficaram equilibradas sem benefício
+na qualidade. Decisão: manter `context_normalization: none` para o ciclo 2.
 
-O gate não congelou. O desbalanceamento RMS entre estado/contexto existe, mas sua causa
-e impacto na loss não foram isolados. As hipóteses de normalização ou caminho residual
-devem ser testadas separadamente, caso escolhidas para a próxima etapa.
+Transformer venceu as três seeds. N1 melhorou NLL frente ao LRM, mas usa mais
+parâmetros/operações e cache diferente. Não há demonstração de superioridade fractal
+nem comparação confirmatória com custo igualado, corpus independente e cinco seeds.
 
-Nesta etapa apenas a organização está autorizada. A proposta de nova ablação continua
-no [roadmap](RESEARCH_ROADMAP.md), aguardando definição de hipótese e protocolo.
+A infraestrutura experimental contém `context_normalization` e `cross_scale_exchange`,
+preparo documental com splits explícitos e importador WikiText. Isso não significa
+que os ciclos posteriores já foram executados ou toda a infraestrutura concluída.
+O runner recebido ainda precisa de piloto prévio e teto global de sessão; treinos
+0016 foram concorrentes, com perfis isolados posteriores. A100 permanece condicional.
+
+Próxima etapa: separar comunicação multiescala e FiLM conforme o
+[roadmap](RESEARCH_ROADMAP.md). Todas as execuções tiveram melhor checkpoint no passo
+final; convergência e generalidade continuam não demonstradas.
+
+## Próximo teste preparado
+
+A [célula curta do ciclo 2](CYCLE2_RUN.md) usa commit fixado de `experiment/fractal-lrm`,
+com piloto prévio, execução serial e teto global de duas horas, incluindo preparação.
+O bootstrap faz checkout por Git e não exige ZIP de fontes como Input. Testes CPU e
+simulação do fluxo passaram; a validação CUDA/Inductor será executada pelo bootstrap
+na T4. O runner usado na 0016 permanece histórico e não deve ser usado para esse ciclo.
