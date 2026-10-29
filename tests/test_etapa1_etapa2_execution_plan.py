@@ -1,6 +1,6 @@
 """Verification tests for Etapa 1 (non-invasive magnitude/gradient telemetry) and Etapa 2
 (compressed_native vs compressed_grouped without JEPA + cache_context_projection) per
-docs/PLAN_FINAL_EXECUTION_2026_10_28.md.
+docs/archive/PLAN_FINAL_EXECUTION_2026_10_28.md.
 """
 
 import copy

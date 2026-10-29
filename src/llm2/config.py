@@ -155,9 +155,17 @@ class ResearchConfig:
     fused_film: bool = False
     cache_context_projection: bool = False
     paired_common_init: bool = False
+    context_normalization: str = "none"
+    cross_scale_exchange: bool = True
 
     def __post_init__(self):
         _types(self)
+        if self.context_normalization not in ("none", "rms"):
+            raise ValueError("context_normalization must be none|rms")
+        if self.context_normalization != "none" and self.architecture == "transformer":
+            raise ValueError("context_normalization requires a recurrent architecture")
+        if not self.cross_scale_exchange and self.architecture != "fractal":
+            raise ValueError("cross_scale_exchange=False requires fractal architecture")
         if self.architecture not in ("transformer", "recursive", "untied", "fractal"):
             raise ValueError("unknown research architecture")
         if self.scale_execution not in ("reference", "batched", "compressed", "compressed_native", "compressed_grouped"):

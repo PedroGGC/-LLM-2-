@@ -21,18 +21,24 @@ class LatentState:
 
 
 class SharedRecursiveCore(nn.Module):
-    def __init__(self, config, depth=1):
+    def __init__(self, config, depth=1, *, context_normalization="none"):
         super().__init__()
+        self.context_normalization = context_normalization
+        self.norm_eps = config.norm_eps
         self.state_norm = RMSNorm(config.d_model, config.norm_eps)
         self.context_projection = nn.Linear(config.d_model, config.d_model, bias=False)
         self.blocks = nn.ModuleList([DecoderBlock(config) for _ in range(depth)])
         self.gate = nn.Parameter(torch.full((config.d_model,), -2.0))
 
     def project_context(self, context):
-        return self.context_projection(context)
+        projected = self.context_projection(context)
+        if self.context_normalization == "rms":
+            value = projected.float()
+            projected = (value * torch.rsqrt(value.square().mean(-1, keepdim=True) + self.norm_eps)).to(projected.dtype)
+        return projected
 
     def forward(self, state, context, *, context_is_projected: bool = False):
-        projected_context = context if context_is_projected else self.context_projection(context)
+        projected_context = context if context_is_projected else self.project_context(context)
         value = self.state_norm(state) + projected_context
         for block in self.blocks:
             value = block(value)
@@ -51,9 +57,11 @@ class LatentRecursiveModel(Backbone):
         self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
         self.shared = research.share_weights and research.architecture != "untied"
         if self.shared:
-            self.core = SharedRecursiveCore(config, research.core_layers)
+            self.core = SharedRecursiveCore(config, research.core_layers,
+                context_normalization=research.context_normalization)
         else:
-            self.cores = nn.ModuleList([SharedRecursiveCore(config, research.core_layers)
+            self.cores = nn.ModuleList([SharedRecursiveCore(config, research.core_layers,
+                context_normalization=research.context_normalization)
                                        for _ in range(research.iterations + research.latent_steps)])
         self.apply(TransformerLM._init_weights)
         self.lm_head.weight = self.embedding.weight

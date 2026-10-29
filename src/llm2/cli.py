@@ -46,6 +46,7 @@ def parser():
     prepare.add_argument("--vocab-size", type=_positive, default=8192)
     prepare.add_argument("--val-fraction", type=float, default=0.1)
     prepare.add_argument("--seed", type=int, default=42)
+    prepare.add_argument("--format", choices=("paragraphs", "documents-jsonl"), default="paragraphs")
     inspect = commands.add_parser("inspect", help="calculate parameter count and estimate FLOPs")
     inspect.add_argument("--config", required=True)
     inspect.add_argument("--meta", action="store_true", help="count large planned profiles without allocating weights")
@@ -91,6 +92,7 @@ def parser():
         cmd.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
         cmd.add_argument("--precision", choices=("fp32", "bf16"))
         if name == "evaluate":
+            cmd.add_argument("--split", choices=("val", "test"), default="val")
             cmd.add_argument("--max-batches", type=_positive, help="default: all full validation windows")
             cmd.add_argument("--output", help="new identified evaluation JSON")
             cmd.add_argument("--windows-output", help="new JSONL of per-window language losses")
@@ -161,8 +163,12 @@ def main(argv=None):
             paths = sorted({path for pattern in args.input for path in glob.glob(str(Path(pattern).expanduser()))})
             if not paths:
                 raise ValueError("no input files matched")
-            result = prepare_data(paths, args.output, kind=args.tokenizer, vocab_size=args.vocab_size,
-                                  val_fraction=args.val_fraction, seed=args.seed)
+            if args.format == "documents-jsonl":
+                from .document_data import prepare_documents
+                result = prepare_documents(paths, args.output, kind=args.tokenizer, vocab_size=args.vocab_size)
+            else:
+                result = prepare_data(paths, args.output, kind=args.tokenizer, vocab_size=args.vocab_size,
+                                      val_fraction=args.val_fraction, seed=args.seed)
         elif args.command == "inspect":
             cfg = load_config(args.config)
             with torch.device("meta") if args.meta else nullcontext():
@@ -216,6 +222,8 @@ def main(argv=None):
                     raise FileExistsError("evaluation output already exists")
             cfg, model, data, device, metadata = _inference(args)
             if args.command == "evaluate":
+                if args.split not in data.arrays:
+                    raise ValueError(f"dataset has no reserved {args.split} split")
                 if device.type == "cuda":
                     torch.cuda.synchronize(device)
                 started = time.perf_counter()
@@ -229,13 +237,13 @@ def main(argv=None):
                             row["target_start_offset"] = row["window_index"] * cfg.data.seq_len + 1
                             stream.write(json.dumps(row, allow_nan=False) + "\n")
                     result = evaluate(model, CausalLanguageModeling(),
-                                      validation_batches(data.arrays["val"], cfg.data.seq_len,
+                                      validation_batches(data.arrays[args.split], cfg.data.seq_len,
                                                          cfg.data.eval_batch_size, args.max_batches, device),
                                       device=device, precision=cfg.train.precision,
                                       deterministic=cfg.train.deterministic, window_callback=callback)
                 if device.type == "cuda":
                     torch.cuda.synchronize(device)
-                result.update(evaluation_wall_seconds=time.perf_counter()-started,
+                result.update(evaluation_split=args.split, evaluation_wall_seconds=time.perf_counter()-started,
                               validation_scope="all_full_windows" if args.max_batches is None else "first_batches",
                               checkpoint=str(Path(args.checkpoint).resolve()),
                               checkpoint_model_sha256=metadata["files"]["model.safetensors"],

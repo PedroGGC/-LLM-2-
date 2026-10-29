@@ -143,23 +143,31 @@ class PreparedData:
         self.manifest = json.loads((self.root / "manifest.json").read_text(encoding="utf-8"))
         self.fingerprint = sha256_file(self.root / "manifest.json")
         m = self.manifest
-        if m["schema_version"] != 1 or m["dtype"] != "<u4":
+        if type(m["schema_version"]) is not int or m["schema_version"] not in (1, 2) or m["dtype"] != "<u4":
             raise ValueError("unsupported dataset schema")
-        expected = {"train.bin", "val.bin", "tokenizer.json"}
+        splits = ("train", "val") if m["schema_version"] == 1 else ("train", "val", "test")
+        expected = {"tokenizer.json", *(f"{split}.bin" for split in splits)}
+        if set(m["splits"]) != set(splits):
+            raise ValueError("manifest must contain exactly the required splits")
         if set(m["files"]) != expected:
             raise ValueError("manifest must contain exactly the required artifacts")
         for name in sorted(expected):
             if sha256_file(self.root / name) != m["files"][name]:
                 raise ValueError(f"dataset checksum mismatch: {name}")
-        train_docs = set(m["splits"]["train"]["document_hashes"])
-        val_docs = set(m["splits"]["val"]["document_hashes"])
-        if train_docs & val_docs:
-            raise ValueError("document leakage between train and validation")
+        seen = set()
+        for split in splits:
+            hashes = m["splits"][split]["document_hashes"]
+            if len(hashes) != len(set(hashes)) or seen.intersection(hashes):
+                raise ValueError("document leakage or duplicate hashes across splits")
+            if m["schema_version"] == 2 and (not hashes or any(
+                    not isinstance(h, str) or re.fullmatch(r"[0-9a-f]{64}", h) is None for h in hashes)):
+                raise ValueError("invalid document hashes")
+            seen.update(hashes)
         self.tokenizer = TextTokenizer.load(self.root / "tokenizer.json")
         if self.tokenizer.vocab_size != m["vocab_size"] or self.tokenizer.eos_id != m["eos_id"]:
             raise ValueError("tokenizer metadata mismatch")
         self.arrays = {}
-        for split in ("train", "val"):
+        for split in splits:
             path = self.root / f"{split}.bin"
             if path.stat().st_size != m["splits"][split]["tokens"] * 4 or path.stat().st_size == 0:
                 raise ValueError(f"invalid token file size: {split}")

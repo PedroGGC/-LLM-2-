@@ -104,14 +104,18 @@ class ScaleConditioning(nn.Module):
 
 
 class CrossScaleInteraction(nn.Module):
-    def __init__(self, scales, dim, *, fused=False):
+    def __init__(self, scales, dim, *, fused=False, exchange=True):
         super().__init__()
+        self.exchange = exchange
         self.mixing = nn.Parameter(torch.zeros(scales, scales))
         self.projection = nn.Linear(dim, dim, bias=False)
         self.gate = nn.Parameter(torch.full((scales,), -2.0))
         self.fused = fused
 
     def forward(self, states):
+        if not self.exchange:
+            return tuple(value + self.gate[i].sigmoid() * self.projection(value)
+                         for i, value in enumerate(states))
         weights = self.mixing.softmax(-1)
         # Mixing is at identical token positions; states at position t see only <=t.
         return tuple(value + self.gate[i].sigmoid() * self.projection(
@@ -119,6 +123,8 @@ class CrossScaleInteraction(nn.Module):
             for i, value in enumerate(states))
 
     def forward_batched(self, states):
+        if not self.exchange:
+            return states + self.gate.sigmoid()[:, None, None, None] * self.projection(states)
         weights = self.mixing.softmax(-1)
         with torch.autocast(device_type=states.device.type, enabled=False):
             mixed = torch.einsum("ij,jbtd->ibtd", weights.float(), states.float()).to(states.dtype)
@@ -130,6 +136,10 @@ class CrossScaleInteraction(nn.Module):
         Mean(W x) = W mean(x). Pooling each input once per output scale avoids
         projecting all three outputs at fine resolution; rounding can differ.
         """
+        if not self.exchange:
+            own = (states[0], *(comp.compress(states[i + 1])
+                               for i, comp in enumerate(compressors)))
+            return self.forward(own)
         if self.fused and len(states) == 3 and len(compressors) == 2:
             s0, s1, s2 = states
             comp4, comp16 = compressors
@@ -194,14 +204,16 @@ class FractalRecursiveBlock(nn.Module):
         self.fused_film = research.fused_film
         if self.execution != "reference" and not self.shared:
             raise ValueError(f"{self.execution} execution requires shared scale cores")
-        self.cores = nn.ModuleList([SharedFractalCore(config, research.core_layers)
+        self.cores = nn.ModuleList([SharedFractalCore(config, research.core_layers,
+                                   context_normalization=research.context_normalization)
                                    for _ in range(1 if self.shared else count)])
         self.conditioning = (
             ScaleConditioning(count, config.d_model, fused=research.fused_film)
             if research.scale_conditioning
             else None
         )
-        self.interaction = CrossScaleInteraction(count, config.d_model, fused=research.fused_film)
+        self.interaction = CrossScaleInteraction(count, config.d_model, fused=research.fused_film,
+                                                 exchange=research.cross_scale_exchange)
         if self.execution.startswith("compressed"):
             self.comp4 = CausalScaleCompressor(4, config.d_model)
             self.comp16 = CausalScaleCompressor(16, config.d_model)
