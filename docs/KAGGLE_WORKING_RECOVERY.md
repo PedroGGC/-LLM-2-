@@ -11,11 +11,18 @@ padrão, sem treinamento ou novas dependências. Mostra o tamanho por pasta e o 
 atual dos jobs da 0021. Workers do projeto são procurados em `/proc`; se houver algum
 ativo, a limpeza é desativada. Nenhum processo é encerrado automaticamente.
 
-A remoção automática se restringe a `source`/`scientific-worker` dentro de caches
-gerados `llm2-cycle2-git-*` ou `llm2-cycle2-code-*`. Exige Git limpo, remoto esperado,
-common-dir dentro do cache, paths internos sem links e nenhum payload de dados/pesos
-ou arquivo ignorado além dos caches Python conhecidos. Metadados/ZIPs do bootstrap
-ficam no parent. Código pode ser baixado novamente pelo commit original.
+A remoção automática cobre dois formatos criados pelos launchers:
+
+- `source`/`scientific-worker` dentro de `llm2-cycle2-git-*` ou `llm2-cycle2-code-*`.
+  Os metadados/ZIPs do bootstrap ficam no parent.
+- Checkouts antigos `llm2-<12 hex>`, somente se os 12 caracteres coincidirem com o
+  HEAD do Git. Esse checkout inteiro pode ser removido.
+
+Ambos exigem Git limpo, remoto esperado, common-dir dentro do cache, paths internos
+sem links e nenhum payload de dados/pesos ou arquivo ignorado além dos caches Python
+conhecidos. Código pode ser baixado novamente pelo commit original. Todas as pastas
+`llm2-campaign-*` são preservadas, inclusive nomes antigos em hexadecimal. A manutenção
+também reconhece workers executados nos checkouts antigos.
 
 O espaço liberado depende do inventário real. Se os maiores consumidores forem
 campanhas antigas, elas continuarão protegidas: verificar backups antes de decidir

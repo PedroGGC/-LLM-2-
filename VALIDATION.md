@@ -329,3 +329,25 @@ Verificações locais reais:
   `artifacts/kaggle-recovery-maintenance-20261030/verification.json`.
 - 30 links locais conferidos em cada checkout e `git diff --check` limpo. Os ZIPs
   originais foram preservados. Sem alteração do worker congelado `8798f6b`.
+
+## Caches antigos mostrados no Kaggle — 30/10/2026
+
+O launcher cria checkouts `llm2-<revision[:12]>`. A manutenção passou a reconhecer
+esse padrão exato, exigindo HEAD correspondente ao nome e todas as proteções de
+Git/conteúdo/caminhos anteriores. Workers executados por esses caminhos também
+bloqueiam a limpeza. Pastas `llm2-campaign-*`, incluindo nomes hexadecimais, continuam
+protegidas. As imagens não permitem medir o espaço recuperável.
+
+Verificações locais reais:
+
+- `python -m pytest -q tests/test_kaggle_maintenance.py`: **27 passed**.
+- `python -m pytest -q tests/test_kaggle_maintenance.py tests/test_history_discovery.py tests/test_cycle3_short.py tests/test_cycle2_bootstrap.py tests/test_cycle2_git.py tests/test_cycle3.py -k 'not cuda'`: **104 passed**.
+- Remoção real de checkout legado limpo em fixture temporária; campanhas dos dois
+  padrões, ZIP e diretórios de metadados preservados. Alterações, arquivos extras,
+  payload ignorado/rastreado, remoto diferente e HEAD divergente recusados.
+- Worktree legado com common-dir externo recusado; argumentos de workers antigos
+  reconhecidos sem confundir nomes de campanhas. Notebook desativado e guarda da
+  continuação permanecem cobertos pelas regressões.
+
+Esses checks são CPU/arquivos locais, não a suíte completa nem execução CUDA ou
+limpeza no Kaggle. Nenhuma alteração de treino, dataset, horizontes ou worker.

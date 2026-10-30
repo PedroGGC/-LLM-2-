@@ -37,3 +37,21 @@ Apagar campanhas antigas pode perder pesos não exportados. A limpeza automátic
 faz isso e pode liberar menos espaço que o desejado; o inventário orienta uma próxima
 decisão com backups. O tamanho real das pastas do Kaggle é desconhecido até a célula
 ser executada. Nenhum processo será encerrado automaticamente nem pickle carregado.
+
+## Ampliação para os caches das imagens — antes da implementação
+
+As imagens mostram checkouts antigos `llm2-<12 hex>`, além dos caches recentes e
+campanhas. O launcher `scripts/kaggle_notebook.py` cria esses checkouts com os
+primeiros 12 caracteres da revisão. A lista de nomes não informa seu tamanho.
+
+Ampliar a manutenção somente para esse padrão exato. Exigir que o HEAD corresponda
+ao nome, além das verificações existentes de Git, remoto, conteúdo e caminhos.
+Detectar também processos cujos argumentos apontem para esses checkouts. Preservar
+todas as pastas `llm2-campaign-*`, inclusive nomes hexadecimais, ZIPs e reservas.
+
+Aceitação: remover um checkout antigo limpo em fixture real; recusar revisão
+divergente, alterações, conteúdo de dados e remoto diferente; preservar campanhas
+dos dois padrões e bloquear limpeza diante de worker ativo. Executar as regressões
+do operador e publicar uma entrega nova, sem sobrescrever scripts anteriores.
+Risco: caches protegidos ou campanhas podem continuar ocupando a maior parte do
+disco; o inventário remoto determinará o espaço efetivamente recuperável.

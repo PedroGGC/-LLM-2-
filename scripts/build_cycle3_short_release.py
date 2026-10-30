@@ -87,7 +87,7 @@ def build(directory,revision,*,run_number=20,max_runs=2,seeds=(103,104,105),main
     notebook={'nbformat':4,'nbformat_minor':5,'metadata':{'kernelspec':{'name':'python3','display_name':'Python 3','language':'python'}},
         'cells':[{'id':'guide','cell_type':'markdown','metadata':{},'source':[
             '# Ciclo 3 — lote de até uma hora\n','Ative Internet e T4 x2; mude RUN_CAMPAIGN para True.\n',
-            'No máximo dois treinos novos. A evidência auditada da 0019 já está incluída.\n',
+            f'No máximo {max_runs} treino(s) novo(s). A evidência auditada da 0019 já está incluída.\n',
             'Nas próximas sessões, anexe o último ZIP de resultados como Input e use outro run_number.\n',
             'Baixe resultados e checkpoints; snapshots são salvos após cada treino.\n']},
             {'id':'run','cell_type':'code','metadata':{},'execution_count':None,'outputs':[],

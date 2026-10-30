@@ -11,6 +11,7 @@ import zipfile
 
 REMOTE='https://github.com/PedroGGC/-LLM-2-.git'
 CACHE_NAME=re.compile(r'llm2-cycle2-(?:git|code)-[A-Za-z0-9_-]+')
+LEGACY_CACHE_NAME=re.compile(r'llm2-([0-9a-f]{12})')
 PROTECTED_SUFFIXES={'.safetensors','.pt','.pth','.ckpt','.bin','.parquet'}
 SCIENCE_IDENTITY_SHA256='0ce75e923da1af584f3d1fedf2ddf2c4e1af06bd709e248f9666b465f5b5028e'
 FLRM_103_SHA256='54cbce20834855ad6b2de0c4bb3ebb13ffbaf8766ac7b56d2ae0b9269835da7c'
@@ -29,6 +30,12 @@ def size(path):
     return total
 
 
+def worker_arguments(args):
+    return any(s=='llm2' or s.startswith('llm2.') or 'scripts/run_cycle' in s
+               or '/llm2-cycle2-git-' in s or '/llm2-cycle2-code-' in s
+               or re.search(r'/llm2-[0-9a-f]{12}(?:/|$)',s) for s in args)
+
+
 def active_workers():
     found=[]
     for p in Path('/proc').glob('[0-9]*'):
@@ -36,8 +43,7 @@ def active_workers():
         try:
             args=[s.decode('utf-8','replace') for s in (p/'cmdline').read_bytes().split(b'\0') if s]
         except OSError:continue
-        if any(s=='llm2' or s.startswith('llm2.') or 'scripts/run_cycle' in s
-               or '/llm2-cycle2-git-' in s or '/llm2-cycle2-code-' in s for s in args):
+        if worker_arguments(args):
             found.append({'pid':int(p.name),'program':Path(args[0]).name if args else 'unknown'})
     return found
 
@@ -49,14 +55,17 @@ def git(path,*args):
 def code_cache_targets(parent,base):
     """Every destructive target is resolved/checked; data and dirty repos veto the cache."""
     parent=Path(parent);base=Path(base).resolve()
-    if parent.is_symlink() or parent.resolve().parent!=base or not CACHE_NAME.fullmatch(parent.name):
+    legacy=LEGACY_CACHE_NAME.fullmatch(parent.name)
+    if parent.is_symlink() or parent.resolve().parent!=base or not (legacy or CACHE_NAME.fullmatch(parent.name)):
         raise ValueError('not an owned code-cache parent')
-    roots=[parent/name for name in ('scientific-worker','source') if (parent/name).exists()]
+    roots=[parent] if legacy else [parent/name for name in ('scientific-worker','source') if (parent/name).exists()]
     if not roots:raise ValueError('no code checkouts')
     for root in roots:
-        if root.is_symlink() or root.resolve().parent!=parent.resolve():raise ValueError('external checkout path')
+        expected_parent=base if legacy else parent.resolve()
+        if root.is_symlink() or root.resolve().parent!=expected_parent:raise ValueError('external checkout path')
         if git(root,'remote','get-url','origin')!=REMOTE:raise ValueError('unexpected remote')
-        git(root,'rev-parse','--verify','HEAD')
+        revision=git(root,'rev-parse','--verify','HEAD')
+        if legacy and revision[:12]!=legacy[1]:raise ValueError('checkout revision does not match cache name')
         common=Path(git(root,'rev-parse','--git-common-dir'))
         common=(root/common).resolve() if not common.is_absolute() else common.resolve()
         if not common.is_relative_to(parent.resolve()):raise ValueError('Git common directory outside cache')
@@ -178,13 +187,15 @@ def clean_working(base='/kaggle/working',*,apply=False,input_root='/kaggle/input
     if workers:print('Há workers ativos; limpeza desativada:',workers)
     else:
         for parent in base.iterdir():
-            if not CACHE_NAME.fullmatch(parent.name):continue
+            legacy=LEGACY_CACHE_NAME.fullmatch(parent.name)
+            if not (legacy or CACHE_NAME.fullmatch(parent.name)):continue
             try:targets=code_cache_targets(parent,base)
             except (ValueError,OSError,subprocess.SubprocessError) as error:
                 preserved.append({'name':parent.name,'reason':str(error)});continue
             for path in targets:
                 target=path.resolve()
-                if path.is_symlink() or target.parent!=parent.resolve() or not target.is_relative_to(base):
+                expected_parent=base if legacy else parent.resolve()
+                if path.is_symlink() or target.parent!=expected_parent or not target.is_relative_to(base):
                     raise ValueError('target changed before cleanup')
                 count=size(path)
                 if apply:remove_cache(target)

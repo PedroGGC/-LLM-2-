@@ -80,6 +80,74 @@ def test_dry_run_and_numbering_consider_archives_inputs_and_reservations(cache):
     assert source.exists() and result['next_run_number']==24 and not result['code_caches'][0]['deleted']
 
 
+@pytest.fixture
+def legacy_cache(cache):
+    base,parent,source,git=cache
+    revision=git('rev-parse','HEAD').decode().strip()
+    legacy=base/f'llm2-{revision[:12]}'
+    assert source.resolve().is_relative_to(base.resolve()) and legacy.resolve().parent==base.resolve()
+    source.rename(legacy)
+    return base,legacy
+
+
+def test_legacy_checkout_removed_but_all_campaign_names_and_metadata_preserved(legacy_cache):
+    base,legacy=legacy_cache
+    for name in ('llm2-campaign-0021','llm2-campaign-26386279ab61','.llm2-numbering','.virtual_documents'):
+        folder=base/name;folder.mkdir();(folder/'keep.txt').write_text('keep')
+    archive=base/'llm2-campaign-0021-after-01-results.zip';archive.write_bytes(b'keep ZIP')
+    result=maintenance.clean_working(base,apply=True,input_root=base/'inputs')
+    assert not legacy.exists()
+    assert all((base/name/'keep.txt').exists() for name in
+               ('llm2-campaign-0021','llm2-campaign-26386279ab61','.llm2-numbering','.virtual_documents'))
+    assert archive.read_bytes()==b'keep ZIP'
+    assert result['code_caches'][0]['deleted'] and result['next_run_number']==22
+
+
+@pytest.mark.parametrize('change',['modified','untracked','ignored_payload','tracked_payload','wrong_remote','wrong_revision'])
+def test_legacy_cache_refuses_non_reproducible_or_data_bearing_content(legacy_cache,change):
+    base,legacy=legacy_cache
+    if change=='modified':(legacy/'core.py').write_text('changed\n')
+    if change=='untracked':(legacy/'notes.txt').write_text('keep\n')
+    if change=='ignored_payload':
+        (legacy/'runs').mkdir();(legacy/'runs/state.pt').write_bytes(b'state')
+    if change=='tracked_payload':
+        (legacy/'weights.safetensors').write_bytes(b'weights')
+        maintenance.git(legacy,'add','weights.safetensors')
+        maintenance.git(legacy,'-c','user.name=Maintenance Test','-c','user.email=maintenance@example.invalid',
+                        'commit','-m','weights')
+        renamed=base/f"llm2-{maintenance.git(legacy,'rev-parse','HEAD')[:12]}"
+        assert renamed.resolve().parent==base.resolve()
+        legacy.rename(renamed);legacy=renamed
+    if change=='wrong_remote':maintenance.git(legacy,'remote','set-url','origin','https://example.invalid/other.git')
+    if change=='wrong_revision':
+        renamed=base/f"llm2-{'0'*12 if legacy.name!='llm2-'+ '0'*12 else '1'*12}"
+        assert renamed.resolve().parent==base.resolve()
+        legacy.rename(renamed);legacy=renamed
+    result=maintenance.clean_working(base,apply=True,input_root=base/'inputs')
+    assert legacy.exists() and not result['code_caches'] and result['protected_caches']
+    if change=='wrong_revision':assert 'revision' in result['protected_caches'][0]['reason']
+
+
+def test_legacy_worktree_with_external_git_directory_is_preserved(cache):
+    base,parent,source,git=cache
+    legacy=base/f"llm2-{git('rev-parse','HEAD').decode().strip()[:12]}"
+    git('worktree','add','--detach',str(legacy),'HEAD')
+    with pytest.raises(ValueError,match='Git common directory outside cache'):
+        maintenance.code_cache_targets(legacy,base)
+    assert legacy.exists() and source.exists()
+
+
+@pytest.mark.parametrize(('args','expected'),[
+    (['python','/kaggle/working/llm2-d173bdea0d9b/scripts/run_kaggle.py'],True),
+    (['python','/kaggle/working/llm2-cycle2-git-abc/source/scripts/run_cycle3_short.py'],True),
+    (['python','-m','llm2.train'],True),
+    (['python','/kaggle/working/llm2-campaign-26386279ab61/notes.py'],False),
+    (['python','/kaggle/working/llm2-d173bdea0d9b-extra/notes.py'],False),
+])
+def test_worker_detection_includes_legacy_checkout_but_not_campaign_names(args,expected):
+    assert bool(maintenance.worker_arguments(args)) is expected
+
+
 def test_partial_checkpoint_blocks_restart_and_completed_export_is_recognized(tmp_path,monkeypatch):
     monkeypatch.setattr(maintenance,'active_workers',lambda:[])
     identity={'test':'fixture'}
