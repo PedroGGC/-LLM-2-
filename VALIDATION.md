@@ -287,3 +287,45 @@ Não houve mudança de modelo, treino, avaliação ou do worker congelado `8798f
 A suíte completa de 296 testes registrada acima não foi repetida para esta correção
 de descoberta; foram executadas as regressões relevantes indicadas. Plano prévio:
 [PLAN_HISTORY_DISCOVERY_FIX.md](docs/PLAN_HISTORY_DISCOVERY_FIX.md).
+
+## Snapshot 0021 e manutenção do working — 30/10/2026
+
+[Auditoria](docs/results/CAMPAIGN_0021_PARTIAL.md) e
+[plano anterior à implementação](docs/PLAN_KAGGLE_STORAGE_RECOVERY.md).
+Resultados after-01 SHA-256 `9043115ab066614e5a567f334a32d9be5ed75e5d90793536d9a52112f2bee223`;
+checkpoint ZIP SHA-256 `4bd407d901ea4af8a11f3c12b346a5d308fc69b13c6e3c243540e1ffd6ca49b5`.
+Ambos com CRC íntegro, sem entradas duplicadas; pesos e estado opaco conferidos por
+hash, pickle não carregado. FLRM 103 concluiu 8.000 passos, NLL 1,320334273 e quatro
+avaliações completas. Erro máximo de reconstrução de NLL 4,05051504e−9.
+
+Header safetensors: 2.165.772 elementos de parâmetros únicos mais buffer inteiro
+`training_step=8000`. Alias do embedding compartilhado preservado e contado uma vez.
+Snapshot do operador comparado integralmente ao Git usando LF explícito. Identidade
+científica igual à 0019. O controle estava pendente no snapshot; estado atual remoto
+não foi recebido. Histórico agregado tem 13 treinos completos.
+
+Logs reais T4 recebidos: **12 CPU aprovados em 16,39 s**, **2 CUDA FP32 aprovados em
+56,95 s** na seleção focada; fases externas totalizaram 88,04 s. O primeiro treino
+e exportação incremental aconteceram de fato, apesar da ausência de saída visível.
+Isso não comprova o término do segundo job ou do lote.
+
+Nova manutenção usa somente Python padrão: inventário, detecção de workers, proteção
+de dados/checkpoints, remoção de checkouts Git limpos reproduzíveis e próximo número
+livre. Não foi executada no Kaggle nesta conversa; tamanho real e ganho de espaço
+dependem da execução remota. O script não encerra processos nem apaga campanhas.
+
+Verificações locais reais:
+
+- `python -m pytest -q tests/test_kaggle_maintenance.py tests/test_history_discovery.py tests/test_cycle3_short.py tests/test_cycle2_bootstrap.py tests/test_cycle2_git.py tests/test_cycle3.py -k 'not cuda'`: **91 passed**. Não é a suíte completa nem teste CUDA local.
+- Remoção real de cache Git de fixture, incluindo readonly do Windows, com alvos
+  resolvidos e limitados à pasta temporária. Dados, ZIPs, checkpoints, reservas e
+  metadados preservados. Cache alterado, com payload ou remoto diferente é recusado.
+- Worker ativo bloqueia limpeza; checkpoint parcial/conclusão não exportada bloqueia
+  nova rodada. A entrega exige histórico do FLRM 103 verificado para não repeti-lo.
+- Célula guardada usa número livre calculado e até um job; início/baixamento têm
+  mensagens imediatas. Notebook desativado é inerte. Relógio inclui a manutenção.
+- Simulação com o snapshot real reconhece a conclusão do FLRM e número 22; adicionar
+  um checkpoint parcial fictício do controle bloqueou reinício. Evidência em
+  `artifacts/kaggle-recovery-maintenance-20261030/verification.json`.
+- 30 links locais conferidos em cada checkout e `git diff --check` limpo. Os ZIPs
+  originais foram preservados. Sem alteração do worker congelado `8798f6b`.

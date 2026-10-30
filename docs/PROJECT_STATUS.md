@@ -85,6 +85,13 @@ Com FLOPs estimados semelhantes: Transformer de dois blocos 1,196534 NLL; LRM
 O sinal FLRM frente ao Transformer pequeno é pequeno/inconclusivo; LRM e controle
 mais profundo venceram o FLRM nas duas seeds. Ainda não há vantagem fractal confirmada.
 
+## Atualização: snapshot 0021
+
+[FLRM 103 concluído](results/CAMPAIGN_0021_PARTIAL.md): 8.000 passos, quatro avaliações,
+NLL 1,320334273. Pesos/estado conferidos por hash; histórico com 13 treinos. O controle
+103 estava pendente no snapshot. O erro de número ocupado pertence a uma nova
+tentativa e preserva a pasta existente; não comprova falha do treino original.
+
 ## Próxima etapa
 
 [Operar em lotes de até uma hora](CYCLE3_SHORT_RUN.md), até dois treinos novos,

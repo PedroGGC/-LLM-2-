@@ -9,11 +9,11 @@ recorrente. Esta etapa valida componentes antes da confirmação independente.
 3. Ciclo 2 executado e auditado: [campanha 0017](docs/results/CAMPAIGN_0017.md).
    Manter comunicação como candidata; FiLM opcional, com candidato simplificado
    desligado e pacote completo preservado como referência. Transformer ainda lidera.
-4. Ciclo 3 parcialmente executado e auditado: [campanha 0019](docs/results/CAMPAIGN_0019.md),
-   12 treinos completos e duas seeds. Próxima etapa: [lote de até uma hora](docs/CYCLE3_SHORT_RUN.md),
-   no máximo dois treinos novos e código científico original preservado. Avaliar a
-   seed 103 antes de decidir quanto orçamento adicional a confirmação justifica.
-   Nenhuma nova tecnologia nem promoção automática à A100.
+4. Ciclo 3 parcialmente executado: 12 treinos da 0019 e o FLRM 103 completo na
+   [0021](docs/results/CAMPAIGN_0021_PARTIAL.md), total 13. Conferir o estado vivo
+   e liberar somente caches de código com a [manutenção preparada](docs/KAGGLE_WORKING_RECOVERY.md).
+   Recuperação com até um job pendente, novo número e teto de uma hora. Reavaliar
+   investimento após completar o comparador 103; novas tecnologias/A100 condicionais.
 
 Implementação científica continua em `experiment/fractal-lrm`. Tecnologias futuras
 são condicionais; resultados novos não autorizam relaxar proveniência/retomada.

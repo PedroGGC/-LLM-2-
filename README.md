@@ -26,7 +26,10 @@ não instala esse código na branch comum. Confira `git branch --show-current` a
 A [campanha 0019](docs/results/CAMPAIGN_0019.md) preservou **12 treinos completos e
 48 avaliações completas** em WikiText-103, seeds 101/102. O executor registrou parada
 controlada aos 2h40min45s por previsão de orçamento; a queda de rede não aparece
-como causa de parada no arquivo recebido. Restam as seeds 103/104/105.
+como causa de parada no arquivo recebido. Restam as seeds 103/104/105. O
+[snapshot posterior da 0021](docs/results/CAMPAIGN_0021_PARTIAL.md) acrescenta o FLRM
+103 completo: são 13 treinos preservados. O estado vivo do controle 103 ainda precisa
+ser conferido antes de continuar.
 
 | FLOPs estimados semelhantes — médias de duas seeds | NLL ↓ |
 |---|---:|
@@ -45,7 +48,9 @@ não foram igualados. [Ciclo 2](docs/results/CAMPAIGN_0017.md) e
 
 Por solicitação do usuário, próximas sessões têm **teto total de uma hora**, com
 **até dois treinos novos**, validação focada e exportação após cada conclusão.
-A próxima compara FLRM e Transformer pequeno com FLOPs estimados iguais na seed 103.
+Na recuperação da 0021, o FLRM 103 já está concluído. A entrega de
+[manutenção e continuação](docs/KAGGLE_WORKING_RECOVERY.md) confere processos/estado,
+preserva backups e executa até um próximo job pendente, com novo número livre.
 Os 12 resultados completos serão reaproveitados. Horizontes, quatro avaliações
 completas, curvas e diagnósticos são preservados.
 

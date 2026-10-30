@@ -7,6 +7,8 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 |---|---|
 | [Estado do projeto](PROJECT_STATUS.md) | Arquitetura real, tecnologias ativas/opcionais e limites |
 | [Campanha 0019](results/CAMPAIGN_0019.md) | Dois blocos completos, custos, NLL e auditoria dos resultados preservados |
+| [Snapshot da 0021](results/CAMPAIGN_0021_PARTIAL.md) | FLRM 103 concluído, pesos conferidos e histórico com 13 treinos |
+| [Espaço e continuação no Kaggle](KAGGLE_WORKING_RECOVERY.md) | Limpeza limitada a código reproduzível e guarda de processos/checkpoints |
 | [Próxima sessão: até uma hora](CYCLE3_SHORT_RUN.md) | Até dois treinos novos, código científico congelado e exportação incremental |
 | [Correção da descoberta de ZIPs](PLAN_HISTORY_DISCOVERY_FIX.md) | Recuperação explícita de históricos antigos inválidos e proteção de lotes recentes |
 | [Campanha 0017](results/CAMPAIGN_0017.md) | Ciclo 2 completo: comunicação × FiLM, custos e decisão de confirmação |
