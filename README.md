@@ -23,40 +23,36 @@ não instala esse código na branch comum. Confira `git branch --show-current` a
 
 ## Estado atual — 29/10/2026
 
-A [campanha 0017](docs/results/CAMPAIGN_0017.md) concluiu o ciclo 2: seis variantes,
-seeds 81/82/83, 2.000 passos, TinyShakespeare byte-level, T=256 e T4 FP32/Inductor.
-18 treinos e 72 avaliações completas foram auditados; a sessão levou cerca de 1h33,
-dentro do teto de duas horas. Médias de NLL completa:
+A [campanha 0019](docs/results/CAMPAIGN_0019.md) preservou **12 treinos completos e
+48 avaliações completas** em WikiText-103, seeds 101/102. O executor registrou parada
+controlada aos 2h40min45s por previsão de orçamento; a queda de rede não aparece
+como causa de parada no arquivo recebido. Restam as seeds 103/104/105.
 
-| Modelo | NLL ↓ |
+| FLOPs estimados semelhantes — médias de duas seeds | NLL ↓ |
 |---|---:|
-| Transformer | **1,394574** |
-| FLRM: comunicação + FiLM | 1,398282 |
-| FLRM: comunicação, sem FiLM | 1,398978 |
-| FLRM: sem comunicação e sem FiLM | 1,401476 |
-| FLRM: sem comunicação, com FiLM | 1,401613 |
-| LRM K=2 | 1,402445 |
+| Transformer de dois blocos | **1,196534** |
+| LRM K=2 | 1,278126 |
+| FLRM com comunicação, sem FiLM | 1,308835 |
+| Transformer pequeno | 1,311478 |
 
-Comunicação ajudou nas três seeds, mas seus intervalos exploratórios ainda cruzam
-zero. FiLM acrescentou apenas 0,000695 NLL quando há comunicação. O Transformer
-mantém a melhor média e menor custo medido; não há superioridade fractal confirmada.
-Todos os resultados são exploratórios no mesmo corpus, sem treino com custo igualado.
-
-Contexto permanece sem RMS após a [ablação negativa da 0016](docs/results/CAMPAIGN_0016.md).
-JEPA/MTP/currículo/NCM e ciclos assimétricos continuam desligados. O candidato
-simplificado para confirmação mantém comunicação e desliga FiLM; o pacote completo
-é preservado como referência de melhor média entre os FLRM.
+O ganho FLRM frente ao Transformer pequeno é 0,002643, abaixo do limiar operacional,
+com intervalo amplo cruzando zero. LRM e Transformer de dois blocos tiveram menor
+NLL que o FLRM nas duas seeds. Duas seeds ainda não confirmam a hipótese; parâmetros
+não foram igualados. [Ciclo 2](docs/results/CAMPAIGN_0017.md) e
+[ciclo 1](docs/results/CAMPAIGN_0016.md) permanecem como evidência anterior.
 
 ## Próxima etapa
 
-O [ciclo 3](docs/CYCLE3_RUN.md) está preparado para confirmação em WikiText-103,
-com cinco seeds novas, teste reservado e ensaios separados de alvos iguais e FLOPs
-estimados igualados. O candidato mantém comunicação e desliga FiLM; o controle de
-custo inclui um Transformer de dois blocos. Sessões têm teto total de **quatro horas**,
-com piloto e exportação de resultados/checkpoints; podem exigir várias sessões.
-Treinos científicos e validação CUDA desse ciclo ainda serão executados no Kaggle.
-A100 e novas tecnologias continuam condicionais. [Estado e limites](docs/PROJECT_STATUS.md),
-[roadmap](docs/RESEARCH_ROADMAP.md) e [reprodução do ciclo 2](docs/CYCLE2_RUN.md).
+Por solicitação do usuário, próximas sessões têm **teto total de uma hora**, com
+**até dois treinos novos**, validação focada e exportação após cada conclusão.
+A próxima compara FLRM e Transformer pequeno com FLOPs estimados iguais na seed 103.
+Os 12 resultados completos serão reaproveitados. Horizontes, quatro avaliações
+completas, curvas e diagnósticos são preservados.
+
+O operador novo usa workers no mesmo commit científico da 0019 e registra sua própria
+proveniência separadamente. A confirmação continua exigindo cinco blocos completos;
+um lote completo não encerra toda a pesquisa. A100 e novas tecnologias continuam
+condicionais. [Guia vigente: ciclo 3 em lotes curtos](docs/CYCLE3_SHORT_RUN.md).
 
 ## Começar localmente
 

@@ -16,11 +16,13 @@ candidato simplificado para confirmação. Manter contexto sem RMS, K=2 e mecani
 auxiliares desligados. A decisão é provisória no regime testado, não uma declaração
 de equivalência universal ou inutilidade de FiLM.
 
-Executar o [ciclo 3](CYCLE3_RUN.md): WikiText com documentos completos e splits
-reservados, configuração congelada, cinco seeds novas e ensaios separados de alvos
-iguais e FLOPs estimados igualados. Executor e hashes do dataset estão preparados;
-o piloto e a ciência na T4 ainda serão executados. Cada sessão terá no máximo quatro
-horas; repartir o protocolo se necessário, sem mudar horizontes para ocupar o relógio.
+O [ciclo 3](results/CAMPAIGN_0019.md) já tem dois blocos completos. A vantagem FLRM
+frente ao Transformer pequeno com FLOPs estimados iguais é pequena e inconclusiva;
+o LRM e o Transformer de dois blocos tiveram NLL menor nas duas seeds.
+A próxima é uma checagem do par primário na seed 103 em [lote de até uma hora](CYCLE3_SHORT_RUN.md),
+no máximo dois treinos por sessão, sem repetir os 12 completos. Preservar horizontes
+e avaliações; decidir o investimento adicional após essa checagem. Não promover
+tecnologias ou escalar antes de justificar o custo com esses controles.
 
 O [executor do ciclo 2](CYCLE2_RUN.md) foi usado com sucesso na 0017 e permanece como
 reprodução. Antes de implementar tecnologias adicionais, confirmar o sinal em dados

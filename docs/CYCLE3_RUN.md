@@ -1,5 +1,9 @@
 # Ciclo 3 — confirmação independente no Kaggle
 
+**Operação vigente:** [lotes de até uma hora](CYCLE3_SHORT_RUN.md), escolhidos após a
+campanha 0019. Este documento preserva o protocolo científico e o executor anterior
+de quatro horas para reprodução histórica; não é a próxima célula a executar.
+
 Protocolo de 29/10/2026, em `experiment/fractal-lrm`. Nenhum mecanismo novo:
 Transformer, LRM K=2 e FLRM com comunicação/cache e sem FiLM. Contexto sem RMS;
 JEPA/MTP/NCM/currículo/Ciclo-V desligados. Este guia substitui o ciclo 2 como próxima

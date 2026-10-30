@@ -6,6 +6,8 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 | Documento | Finalidade |
 |---|---|
 | [Estado do projeto](PROJECT_STATUS.md) | Arquitetura real, tecnologias ativas/opcionais e limites |
+| [Campanha 0019](results/CAMPAIGN_0019.md) | Dois blocos completos, custos, NLL e auditoria dos resultados preservados |
+| [Próxima sessão: até uma hora](CYCLE3_SHORT_RUN.md) | Até dois treinos novos, código científico congelado e exportação incremental |
 | [Campanha 0017](results/CAMPAIGN_0017.md) | Ciclo 2 completo: comunicação × FiLM, custos e decisão de confirmação |
 | [Executar ciclo 3](CYCLE3_RUN.md) | WikiText-103, cinco seeds, alvos/FLOPs estimados, teto de quatro horas e dois ZIPs |
 | [Plano de implementação do ciclo 3](PLAN_CYCLE3.md) | Escopo, riscos e critérios registrados antes das mudanças |

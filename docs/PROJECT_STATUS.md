@@ -73,17 +73,27 @@ Todas as execuções tiveram o melhor checkpoint avaliado no passo final; conver
 não foi demonstrada. Os pesos não estão no ZIP de análise: hashes de checkpoints e
 inicialização foram conferidos nos registros, sem rehash de pesos ausentes.
 
+## Evidência mais recente: campanha 0019
+
+[Relatório](results/CAMPAIGN_0019.md): 12 treinos e 48 avaliações completos em
+WikiText-103, seeds 101/102. CPU 280 e CUDA FP32 25 testes aprovados no Kaggle.
+Sessão terminou `partial_budget` aos 2h40min45s; o próximo bloco inteiro não cabia
+na previsão conservadora. O ZIP não registra falha de rede como causa da parada.
+
+Com FLOPs estimados semelhantes: Transformer de dois blocos 1,196534 NLL; LRM
+1,278126; FLRM 1,308835; Transformer pequeno 1,311478. Parâmetros não igualados.
+O sinal FLRM frente ao Transformer pequeno é pequeno/inconclusivo; LRM e controle
+mais profundo venceram o FLRM nas duas seeds. Ainda não há vantagem fractal confirmada.
+
 ## Próxima etapa
 
-Executar o [ciclo 3](CYCLE3_RUN.md): WikiText-103 com documentos/splits explícitos,
-seeds 101–105, teste reservado e comparação separada de alvos iguais e FLOPs estimados
-igualados, incluindo Transformer de dois blocos. Dataset real preparado e hashes
-fixados; uma cópia exata treino/teste é excluída explicitamente só do treino.
-O executor faz testes e piloto na T4 antes da ciência, com teto total de quatro horas,
-seeds pendentes explícitas e backups de checkpoints. Treinos científicos desse ciclo
-continuam pendentes; não prolongar schedulers antigos.
+[Operar em lotes de até uma hora](CYCLE3_SHORT_RUN.md), até dois treinos novos,
+começando pelo par primário da seed 103. Reaproveitar os 12 completos e preservar
+quatro avaliações completas, curvas e diagnósticos. Código científico original
+congelado em checkout próprio; operador com proveniência separada. Testes remotos
+focados nas famílias presentes, com opção de suíte completa, sem declarar cobertura
+integral onde só houve seleção. Snapshots são salvos após cada conclusão.
 
-As próximas linhas científicas após a base sólida continuam profundidade variável
-e compressão adaptativa, em experimentos separados. KV cache é uma frente de engenharia;
-TTT e um baseline temporal moderno continuam condicionais. A100 não é promovida pelo
-resultado atual. O [guia do ciclo 2](CYCLE2_RUN.md) fica como reprodução da campanha 0017.
+A100, profundidade variável, compressão adaptativa e demais tecnologias permanecem
+condicionais. Uma sessão curta não demonstra aceleração de kernel nem substitui a
+confirmação de cinco seeds. Reavaliar o custo da investigação após a próxima seed.

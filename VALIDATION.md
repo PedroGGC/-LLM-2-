@@ -207,3 +207,50 @@ Verificações locais reais:
 Plano/risco anterior às alterações: [PLAN_CYCLE3_PORTABILITY_FIX.md](docs/PLAN_CYCLE3_PORTABILITY_FIX.md).
 CUDA não está disponível localmente; a correção de serialização não constitui
 validação de GPU. O launcher mantém os testes T4/Inductor antes do treino.
+
+## Auditoria 0019 e operação em lotes de uma hora — 29/10/2026
+
+[Relatório](docs/results/CAMPAIGN_0019.md) e [plano anterior às mudanças](docs/PLAN_CYCLE3_SHORT_SESSIONS.md).
+ZIP recebido de SHA-256 `e609269cf31f8d55d6afbbda9ef56b9b4c799fbd28f7921fd1f16479aa14887f`,
+14.002.802 bytes, 442 entradas, CRC íntegro e sem nomes duplicados. **12 treinos
+completos / 48 avaliações**, seeds 101/102; parada registrada por previsão de orçamento
+aos 9.645,32 s. Não há erro de rede registrado como causa da parada nesse arquivo.
+
+Conferidos 197 hashes contra o commit científico, 20 snapshots com 1.880 hashes,
+configurações/contadores/FLOPs estimados, enumeração/fórmula de parâmetros e hashes
+de checkpoint entre registros. NLL reconstruída de 4.469 janelas / 1.144.064 alvos
+por avaliação; erro máximo 4,37404424e−9. Pesos não estão no ZIP recebido: isso não
+constitui rehash dos tensores ausentes. Logs reais do Kaggle: **280 CPU / 25 CUDA
+FP32 aprovados**. Resultado continua inconclusivo com duas seeds e teste reservado.
+
+O novo operador apenas organiza os lotes: workers congelados exatamente em
+`8798f6b84714d2c6671d970685984270078a982c`, com hashes científicos originais. Operador
+e snapshot têm proveniência separada. Sessões de até 3.600 s, até dois treinos novos,
+validação remota focada declarada e checkpoints/avaliações completos preservados.
+Não há alegação de aceleração de kernel ou redução automática do custo de cinco seeds.
+
+Verificações locais reais:
+
+- Testes do operador/filas/agregação/deadline/exports/bootstrap: **16 passed**.
+  Cobrem deduplicação de cópias, rejeição de conflitos de pesos/dataset/código/configs,
+  seleção do par primário 103 sem repetir os 12 treinos e propagação de um único relógio.
+- Suíte completa local `python -m pytest -q -o faulthandler_timeout=90`: **296 passed,
+  29 skipped**, exit code 0. Skips são CUDA indisponível. Houve impressão diagnóstica
+  de pilha aos 90 s durante um teste demorado; ele terminou e a suíte foi aprovada.
+- Simulação ponta a ponta CPU com **checkout real do worker congelado**, dois treinos
+  pequenos / oito avaliações completas. Status completo de lote, engenharia explícita,
+  sem confirmação científica. Os hashes de todas as fontes e configs científicas nos
+  resultados são idênticos aos da 0019. Três pares de ZIPs (após 1/2 treinos e final)
+  tiveram CRC e hashes dos checkpoints conferidos, sem sobrescrita.
+  Evidência: `artifacts/cycle3-short-engineering-20261029/verification.json`.
+- Heartbeat operacional, perfis limitados aos modelos/slots selecionados, fila
+  cumulativa e contrastes por pares preservam o requisito original de cinco blocos
+  completos para a decisão confirmatória.
+- 64 links locais conferidos em cada checkout, `git diff --check` sem erros; o ZIP
+  original foi rehashado e preservado. Base comum recebe documentação, sem fonte FLRM.
+
+A primeira chamada da suíte completa nesta alteração foi interrompida para ajustar
+o ambiente do novo bootstrap antes da checagem de compatibilidade; não conta como
+aprovada. `CUBLAS_WORKSPACE_CONFIG` segue a política do Trainer antes da comparação;
+o checkout congelado exige bytes LF. CUDA do operador novo permanece pendente da
+execução T4 real, ainda que o código científico já tenha sido validado na 0019.

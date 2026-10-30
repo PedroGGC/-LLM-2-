@@ -1,0 +1,1362 @@
+{
+  "audit": {
+    "complete_runs": 12,
+    "complete_seeds": [
+      101,
+      102
+    ],
+    "confirmation_eligible": false,
+    "elapsed_seconds": 9645.319775684,
+    "full_evaluations": 48,
+    "max_nll_reconstruction_error": 4.374044237920316e-09,
+    "means": {
+      "anchor_flrm": 1.3088348611512421,
+      "flops_lrm": 1.2781258146883951,
+      "flops_transformer": 1.3114777163361295,
+      "flops_transformer_deep": 1.1965343285311145,
+      "targets_lrm": 1.3102987803957238,
+      "targets_transformer": 1.3493220709959488
+    },
+    "minutes_by_phase": {
+      "dataset_and_configurations": 0.29019238346666804,
+      "evaluation_generation_diagnostics": 6.47942617720001,
+      "pilot_training": 3.6263038875166633,
+      "pilot_validation": 1.0232838894499992,
+      "tests_cpu": 7.005404887716668,
+      "tests_cuda_fp32": 4.041887875050005,
+      "training": 137.3698067839667
+    },
+    "pending_seeds": [
+      103,
+      104,
+      105
+    ],
+    "revision": "8798f6b84714d2c6671d970685984270078a982c",
+    "snapshot_files_verified": 1880,
+    "snapshots": 20,
+    "source_files_verified": 197,
+    "stop_reason": "session budget: stopping work with export reserve preserved",
+    "validation_tokens": 1144064,
+    "weights_present": false,
+    "windows_per_evaluation": 4469,
+    "zip_sha256": "e609269cf31f8d55d6afbbda9ef56b9b4c799fbd28f7921fd1f16479aa14887f"
+  },
+  "origin_archive_sha256": "e609269cf31f8d55d6afbbda9ef56b9b4c799fbd28f7921fd1f16479aa14887f",
+  "report": {
+    "anchor_reused_between_cohorts": true,
+    "complete_seeds": [
+      101,
+      102
+    ],
+    "confirmation_eligible": false,
+    "curves": [
+      {
+        "arm": "targets_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 2000,
+        "train_wall_seconds": 82.61928031899743,
+        "training_flops_estimated": 231965982720000,
+        "training_targets": 16384000,
+        "validation_loss": 1.4655611069844217,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 4000,
+        "train_wall_seconds": 162.87149564999982,
+        "training_flops_estimated": 463931965440000,
+        "training_targets": 32768000,
+        "validation_loss": 1.4001694333502632,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 6000,
+        "train_wall_seconds": 242.8196209689977,
+        "training_flops_estimated": 695897948160000,
+        "training_targets": 49152000,
+        "validation_loss": 1.3656633856526474,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 8000,
+        "train_wall_seconds": 322.8350758259862,
+        "training_flops_estimated": 927863930880000,
+        "training_targets": 65536000,
+        "validation_loss": 1.3502596708506005,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 2000,
+        "train_wall_seconds": 131.62318232199868,
+        "training_flops_estimated": 425239511040000,
+        "training_targets": 16384000,
+        "validation_loss": 1.4634714935897688,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 4000,
+        "train_wall_seconds": 276.5800683019934,
+        "training_flops_estimated": 850479022080000,
+        "training_targets": 32768000,
+        "validation_loss": 1.3765048509904216,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 6000,
+        "train_wall_seconds": 421.3355631169966,
+        "training_flops_estimated": 1275718533120000,
+        "training_targets": 49152000,
+        "validation_loss": 1.328257885547953,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 8000,
+        "train_wall_seconds": 566.2893938659954,
+        "training_flops_estimated": 1700958044160000,
+        "training_targets": 65536000,
+        "validation_loss": 1.308539219632408,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "anchor_flrm",
+        "model": "flrm_exchange_no_film",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 2000,
+        "train_wall_seconds": 191.6506552950018,
+        "training_flops_estimated": 564607844352000,
+        "training_targets": 16384000,
+        "validation_loss": 1.4584111085698812,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "anchor_flrm",
+        "model": "flrm_exchange_no_film",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 4000,
+        "train_wall_seconds": 392.3879260110011,
+        "training_flops_estimated": 1129215688704000,
+        "training_targets": 32768000,
+        "validation_loss": 1.377957017610046,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "anchor_flrm",
+        "model": "flrm_exchange_no_film",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 6000,
+        "train_wall_seconds": 593.5314852839851,
+        "training_flops_estimated": 1693823533056000,
+        "training_targets": 49152000,
+        "validation_loss": 1.3272137016384733,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "anchor_flrm",
+        "model": "flrm_exchange_no_film",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 8000,
+        "train_wall_seconds": 794.6832229359738,
+        "training_flops_estimated": 2258431377408000,
+        "training_targets": 65536000,
+        "validation_loss": 1.3075616146312994,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 4868,
+        "train_wall_seconds": 186.2451405970096,
+        "training_flops_estimated": 564605201940480,
+        "training_targets": 39878656,
+        "validation_loss": 1.3996404345122513,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 9736,
+        "train_wall_seconds": 381.3050754659844,
+        "training_flops_estimated": 1129210403880960,
+        "training_targets": 79757312,
+        "validation_loss": 1.3506610997706405,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 14604,
+        "train_wall_seconds": 576.5696753159864,
+        "training_flops_estimated": 1693815605821440,
+        "training_targets": 119635968,
+        "validation_loss": 1.324103997601415,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 19472,
+        "train_wall_seconds": 771.5070852849931,
+        "training_flops_estimated": 2258420807761920,
+        "training_targets": 159514624,
+        "validation_loss": 1.3118969267928164,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 2655,
+        "train_wall_seconds": 181.37857014997553,
+        "training_flops_estimated": 564505450905600,
+        "training_targets": 21749760,
+        "validation_loss": 1.4328245584210926,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 5310,
+        "train_wall_seconds": 373.9501939829979,
+        "training_flops_estimated": 1129010901811200,
+        "training_targets": 43499520,
+        "validation_loss": 1.3359579834849489,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 7965,
+        "train_wall_seconds": 568.6398332060226,
+        "training_flops_estimated": 1693516352716800,
+        "training_targets": 65249280,
+        "validation_loss": 1.2929896239493885,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 10620,
+        "train_wall_seconds": 763.1652091430324,
+        "training_flops_estimated": 2258021803622400,
+        "training_targets": 86999040,
+        "validation_loss": 1.2765314111402302,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer_deep",
+        "model": "transformer_deep",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 2849,
+        "train_wall_seconds": 180.16526718600653,
+        "training_flops_estimated": 564455962312704,
+        "training_targets": 23339008,
+        "validation_loss": 1.3066440000179818,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer_deep",
+        "model": "transformer_deep",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 5698,
+        "train_wall_seconds": 373.79879287301264,
+        "training_flops_estimated": 1128911924625408,
+        "training_targets": 46678016,
+        "validation_loss": 1.247790256638099,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer_deep",
+        "model": "transformer_deep",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 8547,
+        "train_wall_seconds": 567.6819432750135,
+        "training_flops_estimated": 1693367886938112,
+        "training_targets": 70017024,
+        "validation_loss": 1.212184525917883,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer_deep",
+        "model": "transformer_deep",
+        "scope": "all_full_windows",
+        "seed": 101,
+        "step": 11396,
+        "train_wall_seconds": 760.7683849789828,
+        "training_flops_estimated": 2257823849250816,
+        "training_targets": 93356032,
+        "validation_loss": 1.1945879969668352,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 2000,
+        "train_wall_seconds": 140.91536399402594,
+        "training_flops_estimated": 425239511040000,
+        "training_targets": 16384000,
+        "validation_loss": 1.4693818395904419,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 4000,
+        "train_wall_seconds": 285.82365638103965,
+        "training_flops_estimated": 850479022080000,
+        "training_targets": 32768000,
+        "validation_loss": 1.3820431244989508,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 6000,
+        "train_wall_seconds": 431.3559828750549,
+        "training_flops_estimated": 1275718533120000,
+        "training_targets": 49152000,
+        "validation_loss": 1.3328125228762333,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 8000,
+        "train_wall_seconds": 576.9481132810497,
+        "training_flops_estimated": 1700958044160000,
+        "training_targets": 65536000,
+        "validation_loss": 1.3120583411590396,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "anchor_flrm",
+        "model": "flrm_exchange_no_film",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 2000,
+        "train_wall_seconds": 185.73592151198227,
+        "training_flops_estimated": 564607844352000,
+        "training_targets": 16384000,
+        "validation_loss": 1.4685527674435341,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "anchor_flrm",
+        "model": "flrm_exchange_no_film",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 4000,
+        "train_wall_seconds": 386.6709285319921,
+        "training_flops_estimated": 1129215688704000,
+        "training_targets": 32768000,
+        "validation_loss": 1.3806382249894893,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "anchor_flrm",
+        "model": "flrm_exchange_no_film",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 6000,
+        "train_wall_seconds": 587.6342404299867,
+        "training_flops_estimated": 1693823533056000,
+        "training_targets": 49152000,
+        "validation_loss": 1.3301467582613435,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "anchor_flrm",
+        "model": "flrm_exchange_no_film",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 8000,
+        "train_wall_seconds": 788.7652158260025,
+        "training_flops_estimated": 2258431377408000,
+        "training_targets": 65536000,
+        "validation_loss": 1.310108107671185,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 4868,
+        "train_wall_seconds": 195.03394974303956,
+        "training_flops_estimated": 564605201940480,
+        "training_targets": 39878656,
+        "validation_loss": 1.3969787376842981,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 9736,
+        "train_wall_seconds": 389.5633042939826,
+        "training_flops_estimated": 1129210403880960,
+        "training_targets": 79757312,
+        "validation_loss": 1.3495856197282061,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 14604,
+        "train_wall_seconds": 583.9748654119776,
+        "training_flops_estimated": 1693815605821440,
+        "training_targets": 119635968,
+        "validation_loss": 1.322514409825796,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 19472,
+        "train_wall_seconds": 778.5088773970474,
+        "training_flops_estimated": 2258420807761920,
+        "training_targets": 159514624,
+        "validation_loss": 1.3110585058794428,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 2655,
+        "train_wall_seconds": 182.74605351606624,
+        "training_flops_estimated": 564505450905600,
+        "training_targets": 21749760,
+        "validation_loss": 1.4338983995691992,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 5310,
+        "train_wall_seconds": 374.2140352230872,
+        "training_flops_estimated": 1129010901811200,
+        "training_targets": 43499520,
+        "validation_loss": 1.3422853616719599,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 7965,
+        "train_wall_seconds": 564.3850103621226,
+        "training_flops_estimated": 1693516352716800,
+        "training_targets": 65249280,
+        "validation_loss": 1.2968887162171212,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_lrm",
+        "model": "lrm_no_jepa_k2",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 10620,
+        "train_wall_seconds": 755.3053365031665,
+        "training_flops_estimated": 2258021803622400,
+        "training_targets": 86999040,
+        "validation_loss": 1.2797202182365601,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer_deep",
+        "model": "transformer_deep",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 2849,
+        "train_wall_seconds": 191.70975981496485,
+        "training_flops_estimated": 564455962312704,
+        "training_targets": 23339008,
+        "validation_loss": 1.312854057511752,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer_deep",
+        "model": "transformer_deep",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 5698,
+        "train_wall_seconds": 386.1727065359082,
+        "training_flops_estimated": 1128911924625408,
+        "training_targets": 46678016,
+        "validation_loss": 1.247347291189703,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer_deep",
+        "model": "transformer_deep",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 8547,
+        "train_wall_seconds": 581.2952688018613,
+        "training_flops_estimated": 1693367886938112,
+        "training_targets": 70017024,
+        "validation_loss": 1.2139640727494487,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer_deep",
+        "model": "transformer_deep",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 11396,
+        "train_wall_seconds": 774.264047122826,
+        "training_flops_estimated": 2257823849250816,
+        "training_targets": 93356032,
+        "validation_loss": 1.1984806600953941,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 2000,
+        "train_wall_seconds": 72.96951186704246,
+        "training_flops_estimated": 231965982720000,
+        "training_targets": 16384000,
+        "validation_loss": 1.4665281298603887,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 4000,
+        "train_wall_seconds": 151.9771709850811,
+        "training_flops_estimated": 463931965440000,
+        "training_targets": 32768000,
+        "validation_loss": 1.3999520702686425,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 6000,
+        "train_wall_seconds": 231.96991672405784,
+        "training_flops_estimated": 695897948160000,
+        "training_targets": 49152000,
+        "validation_loss": 1.3638521073034717,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_transformer",
+        "model": "baseline_small",
+        "scope": "all_full_windows",
+        "seed": 102,
+        "step": 8000,
+        "train_wall_seconds": 312.08090407601594,
+        "training_flops_estimated": 927863930880000,
+        "training_targets": 65536000,
+        "validation_loss": 1.3483844711412971,
+        "validation_tokens": 1144064
+      }
+    ],
+    "decision": "inconclusive",
+    "effects": {
+      "equal_targets:anchor_flrm-minus-targets_lrm": {
+        "ci95_paired_t": [
+          -0.0076431275868130135,
+          0.004715289097849739
+        ],
+        "mean": -0.0014639192444816373,
+        "n": 2,
+        "sd": 0.0006877521985534299,
+        "seeds_favoring_flrm": 2
+      },
+      "equal_targets:anchor_flrm-minus-targets_transformer": {
+        "ci95_paired_t": [
+          -0.06857867652014715,
+          -0.012395743169266164
+        ],
+        "mean": -0.04048720984470666,
+        "n": 2,
+        "sd": 0.0031266089272748666,
+        "seeds_favoring_flrm": 2
+      },
+      "matched_estimated_flops:anchor_flrm-minus-flops_lrm": {
+        "ci95_paired_t": [
+          0.02662835950985016,
+          0.03478973341584384
+        ],
+        "mean": 0.030709046462847,
+        "n": 2,
+        "sd": 0.0004541846249633005,
+        "seeds_favoring_flrm": 0
+      },
+      "matched_estimated_flops:anchor_flrm-minus-flops_transformer": {
+        "ci95_paired_t": [
+          -0.024147560036814297,
+          0.01886184966703931
+        ],
+        "mean": -0.0026428551848874937,
+        "n": 2,
+        "sd": 0.0023934956100824935,
+        "seeds_favoring_flrm": 2
+      },
+      "matched_estimated_flops:anchor_flrm-minus-flops_transformer_deep": {
+        "ci95_paired_t": [
+          0.10374817624204553,
+          0.12085288899820949
+        ],
+        "mean": 0.11230053262012751,
+        "n": 2,
+        "sd": 0.0009518859983314835,
+        "seeds_favoring_flrm": 0
+      }
+    },
+    "engineering_smoke": false,
+    "identity": {
+      "dataset_sha256": "55a1f1c6abdb7c0095acd4987e14a9c96e7b72ddc3a4a686fbe514f2731277f9",
+      "protocol_id": "b2144c9f1c3e532d89dacb766c3761c22453d87e8ad359ffb905a512f5a7775e",
+      "source_sha256": {
+        "pyproject.toml": "0ef0dc65ab1ea41d9557492c61f3dd39c28b18676145e301861ac993efc4683e",
+        "src/llm2/__init__.py": "d626fb078d3efa05c288a103da63e4560cdb8cfb85f2c1494128e4a691001f25",
+        "src/llm2/__main__.py": "11cf323249f4ba4e79c9fb7660c0979fc91a3822bc5362286376b69808b41195",
+        "src/llm2/architectures/__init__.py": "1d3e2b5e77ba702148cb088329ed6591d2f1bb3ea6e9c5a5505bc1c07746ca2a",
+        "src/llm2/architectures/fractal_recursive.py": "d4fe8bfd55f478a1963bb2c671c02569949fc049dad57e077b4603f5727626c6",
+        "src/llm2/architectures/latent_recursive.py": "5c14624f3b113dbeafd3187df15dc0f27e3a772ddc8e134a9a78cd506c9b9ca1",
+        "src/llm2/architectures/ncm.py": "ad00d4d9354b4aae8b628dfb5ac0fae62a4d554dcfccd8ee2a1360385d09c776",
+        "src/llm2/checkpoint.py": "e55efad8ae8d6f219a6cfd3718758444e442a1f54ca38f59a594f1c1a6408856",
+        "src/llm2/cli.py": "f4828fee6dcb010b8fba3d20ba0004c1a065f4ee39641a72eeccce973adb7cb3",
+        "src/llm2/config.py": "b8751dcbd1c42c2f4f56f8e4c054bd4e800e63b69d4889ec2983e1750064a824",
+        "src/llm2/curriculum/__init__.py": "0c694efde65d93c0eb4470dbd5e072c445f78e399563653c8983ee959e71a6b4",
+        "src/llm2/curriculum/controller.py": "f1e7f6bfc23c1a6bfb64d2e6063014e6e3897e36a2a7602452aa525fe1e780cd",
+        "src/llm2/curriculum/generators.py": "31af44503ae4718fe3ec26ef54fa9d90b4dd674496bffd842ce96ae31787665b",
+        "src/llm2/curriculum/skills.py": "a1205a222eafd735438286019fb85124ea57a623e537a03b4344a9b4ae7b72ad",
+        "src/llm2/curriculum/stream.py": "79e066d58c9448953bf94b475bebad7dfd51048baa67025059fec51383ee64a2",
+        "src/llm2/data.py": "b9294fbc83156cbb7f8d1d890d05c0d46b68f35d28eaa4e38faf500eb2471939",
+        "src/llm2/document_data.py": "8ccf390955e3194a86539142f001714635512cc079272b9c28f8ffb10d12a34d",
+        "src/llm2/evaluation.py": "40e900066692c4354f3baa9f7666c3dca57064e5f307d57c29e3ff531a53a013",
+        "src/llm2/generation.py": "41c5dd27d97e37026730379cbdb33f3ccc21e87605f4f04a3e77f51ede8ead11",
+        "src/llm2/interfaces.py": "d0b24559eb7848b90f8f627d7e099577dfbb0ab0edbb4bb50530aff1151e01f3",
+        "src/llm2/metrics.py": "b539d787f2b1a1e738acf9c1b09a4649527b922548d0336128184a35890dd390",
+        "src/llm2/model.py": "bff12fa41e43e58d04aae10010fd1e6b26f5e235eb4a6390fc015fb3939b077f",
+        "src/llm2/objectives.py": "1036721fd2738c5b7b83b87b2327d12396efa40617163f81492a4d6dfece0503",
+        "src/llm2/optim.py": "cd157185fc93cd2e2f0d74f92cc83433ef85e0602c6bb3555a963a0a0009c51f",
+        "src/llm2/research/__init__.py": "0f13aa999d388f078f060c1abd60d0e92bd36ef4ce09d435bee3ca2fc3b5c0a3",
+        "src/llm2/research/accounting.py": "b530cb040907321c496f0da7ff11626b08b4920400bfddb061e8c8cd87cd882a",
+        "src/llm2/research/budget.py": "8ab57c44d2b82e5ea74cf687de583da91c6a2f1a480eef56fec228d0109a0729",
+        "src/llm2/research/campaign.py": "ddac2c32679fd1637f3382f45edf6fc4e95b3d1efd4be800bf2025af60533205",
+        "src/llm2/research/checkpoint_review.py": "8783fc54684b1672357a83cf255ced258715152119d3a7b34721b9f5817e4c95",
+        "src/llm2/research/cycle2.py": "ada85538942b9687158db49a001a94fd220be56f89ddf222c1d334a0b9a94eaf",
+        "src/llm2/research/cycle2_bootstrap.py": "0e627e670af579ed5761f646e845721546351323f85e06e918db0a7b73632d3a",
+        "src/llm2/research/cycle2_protocol.py": "031304e86a56612676605b5b0ab6126f6ceea98c4e9a31f3af4b31de6f1b1a1f",
+        "src/llm2/research/cycle2_report.py": "909f8c7351f1319f8771f2c216663da7d2ffdaed4752a409f33f4f021355d429",
+        "src/llm2/research/cycle3.py": "27786dd5e82434fcac1674e199baf465ac6b130cd1eb087c10058b8b837bbb67",
+        "src/llm2/research/cycle3_bootstrap.py": "ce13ec7d968e58711b632e01f24aba6cccd494af560701fc0ee3496259247e80",
+        "src/llm2/research/cycle3_evaluate.py": "cd7fbc938f77e11423ef7cda7d62defa01eccfb121eeb2e7f24081629dc3410a",
+        "src/llm2/research/cycle3_protocol.py": "fa10161f83dc7eed069a53a29cae5f0e0bde3428809b140504ffa2983831baae",
+        "src/llm2/research/cycle3_report.py": "80726fb6212aa02726cbe37f72186e71e9f780e25aba7b2e97bedf8e5e5ee97c",
+        "src/llm2/research/diagnostics.py": "a22cc41ce4ae5f8b662c746954ad4bc9b9098af081d5e91aa44b3fec97e57187",
+        "src/llm2/research/evaluators.py": "77b4fc602c4d8c2b547fc90a42583d26025778f9f1ef690408f4fae3b1e373dc",
+        "src/llm2/research/factory.py": "95fb96186791c7c6721d5d78c56f67ae66e82952392780bfcbce1a47cc9d5829",
+        "src/llm2/research/naming.py": "ee4f09182e750e55d80389dbace942b23afac9bc0a02072f3658c89fd36de9ad",
+        "src/llm2/research/objectives.py": "2cdf5e836b1c3a7b6eef214ffac1b98457c0f08fc8f15c7ec30bd3966e4b7464",
+        "src/llm2/research/pairing.py": "6514c120d247e787c07d0ee888a43f5f08f8a0029d66eb18a5e7c3471a0c5123",
+        "src/llm2/research/presentation.py": "ed7a35154e5b8d9034215ab325cde059f35cef8dab045ce6646fcb7c3f327af0",
+        "src/llm2/research/profiling.py": "472d6c49b457d33ec2d3156aeb7b732d52bf4d07e960785ccd9beccdc115039b",
+        "src/llm2/research/reporting.py": "bd983b7d241946eeb199cadc97b7c50e73258438a8c303b41ccee7c44067db18",
+        "src/llm2/research/session.py": "c3f63aa7c092e797cebaef48b127e2e94347b3382b517001717e1e6c49096780",
+        "src/llm2/research/wikitext.py": "4fcebfe414adbf16195c5c7ff7c7372d79f7ae8f9e165ca5b20ee44b5b468bc4",
+        "src/llm2/runtime.py": "e5780c7c089c9e0863cc24f61a8aee7cacbfb9bc362bbd6527c95e592b28bbe4",
+        "src/llm2/trainer.py": "a41854e9ddbf4ba76674316d8ae786d2af9ad380f03f13c5865ced61d2050e75"
+      },
+      "versioned_configs_sha256": {
+        "cpu_smoke.yaml": "0fe59f7f02579a7d580fc95bfe00986cf17fd2cf1c52a041c384009bef0389eb",
+        "experiments/c0_transformer_uniform.yaml": "c9a35b54c2c183f85490b23b1250b4b7be28b598a644914dbd1ae16f042457c1",
+        "experiments/c1_transformer_fixed.yaml": "30f11d8585c42cd3fb5288bbcc13fffbcdf791e240047faf85e2f002f9196e86",
+        "experiments/c2_transformer_adaptive.yaml": "a43587bdf0fee35e953a21b56aba8bf323cbc802d90d775eb284df065c0a4414",
+        "experiments/c3_lrm_uniform.yaml": "75d5877e545d010ad562ab0843bbfd0d49e90652d06cb8ddcbe503633a01f3f7",
+        "experiments/c4_lrm_adaptive.yaml": "f77b0ce29eec74e3324670a5b6e41aff46dc902d08b4ee41f429e5c9aa3a1ce9",
+        "experiments/c5_flrm_uniform.yaml": "b131150dc62a4950223b12a0dd500a35f3e0aab006bd7f9edb43195975dad1ff",
+        "experiments/c6_flrm_adaptive.yaml": "fcc041024649cef59cdca6397d65d605acef73f50e1bcf01e38af6abba6a0e0c",
+        "experiments/combined.yaml": "4dc34ba365f3c5ea8f971d1ae3b2ed4b665e346dc52be80d03cfedb520628973",
+        "experiments/cycle1/c1_v1_baseline_small.yaml": "cc2308a5815d1800f8caedd0b72bbf590e57303a2b2131b558a94ccc2bdb4b20",
+        "experiments/cycle1/c1_v2_lrm_k2.yaml": "8d52fd88752cb23698d84fbc0bff3ade19893ac26d946c533aa1722e3bd8d88d",
+        "experiments/cycle1/c1_v3_lrm_k2_rms.yaml": "29e66539b3aecf643b222fbafa36c382189662c66ae858af56138649bd053315",
+        "experiments/cycle1/c1_v4_flrm_n1_k2.yaml": "879951a9783b5b8528ac0dbc434f053a990223969de865355cd7254a1e2a844b",
+        "experiments/cycle1/c1_v5_flrm_n1_k2_rms.yaml": "a35c96b6b82fb066f6b57517ad065611cb58bae1e17d4b4e386e2843fd517547",
+        "experiments/cycle2/base.yaml": "edcaf23458384000cc9c8785a6c15de7b9b57aef888b39fbd736aa897c42ddaa",
+        "experiments/cycle3/base.yaml": "edcaf23458384000cc9c8785a6c15de7b9b57aef888b39fbd736aa897c42ddaa",
+        "experiments/e0_baseline.yaml": "d143baf7efb5fa8d940c5ec45095d1200a24e66babc550ee584f6b023b53a223",
+        "experiments/e1_jepa.yaml": "7179092f03d65383412f9a54919cfafb4990e9bc17d0ec82c2e8a0702265a049",
+        "experiments/e2_recursive.yaml": "f2689b624d3f01f51148431f4040b0fb9b56e5965a047f4fdef155c2b44156f6",
+        "experiments/e2_untied_control.yaml": "e7d2bbde77948cb711bfef93c6d2daa8c5d67b8c3252891ce515d1af113f3bbc",
+        "experiments/e3_lrm.yaml": "99687e1c2f53bb282adea2335941c3e08a7905ce6cad3f4acac2574138e917fd",
+        "experiments/e4_continuous.yaml": "322c8ecb6e86149f21cad09c63015153b62ff01e8cdd6879d77f9eb0dd5e30f2",
+        "experiments/e5_mtp.yaml": "ddfe8667faf46d5d5cd7a5007f7e7404cd01a2800148120c6af29825071829b1",
+        "experiments/f0_lrm.yaml": "a01bea5b7c16702bfa567c72abf7e507ecda5d04a3fa592b5f798b4194155c7f",
+        "experiments/f1_multiscale_unshared.yaml": "fa0ce02fe95fe9b7037d5dec5519882366ea9b613ad28dd8ce0481ad11f9a466",
+        "experiments/f2_multiscale_shared.yaml": "5d4572c3f3d84f197915e80869a4048c025ea00bcaa2923ec1f87da71b92f1ef",
+        "experiments/f3_conditioned.yaml": "6e46aa1875918cfa54405654dcea09cd3a1f5635a265f6677911d57f56743f8e",
+        "experiments/f4_deeper.yaml": "df01589da17e789207ffa8fe332d5d7cbb36ef045b6349ff9f4fd109aa9e074e",
+        "experiments/matrix.yaml": "7731ab46ed4070588e7296f3302ba4e2bb987e6f63ed159c71d2bb454ccb6176",
+        "kaggle_t4.yaml": "9accdf155c672d757bdeaab41b687712c2128290a18be3f0adb7a0b600aa87ab",
+        "kaggle_t4_1h_baseline.yaml": "b01b74ce520bbc22fb5abec6bdfa0ef57bfe8bc80ff722cab88f457f47881b05",
+        "kaggle_t4_1h_fractal.yaml": "1dab0998832fc67d5869f96ed9fe1bf3a9a4ce40c2af8aa44c69e2292f362aa9",
+        "kaggle_t4_1h_lrm.yaml": "4e88c909ec98a1f23a6106c2822ff91cb84402f60d43f4c77dcebd0bc6fd2b75",
+        "kaggle_t4_baseline.yaml": "b56b708b8b1b7c5dc2439ff6a8c1c30e3c24cfb33036a671d353c98af2cb5d6e",
+        "kaggle_t4_fractal.yaml": "1454ef0825d28a5fefe5f7efee46baa443360c5793b9305096d78a1facb91f33",
+        "planning/a100_budget.yaml": "655404ba25c07003fc0edab6f5c8c2d93951f4cc0a46b1ab065fb0e151e05df1",
+        "profiles/a100_34m.yaml": "f0bdc24c390118ac43096d7bdb1f6ee2d64dc3b30c9478fd7ed7d9db48c7bf2e",
+        "profiles/a100_77m.yaml": "53fa786329cb57f1ed972cef1e4abd173afe50d8c95773cda21d7fc57013892e",
+        "profiles/a100_7m.yaml": "fa1a623b05607b5cb996a6d6bdd2a2759e8e3cd2333b23ad02697b3e1b0eecbc",
+        "profiles/cpu_minimal.yaml": "ce8144d41c3eaac27280c0b5b16c00637cccd5a0f579cbe0b6d7509bdbc1dc68",
+        "profiles/cuda_smoke.yaml": "d0edbe1e9f3620b4e4dcdf6dc1c09f2b339dcb0501f3f47f6384c5d73319e032",
+        "profiles/future_352m.yaml": "a7ff7ac59da622fe91d7d0c723abf95d4985529d8eedefcd4a99cfa7a3dd7b03",
+        "transformer_34m_a100.yaml": "3fa26023cf836a295735660edd2fac555250661879510f14e3e6f24149c29535"
+      }
+    },
+    "limitations": "Validation endpoint only; five complete seeds required. Primary paired t interval assumes independent seed differences. Secondary contrasts exploratory. FLOPs are estimates excluding elementwise/pooling/mixing; neither wall time nor parameters are equalized. Time to a predeclared quality target was not measured. Reserved test awaits validation selection.",
+    "pending_seeds": [
+      103,
+      104,
+      105
+    ],
+    "primary": {
+      "ci95_paired_t": [
+        -0.024147560036814297,
+        0.01886184966703931
+      ],
+      "mean": -0.0026428551848874937,
+      "n": 2,
+      "sd": 0.0023934956100824935,
+      "seeds_favoring_flrm": 2
+    },
+    "protocol_id": "b2144c9f1c3e532d89dacb766c3761c22453d87e8ad359ffb905a512f5a7775e",
+    "rows": [
+      {
+        "arm": "targets_transformer",
+        "checkpoint_model_sha256": "2509cdaece58e5ec4f2ca1a52bf97766cd73b5d3dd0bf531bfb4c8566d68fe6b",
+        "environment": {
+          "cpu": "x86_64",
+          "cublas_workspace_config": ":4096:8",
+          "cuda_devices": [
+            {
+              "logical_index": 0,
+              "name": "Tesla T4",
+              "total_memory_bytes": 15636037632,
+              "uuid": "e893c5ac-6eba-9ac0-6d7c-421a5a1124fa"
+            }
+          ],
+          "cuda_version": "12.8",
+          "cuda_visible_devices": "0",
+          "cudnn_version": 91900,
+          "device": "Tesla T4",
+          "packages": {
+            "PyYAML": "6.0.3",
+            "numpy": "2.1.3",
+            "pytest": "8.4.2",
+            "safetensors": "0.8.0",
+            "tensorboard": "2.20.0",
+            "tokenizers": "0.23.1",
+            "torch": "2.11.0+cu128"
+          },
+          "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+          "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+        },
+        "generation_tokens_per_second": 449.17791563097427,
+        "max_steps": 8000,
+        "model": "baseline_small",
+        "parameters_in_tensors_with_gradients": 2164224,
+        "peak_vram_mib": 418.8955078125,
+        "physical_gpu": "0",
+        "registered_parameters": 2164224,
+        "relative_flop_budget_shortfall": 0.0,
+        "seed": 101,
+        "stop_reason": "max_steps",
+        "train_wall_seconds": 322.8350758259862,
+        "training_flops_estimated": 927863930880000,
+        "training_targets": 65536000,
+        "validation_loss": 1.3502596708506005,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_lrm",
+        "checkpoint_model_sha256": "90d1722343ac5196895e75270fc938a4160953c162ebd8d1c3acc6ae5ce94f7e",
+        "environment": {
+          "cpu": "x86_64",
+          "cublas_workspace_config": ":4096:8",
+          "cuda_devices": [
+            {
+              "logical_index": 0,
+              "name": "Tesla T4",
+              "total_memory_bytes": 15636037632,
+              "uuid": "5196e4e8-e2b5-f9ed-6b57-44b60ce63eae"
+            }
+          ],
+          "cuda_version": "12.8",
+          "cuda_visible_devices": "1",
+          "cudnn_version": 91900,
+          "device": "Tesla T4",
+          "packages": {
+            "PyYAML": "6.0.3",
+            "numpy": "2.1.3",
+            "pytest": "8.4.2",
+            "safetensors": "0.8.0",
+            "tensorboard": "2.20.0",
+            "tokenizers": "0.23.1",
+            "torch": "2.11.0+cu128"
+          },
+          "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+          "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+        },
+        "generation_tokens_per_second": 228.0783906995435,
+        "max_steps": 8000,
+        "model": "lrm_no_jepa_k2",
+        "parameters_in_tensors_with_gradients": 2017536,
+        "peak_vram_mib": 648.40625,
+        "physical_gpu": "1",
+        "registered_parameters": 2017536,
+        "relative_flop_budget_shortfall": 0.0,
+        "seed": 101,
+        "stop_reason": "max_steps",
+        "train_wall_seconds": 566.2893938659954,
+        "training_flops_estimated": 1700958044160000,
+        "training_targets": 65536000,
+        "validation_loss": 1.308539219632408,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "anchor_flrm",
+        "checkpoint_model_sha256": "95825b65897b908f773a6e927c558a1a8bd69a2b5db3d3e0b0c5ff7f81af68a9",
+        "environment": {
+          "cpu": "x86_64",
+          "cublas_workspace_config": ":4096:8",
+          "cuda_devices": [
+            {
+              "logical_index": 0,
+              "name": "Tesla T4",
+              "total_memory_bytes": 15636037632,
+              "uuid": "e893c5ac-6eba-9ac0-6d7c-421a5a1124fa"
+            }
+          ],
+          "cuda_version": "12.8",
+          "cuda_visible_devices": "0",
+          "cudnn_version": 91900,
+          "device": "Tesla T4",
+          "packages": {
+            "PyYAML": "6.0.3",
+            "numpy": "2.1.3",
+            "pytest": "8.4.2",
+            "safetensors": "0.8.0",
+            "tensorboard": "2.20.0",
+            "tokenizers": "0.23.1",
+            "torch": "2.11.0+cu128"
+          },
+          "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+          "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+        },
+        "generation_tokens_per_second": 70.94407093134302,
+        "max_steps": 8000,
+        "model": "flrm_exchange_no_film",
+        "parameters_in_tensors_with_gradients": 2165772,
+        "peak_vram_mib": 907.482421875,
+        "physical_gpu": "0",
+        "registered_parameters": 2165772,
+        "relative_flop_budget_shortfall": 0.0,
+        "seed": 101,
+        "stop_reason": "max_steps",
+        "train_wall_seconds": 794.6832229359738,
+        "training_flops_estimated": 2258431377408000,
+        "training_targets": 65536000,
+        "validation_loss": 1.3075616146312994,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer",
+        "checkpoint_model_sha256": "f9a2c7b23c451aae4d18524df49f1d0fe1a01ab35ccdcb2ae6d5ecd7aeba6463",
+        "environment": {
+          "cpu": "x86_64",
+          "cublas_workspace_config": ":4096:8",
+          "cuda_devices": [
+            {
+              "logical_index": 0,
+              "name": "Tesla T4",
+              "total_memory_bytes": 15636037632,
+              "uuid": "5196e4e8-e2b5-f9ed-6b57-44b60ce63eae"
+            }
+          ],
+          "cuda_version": "12.8",
+          "cuda_visible_devices": "1",
+          "cudnn_version": 91900,
+          "device": "Tesla T4",
+          "packages": {
+            "PyYAML": "6.0.3",
+            "numpy": "2.1.3",
+            "pytest": "8.4.2",
+            "safetensors": "0.8.0",
+            "tensorboard": "2.20.0",
+            "tokenizers": "0.23.1",
+            "torch": "2.11.0+cu128"
+          },
+          "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+          "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+        },
+        "generation_tokens_per_second": 331.6941320291087,
+        "max_steps": 19472,
+        "model": "baseline_small",
+        "parameters_in_tensors_with_gradients": 2164224,
+        "peak_vram_mib": 418.8955078125,
+        "physical_gpu": "1",
+        "registered_parameters": 2164224,
+        "relative_flop_budget_shortfall": 4.680082904325733e-06,
+        "seed": 101,
+        "stop_reason": "max_steps",
+        "train_wall_seconds": 771.5070852849931,
+        "training_flops_estimated": 2258420807761920,
+        "training_targets": 159514624,
+        "validation_loss": 1.3118969267928164,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_lrm",
+        "checkpoint_model_sha256": "2248b5e32f7c3c43ea5fc34d45387a7c3499249f60679a4e31c09dc4aab76574",
+        "environment": {
+          "cpu": "x86_64",
+          "cublas_workspace_config": ":4096:8",
+          "cuda_devices": [
+            {
+              "logical_index": 0,
+              "name": "Tesla T4",
+              "total_memory_bytes": 15636037632,
+              "uuid": "e893c5ac-6eba-9ac0-6d7c-421a5a1124fa"
+            }
+          ],
+          "cuda_version": "12.8",
+          "cuda_visible_devices": "0",
+          "cudnn_version": 91900,
+          "device": "Tesla T4",
+          "packages": {
+            "PyYAML": "6.0.3",
+            "numpy": "2.1.3",
+            "pytest": "8.4.2",
+            "safetensors": "0.8.0",
+            "tensorboard": "2.20.0",
+            "tokenizers": "0.23.1",
+            "torch": "2.11.0+cu128"
+          },
+          "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+          "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+        },
+        "generation_tokens_per_second": 231.4020416491069,
+        "max_steps": 10620,
+        "model": "lrm_no_jepa_k2",
+        "parameters_in_tensors_with_gradients": 2017536,
+        "peak_vram_mib": 648.40625,
+        "physical_gpu": "0",
+        "registered_parameters": 2017536,
+        "relative_flop_budget_shortfall": 0.00018135321254262218,
+        "seed": 101,
+        "stop_reason": "max_steps",
+        "train_wall_seconds": 763.1652091430324,
+        "training_flops_estimated": 2258021803622400,
+        "training_targets": 86999040,
+        "validation_loss": 1.2765314111402302,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer_deep",
+        "checkpoint_model_sha256": "1c7f35cdc6594f266e25a93d12a5c01957ebf8958be3bc19b5baebd0f8fa2e27",
+        "environment": {
+          "cpu": "x86_64",
+          "cublas_workspace_config": ":4096:8",
+          "cuda_devices": [
+            {
+              "logical_index": 0,
+              "name": "Tesla T4",
+              "total_memory_bytes": 15636037632,
+              "uuid": "5196e4e8-e2b5-f9ed-6b57-44b60ce63eae"
+            }
+          ],
+          "cuda_version": "12.8",
+          "cuda_visible_devices": "1",
+          "cudnn_version": 91900,
+          "device": "Tesla T4",
+          "packages": {
+            "PyYAML": "6.0.3",
+            "numpy": "2.1.3",
+            "pytest": "8.4.2",
+            "safetensors": "0.8.0",
+            "tensorboard": "2.20.0",
+            "tokenizers": "0.23.1",
+            "torch": "2.11.0+cu128"
+          },
+          "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+          "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+        },
+        "generation_tokens_per_second": 298.48748741386765,
+        "max_steps": 11396,
+        "model": "transformer_deep",
+        "parameters_in_tensors_with_gradients": 3639552,
+        "peak_vram_mib": 624.966796875,
+        "physical_gpu": "1",
+        "registered_parameters": 3639552,
+        "relative_flop_budget_shortfall": 0.0002690044795079227,
+        "seed": 101,
+        "stop_reason": "max_steps",
+        "train_wall_seconds": 760.7683849789828,
+        "training_flops_estimated": 2257823849250816,
+        "training_targets": 93356032,
+        "validation_loss": 1.1945879969668352,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_lrm",
+        "checkpoint_model_sha256": "e25403fc0a366039bbb46611dbbfbd4e1216cc21134605f632a58bca11412e99",
+        "environment": {
+          "cpu": "x86_64",
+          "cublas_workspace_config": ":4096:8",
+          "cuda_devices": [
+            {
+              "logical_index": 0,
+              "name": "Tesla T4",
+              "total_memory_bytes": 15636037632,
+              "uuid": "e893c5ac-6eba-9ac0-6d7c-421a5a1124fa"
+            }
+          ],
+          "cuda_version": "12.8",
+          "cuda_visible_devices": "0",
+          "cudnn_version": 91900,
+          "device": "Tesla T4",
+          "packages": {
+            "PyYAML": "6.0.3",
+            "numpy": "2.1.3",
+            "pytest": "8.4.2",
+            "safetensors": "0.8.0",
+            "tensorboard": "2.20.0",
+            "tokenizers": "0.23.1",
+            "torch": "2.11.0+cu128"
+          },
+          "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+          "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+        },
+        "generation_tokens_per_second": 237.99046739526517,
+        "max_steps": 8000,
+        "model": "lrm_no_jepa_k2",
+        "parameters_in_tensors_with_gradients": 2017536,
+        "peak_vram_mib": 648.40625,
+        "physical_gpu": "0",
+        "registered_parameters": 2017536,
+        "relative_flop_budget_shortfall": 0.0,
+        "seed": 102,
+        "stop_reason": "max_steps",
+        "train_wall_seconds": 576.9481132810497,
+        "training_flops_estimated": 1700958044160000,
+        "training_targets": 65536000,
+        "validation_loss": 1.3120583411590396,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "anchor_flrm",
+        "checkpoint_model_sha256": "081fa31b07a766d179c5ab426d2a0867a5c209841c51f564e4ce04743e7fcf90",
+        "environment": {
+          "cpu": "x86_64",
+          "cublas_workspace_config": ":4096:8",
+          "cuda_devices": [
+            {
+              "logical_index": 0,
+              "name": "Tesla T4",
+              "total_memory_bytes": 15636037632,
+              "uuid": "5196e4e8-e2b5-f9ed-6b57-44b60ce63eae"
+            }
+          ],
+          "cuda_version": "12.8",
+          "cuda_visible_devices": "1",
+          "cudnn_version": 91900,
+          "device": "Tesla T4",
+          "packages": {
+            "PyYAML": "6.0.3",
+            "numpy": "2.1.3",
+            "pytest": "8.4.2",
+            "safetensors": "0.8.0",
+            "tensorboard": "2.20.0",
+            "tokenizers": "0.23.1",
+            "torch": "2.11.0+cu128"
+          },
+          "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+          "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+        },
+        "generation_tokens_per_second": 73.46837755551263,
+        "max_steps": 8000,
+        "model": "flrm_exchange_no_film",
+        "parameters_in_tensors_with_gradients": 2165772,
+        "peak_vram_mib": 907.482421875,
+        "physical_gpu": "1",
+        "registered_parameters": 2165772,
+        "relative_flop_budget_shortfall": 0.0,
+        "seed": 102,
+        "stop_reason": "max_steps",
+        "train_wall_seconds": 788.7652158260025,
+        "training_flops_estimated": 2258431377408000,
+        "training_targets": 65536000,
+        "validation_loss": 1.310108107671185,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer",
+        "checkpoint_model_sha256": "90f109b99e7f1dd11cf0f4465a31c7557c586f255f815e4e3a889f434574cd2d",
+        "environment": {
+          "cpu": "x86_64",
+          "cublas_workspace_config": ":4096:8",
+          "cuda_devices": [
+            {
+              "logical_index": 0,
+              "name": "Tesla T4",
+              "total_memory_bytes": 15636037632,
+              "uuid": "e893c5ac-6eba-9ac0-6d7c-421a5a1124fa"
+            }
+          ],
+          "cuda_version": "12.8",
+          "cuda_visible_devices": "0",
+          "cudnn_version": 91900,
+          "device": "Tesla T4",
+          "packages": {
+            "PyYAML": "6.0.3",
+            "numpy": "2.1.3",
+            "pytest": "8.4.2",
+            "safetensors": "0.8.0",
+            "tensorboard": "2.20.0",
+            "tokenizers": "0.23.1",
+            "torch": "2.11.0+cu128"
+          },
+          "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+          "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+        },
+        "generation_tokens_per_second": 444.38821390275183,
+        "max_steps": 19472,
+        "model": "baseline_small",
+        "parameters_in_tensors_with_gradients": 2164224,
+        "peak_vram_mib": 418.8955078125,
+        "physical_gpu": "0",
+        "registered_parameters": 2164224,
+        "relative_flop_budget_shortfall": 4.680082904325733e-06,
+        "seed": 102,
+        "stop_reason": "max_steps",
+        "train_wall_seconds": 778.5088773970474,
+        "training_flops_estimated": 2258420807761920,
+        "training_targets": 159514624,
+        "validation_loss": 1.3110585058794428,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_lrm",
+        "checkpoint_model_sha256": "d5b4718cfae8023f3cd236d4a5e0a1bf7e68a8fac46b8960ac8b4b1f13d679a6",
+        "environment": {
+          "cpu": "x86_64",
+          "cublas_workspace_config": ":4096:8",
+          "cuda_devices": [
+            {
+              "logical_index": 0,
+              "name": "Tesla T4",
+              "total_memory_bytes": 15636037632,
+              "uuid": "5196e4e8-e2b5-f9ed-6b57-44b60ce63eae"
+            }
+          ],
+          "cuda_version": "12.8",
+          "cuda_visible_devices": "1",
+          "cudnn_version": 91900,
+          "device": "Tesla T4",
+          "packages": {
+            "PyYAML": "6.0.3",
+            "numpy": "2.1.3",
+            "pytest": "8.4.2",
+            "safetensors": "0.8.0",
+            "tensorboard": "2.20.0",
+            "tokenizers": "0.23.1",
+            "torch": "2.11.0+cu128"
+          },
+          "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+          "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+        },
+        "generation_tokens_per_second": 261.07067547727183,
+        "max_steps": 10620,
+        "model": "lrm_no_jepa_k2",
+        "parameters_in_tensors_with_gradients": 2017536,
+        "peak_vram_mib": 648.40625,
+        "physical_gpu": "1",
+        "registered_parameters": 2017536,
+        "relative_flop_budget_shortfall": 0.00018135321254262218,
+        "seed": 102,
+        "stop_reason": "max_steps",
+        "train_wall_seconds": 755.3053365031665,
+        "training_flops_estimated": 2258021803622400,
+        "training_targets": 86999040,
+        "validation_loss": 1.2797202182365601,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "flops_transformer_deep",
+        "checkpoint_model_sha256": "4b58568b5267863ed2965492122f0dfcc568d9e953ac2a3f7d604edd25825fc1",
+        "environment": {
+          "cpu": "x86_64",
+          "cublas_workspace_config": ":4096:8",
+          "cuda_devices": [
+            {
+              "logical_index": 0,
+              "name": "Tesla T4",
+              "total_memory_bytes": 15636037632,
+              "uuid": "e893c5ac-6eba-9ac0-6d7c-421a5a1124fa"
+            }
+          ],
+          "cuda_version": "12.8",
+          "cuda_visible_devices": "0",
+          "cudnn_version": 91900,
+          "device": "Tesla T4",
+          "packages": {
+            "PyYAML": "6.0.3",
+            "numpy": "2.1.3",
+            "pytest": "8.4.2",
+            "safetensors": "0.8.0",
+            "tensorboard": "2.20.0",
+            "tokenizers": "0.23.1",
+            "torch": "2.11.0+cu128"
+          },
+          "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+          "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+        },
+        "generation_tokens_per_second": 330.1048937203444,
+        "max_steps": 11396,
+        "model": "transformer_deep",
+        "parameters_in_tensors_with_gradients": 3639552,
+        "peak_vram_mib": 624.966796875,
+        "physical_gpu": "0",
+        "registered_parameters": 3639552,
+        "relative_flop_budget_shortfall": 0.0002690044795079227,
+        "seed": 102,
+        "stop_reason": "max_steps",
+        "train_wall_seconds": 774.264047122826,
+        "training_flops_estimated": 2257823849250816,
+        "training_targets": 93356032,
+        "validation_loss": 1.1984806600953941,
+        "validation_tokens": 1144064
+      },
+      {
+        "arm": "targets_transformer",
+        "checkpoint_model_sha256": "afc1d3cd8e70005c831910b473d3879a426c6efad402304224ceb1161bbbf6be",
+        "environment": {
+          "cpu": "x86_64",
+          "cublas_workspace_config": ":4096:8",
+          "cuda_devices": [
+            {
+              "logical_index": 0,
+              "name": "Tesla T4",
+              "total_memory_bytes": 15636037632,
+              "uuid": "5196e4e8-e2b5-f9ed-6b57-44b60ce63eae"
+            }
+          ],
+          "cuda_version": "12.8",
+          "cuda_visible_devices": "1",
+          "cudnn_version": 91900,
+          "device": "Tesla T4",
+          "packages": {
+            "PyYAML": "6.0.3",
+            "numpy": "2.1.3",
+            "pytest": "8.4.2",
+            "safetensors": "0.8.0",
+            "tensorboard": "2.20.0",
+            "tokenizers": "0.23.1",
+            "torch": "2.11.0+cu128"
+          },
+          "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+          "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+        },
+        "generation_tokens_per_second": 528.3494394890166,
+        "max_steps": 8000,
+        "model": "baseline_small",
+        "parameters_in_tensors_with_gradients": 2164224,
+        "peak_vram_mib": 418.8955078125,
+        "physical_gpu": "1",
+        "registered_parameters": 2164224,
+        "relative_flop_budget_shortfall": 0.0,
+        "seed": 102,
+        "stop_reason": "max_steps",
+        "train_wall_seconds": 312.08090407601594,
+        "training_flops_estimated": 927863930880000,
+        "training_targets": 65536000,
+        "validation_loss": 1.3483844711412971,
+        "validation_tokens": 1144064
+      }
+    ],
+    "test_evaluated": false,
+    "tests_skipped": false
+  },
+  "schema_version": 1,
+  "worker_revision": "8798f6b84714d2c6671d970685984270078a982c"
+}

@@ -9,11 +9,11 @@ recorrente. Esta etapa valida componentes antes da confirmação independente.
 3. Ciclo 2 executado e auditado: [campanha 0017](docs/results/CAMPAIGN_0017.md).
    Manter comunicação como candidata; FiLM opcional, com candidato simplificado
    desligado e pacote completo preservado como referência. Transformer ainda lidera.
-4. Executar a [confirmação independente do ciclo 3](docs/CYCLE3_RUN.md), sem novas
-   tecnologias. Executor, dados fixados e comparações separados de alvos/FLOPs
-   estimados estão preparados; a execução científica e piloto T4 ainda são pendentes.
-   Sessões de no máximo quatro horas, cinco seeds distribuídas se necessário.
-   A100 permanece condicional.
+4. Ciclo 3 parcialmente executado e auditado: [campanha 0019](docs/results/CAMPAIGN_0019.md),
+   12 treinos completos e duas seeds. Próxima etapa: [lote de até uma hora](docs/CYCLE3_SHORT_RUN.md),
+   no máximo dois treinos novos e código científico original preservado. Avaliar a
+   seed 103 antes de decidir quanto orçamento adicional a confirmação justifica.
+   Nenhuma nova tecnologia nem promoção automática à A100.
 
 Implementação científica continua em `experiment/fractal-lrm`. Tecnologias futuras
 são condicionais; resultados novos não autorizam relaxar proveniência/retomada.
