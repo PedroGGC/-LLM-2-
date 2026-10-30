@@ -41,19 +41,30 @@ de dois blocos continuam limitados às duas seeds da [0019](docs/results/CAMPAIG
 permanecem como evidência anterior. Na 0022, 12 testes CPU e 2 CUDA FP32 passaram
 no Kaggle; pesos não constam no ZIP de resultados recebido.
 
-## Próxima etapa recomendada
+## Próxima etapa — diagnóstico das escalas
 
-Revisar a hipótese e os controles antes de novos treinos deste protocolo. A regra
+O [ciclo 4](docs/CYCLE4_RUN.md) implementa a revisão da hipótese: seis variantes,
+três seeds novas, remoção real das escalas por 4/16 e controles LRM/Transformer.
+São 18 treinos de 6.000 passos, com 72 validações completas principais. Meta de
+duas horas, teto de três, condicionado ao piloto conservador no hardware real.
+Nenhuma das tecnologias futuras será adicionada nesta rodada.
+
+Entrega em dois scripts: backup com SHA-256 da cópia local antes de esvaziar
+`/kaggle/working`; depois diagnóstico por revisão fixada. Pesos e ZIPs ficam fora
+do Git. Consulte o guia antes da limpeza; ela remove todo o conteúdo do working.
+
+A regra
 pré-fixada para vantagem FLRM exige vitória em quatro das cinco seeds; após duas
 vitórias em quatro pares, uma quinta permitiria no máximo três. A análise permanece
 exploratória/inconclusiva; isso não demonstra inviabilidade geral de outras arquiteturas
 ou regimes. A100 e novas tecnologias continuam condicionais.
 
-O [executor de lotes curtos](docs/CYCLE3_SHORT_RUN.md) preserva o teto de uma hora,
+O [executor histórico de lotes curtos](docs/CYCLE3_SHORT_RUN.md) preserva o teto de uma hora,
 até dois treinos novos e exportação incremental. O código científico permanece no
 commit da 0019, com proveniência separada do operador. A confirmação original exige
 cinco blocos completos; quatro pares disponíveis não equivalem a quatro blocos.
-A [manutenção do Kaggle](docs/KAGGLE_WORKING_RECOVERY.md) preserva campanhas e backups.
+A [manutenção anterior](docs/KAGGLE_WORKING_RECOVERY.md) preserva campanhas e backups;
+a limpeza completa nova exige primeiro backup externo verificado.
 
 ## Começar localmente
 

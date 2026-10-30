@@ -1,4 +1,60 @@
-# Validação vigente — 28/10/2026
+# Validação vigente — 30/10/2026
+
+## Implementação do ciclo 4 — 30/10/2026
+
+Código na branch `experiment/fractal-lrm`, em checkout isolado dentro de
+`artifacts/worktrees/fractal-diagnostic-impl-20261030/` da base comum. Python local
+3.12.2 (`.pyenv/pyenv-win/versions/3.12.2/python.exe`), Torch 2.14.1+cpu, Windows;
+sem venv novo. A resolução explícita do executável foi necessária porque o shim
+`python` não tinha versão global/local selecionada neste ambiente.
+
+Plano registrado antes das mudanças: [PLAN_CYCLE4.md](docs/PLAN_CYCLE4.md).
+Operação/limites: [CYCLE4_RUN.md](docs/CYCLE4_RUN.md). Nenhuma campanha científica
+foi iniciada localmente e nenhum working remoto foi limpo.
+
+Verificações reais até a conclusão da suíte geral:
+
+| Verificação | Resultado observado |
+|---|---|
+| Primeira seleção nova, antes da integração | 47 passed, 7 deselected |
+| Dois processos reais CPU, quatro checkpoints e avaliações por job | 1 passed; dois treinos/8 avaliações, ZIPs incrementais de um job e bundle final de dois |
+| Seleção nova expandida | 53 passed, 1 failed, 1 skipped, 6 deselected; a falha era um teste que tentava modo não compartilhado, já proibido pelo contrato histórico; corrigido o teste, sem relaxar o contrato |
+| `python -m pytest -q` (executável explícito acima) | 392 passed, 1 failed, 36 skipped, 428,90 s; única falha: sandbox bloqueou `sh.exe` no teste legado de clone Git local, `NtCreateDirectoryObject / 0xC0000022` |
+| Repetição isolada do teste de clone fora do sandbox | 1 passed, 1,75 s; repositórios temporários locais, sem alteração do teste/contrato |
+| Seleção final de modelos/operação/backup/JSON, após reserva de pós-treino e proteção contra corrida de deadline | 62 passed, 1 skipped (POSIX), 6 deselected (CUDA), 57,91 s |
+| Operação após travar a publicação concorrente das fases | 22 passed, 1 skipped (POSIX), 39,95 s; inclui dois processos reais e 40 fases publicadas sob lock |
+| Enumeração/fórmula dos seis modelos de produção, em meta | 18 configurações consistentes; embeddings ligados contados uma vez; totais no guia |
+| Links Markdown locais verificados | 122, sem destinos ausentes |
+| ZIP original da 0022 | SHA-256 preservado: `460b16daec5895deb87633ed1cd1d4eab40c3e5f64f9c23f22a1f9892a7346ee` |
+
+As aprovações CPU incluem causalidade nos limites dos patches, remoção física dos
+ramos e chamadas do núcleo, padrão `None` versus `[4,16]` com RNG/forward/backward
+iguais, gradientes finitos, memorização dos seis braços, checkpointing e retomada
+estrita CPU/SDPA math. Esta última exercita dropout 0,2 e acumulação 2, compara os
+contadores carregados e a próxima loss/modelo/objetivo/AdamW/scheduler/sampler/RNG;
+tempos de parede não são exigidos idênticos após nova atualização.
+
+Backup testado com arquivos temporários: último checkpoint íntegro, retenção
+conservadora de grupos/formatos desconhecidos, CRC/SHA, reuso, hash local divergente,
+alteração do inventário, worker ativo, espaço insuficiente e links externos sem
+leitura de metadados ligados ou exclusão dos destinos. Não houve carga de pickle
+nesse fluxo. A limpeza real ocorreu apenas nas fixtures temporárias.
+
+Operação testada com duas threads e dois processos independentes, publicação
+serializada, falha/cancelamento, admissão por prazo/espaço, exportação parcial,
+células inertes sem rede e célula ativa com bootstrap simulado (número do recibo,
+relógio novo e limites). Perfil CPU com pesos finais e probe K1/2/4/8 preservaram
+todos os hashes dos arquivos do checkpoint científico.
+
+Os 36 skips da suíte geral incluem testes CUDA e um teste de grupos de processos
+POSIX. Não representam aprovação de T4/Inductor/NVML nem do deadline em Linux.
+O preflight Kaggle executará os testes focados CPU/Linux e os seis braços CUDA
+FP32/Inductor com backward/checkpoint/retomada. Memorização/retomada estrita são
+evidências CPU; desempenho/energia/compilação reais dependem do hardware remoto.
+Os testes de integração CPU usam modelos/dados minúsculos; pilotos e pós-processamento
+completos da matriz de 18 treinos não foram executados nesse smoke.
+
+As seções abaixo preservam resultados e condições anteriores.
 
 ## Organização do repositório
 

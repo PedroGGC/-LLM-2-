@@ -74,6 +74,8 @@ def parser():
     profile.add_argument("--execute", action="store_true")
     profile.add_argument("--warmup-steps", type=int, default=2)
     profile.add_argument("--measure-steps", type=int, default=5)
+    profile.add_argument("--weights-checkpoint", help="profiling clone only; fresh optimizer")
+    profile.add_argument("--energy-seconds", type=float, default=0.)
     experiment = commands.add_parser("experiment", help="inspect one experiment; train only with --execute")
     experiment.add_argument("--config", required=True)
     experiment.add_argument("--execute", action="store_true")
@@ -209,7 +211,8 @@ def main(argv=None):
             if args.execute:
                 from .research.profiling import profile_step
                 result = profile_step(load_config(args.config), args.output,
-                                      warmup_steps=args.warmup_steps, measure_steps=args.measure_steps)
+                                      warmup_steps=args.warmup_steps, measure_steps=args.measure_steps,
+                                      weights_checkpoint=args.weights_checkpoint, energy_seconds=args.energy_seconds)
             else:
                 result = {"execution": "not_started", "config": args.config, "output": args.output,
                           "next_command": "Add --execute to perform one optimizer step and export its trace."}

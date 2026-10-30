@@ -2,19 +2,24 @@
 
 from pathlib import Path
 import statistics
+import time
+import math
 
 import torch
 
 from ..data import write_json
 from ..trainer import Trainer
+from .resource_telemetry import EnergyMeter, energy_result, host_memory
 
 
-def profile_step(config, output, *, warmup_steps=0, measure_steps=0):
+def profile_step(config, output, *, warmup_steps=0, measure_steps=0, weights_checkpoint=None, energy_seconds=0.):
     output = Path(output)
     if output.exists():
         raise FileExistsError("profiler output already exists")
     if type(warmup_steps) is not int or type(measure_steps) is not int or min(warmup_steps, measure_steps) < 0:
         raise ValueError("profile step counts must be nonnegative integers")
+    if not math.isfinite(energy_seconds) or energy_seconds < 0:
+        raise ValueError("invalid energy window")
     if warmup_steps + measure_steps + 1 > config.train.max_steps:
         raise ValueError("profiling needs warmup + measured + one trace step within max_steps")
     cfg = type(config).from_dict(config.to_dict())
@@ -23,8 +28,31 @@ def profile_step(config, output, *, warmup_steps=0, measure_steps=0):
     if cfg.train.device == "cuda":
         activities.append(torch.profiler.ProfilerActivity.CUDA)
     with Trainer(cfg) as trainer:
+        weight_source = None
+        if weights_checkpoint is not None:
+            from ..checkpoint import read_checkpoint_metadata
+            from safetensors.torch import load_model
+            metadata = read_checkpoint_metadata(weights_checkpoint)
+            if metadata["config"] != config.to_dict():
+                raise ValueError("profiling weights/config mismatch")
+            load_model(trainer.model, str(Path(weights_checkpoint)/"model.safetensors"))
+            weight_source = {"model_sha256": metadata["files"]["model.safetensors"],
+                             "mode": "weights-only measurement clone; fresh optimizer, not checkpoint resume"}
         warmup_samples = [trainer.train_step() for _ in range(warmup_steps)]
         samples = [trainer.train_step() for _ in range(measure_steps)]
+        meter = EnergyMeter(trainer.device)
+        begin = meter.energy_mj(); power = meter.power_watts(); power_samples = []
+        started = time.monotonic(); energy_tokens = 0
+        try:
+            if energy_seconds > 0 and (begin is not None or power is not None):
+                if power is not None: power_samples.append((started, power))
+                while time.monotonic()-started < energy_seconds and trainer.counters["step"] < cfg.train.max_steps-1:
+                    row = trainer.train_step(); energy_tokens += row["step_tokens"]
+                    value = meter.power_watts()
+                    if value is not None: power_samples.append((time.monotonic(), value))
+            energy = (energy_result(begin, meter.energy_mj(), power_samples, energy_tokens, time.monotonic()-started)
+                      if energy_tokens else energy_result(None, None, [], 0, 0))
+        finally: meter.close()
         with torch.profiler.profile(
             activities=activities, record_shapes=True, profile_memory=True, with_flops=True
         ) as profiler:
@@ -40,6 +68,7 @@ def profile_step(config, output, *, warmup_steps=0, measure_steps=0):
             event.count for event in events if event.key == "cudaLaunchKernel"
         )
         result = {
+            "weights_source": weight_source, "host_memory": host_memory(), "energy": energy,
             "step_metrics": metrics,
             "warmup_steps": warmup_steps,
             "warmup_timing": {
@@ -82,5 +111,11 @@ def profile_step(config, output, *, warmup_steps=0, measure_steps=0):
                 "GPU event intervals are not summed kernel time. Warm timings are short observations, not a scientific campaign."
             ),
         }
+        try:
+            from torch._dynamo.utils import compile_times
+            result["compiler_times"] = compile_times() if cfg.train.compile else None
+        except (ImportError, AttributeError, RuntimeError):
+            result["compiler_times"] = None
+        result["recompilations"] = "see complete log with TORCH_LOGS=recompiles; no invented zero count"
         write_json(output / "profile.json", result)
     return result

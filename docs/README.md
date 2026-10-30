@@ -5,6 +5,8 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 
 | Documento | Finalidade |
 |---|---|
+| [Dois scripts: backup e ciclo 4](CYCLE4_RUN.md) | Backup externo antes de limpeza completa; ablação de escalas, meta 2h/teto 3h |
+| [Plano prévio do ciclo 4](PLAN_CYCLE4.md) | Escopo aprovado, riscos e critérios de aceitação |
 | [Estado do projeto](PROJECT_STATUS.md) | Arquitetura real, tecnologias ativas/opcionais e limites |
 | [Campanha 0022](results/CAMPAIGN_0022.md) | Lote de 32 min, quatro pares primários, auditoria e recomendação de revisão |
 | [Campanha 0019](results/CAMPAIGN_0019.md) | Dois blocos completos, custos, NLL e auditoria dos resultados preservados |

@@ -1,4 +1,11 @@
-# Estado científico e técnico — 29/10/2026
+# Estado científico e técnico — 30/10/2026
+
+Etapa operacional atual: [ciclo 4](CYCLE4_RUN.md), implementado, sem resultados
+científicos novos. Remove fisicamente as escalas comprimidas selecionadas,
+preserva o padrão histórico e compara seis variantes em 18 treinos. Meta 2h,
+teto 3h; a GPU real ainda precisa passar no preflight e no piloto. Evidência
+mais recente: [0022](results/CAMPAIGN_0022.md), quatro pares primários e nenhuma
+vantagem geral confirmada. As seções históricas abaixo identificam seus regimes.
 
 ## Já existe Transformer dentro do modelo
 

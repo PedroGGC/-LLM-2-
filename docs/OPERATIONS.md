@@ -1,5 +1,9 @@
 # Guia operacional
 
+Operação vigente para a próxima sessão: [backup/limpeza e diagnóstico do ciclo 4](CYCLE4_RUN.md).
+As instruções de ciclos anteriores continuam para reprodução. Não executar esses
+treinos como complemento automático do ciclo 4.
+
 ## Interpretador e checkout
 
 Usar Python >=3.10 e instalação direta. Não substituir automaticamente o Torch existente.

@@ -17,6 +17,14 @@ recorrente. Esta etapa valida componentes antes da confirmação independente.
    deste protocolo e revisar a hipótese com os controles existentes; resultado
    permanece inconclusivo. Novas tecnologias/A100 continuam condicionais.
 
+5. Ciclo 4 implementado para diagnóstico exploratório, ainda sem resultado T4:
+   [plano prévio](docs/PLAN_CYCLE4.md) e [operação](docs/CYCLE4_RUN.md). Seis variantes
+   × seeds 211/212/213 × 6.000 passos; 72 validações principais; meta 2h/teto 3h.
+   Remover escalas por 4/16, preservar controle fino com projeção/gate próprios,
+   comparar com LRM cached e Transformer de dois blocos. Pilotos, perfis isolados,
+   exportação por job e backup antes da limpeza. Não reutiliza a regra positiva
+   nem altera o código congelado do ciclo 3.
+
 Implementação científica continua em `experiment/fractal-lrm`. Tecnologias futuras
 são condicionais; resultados novos não autorizam relaxar proveniência/retomada.
 A auditoria 0017 não iniciou nova campanha nem alterou código de treinamento.

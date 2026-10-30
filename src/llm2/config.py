@@ -2,7 +2,8 @@
 
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import get_type_hints
+from typing import get_type_hints, get_args, get_origin, Union
+from types import UnionType
 import math
 
 import yaml
@@ -102,13 +103,19 @@ class TrainConfig:
 
 
 def _types(obj):
+    def matches(value, expected):
+        origin = get_origin(expected)
+        if origin in (Union, UnionType):
+            return any(matches(value, item) for item in get_args(expected))
+        if origin is list:
+            return type(value) is list and all(matches(item, get_args(expected)[0]) for item in value)
+        if expected is float:
+            return type(value) in (float, int) and math.isfinite(value)
+        return type(value) is expected
     for name, expected in get_type_hints(type(obj)).items():
         value = getattr(obj, name)
-        valid = type(value) is expected
-        if expected is float:
-            valid = type(value) in (float, int) and math.isfinite(value)
-        if not valid:
-            raise ValueError(f"{type(obj).__name__}.{name}: expected {expected.__name__}")
+        if not matches(value, expected):
+            raise ValueError(f"{type(obj).__name__}.{name}: expected {expected}")
 
 
 @dataclass
@@ -157,9 +164,19 @@ class ResearchConfig:
     paired_common_init: bool = False
     context_normalization: str = "none"
     cross_scale_exchange: bool = True
+    compressed_factors: list[int] | None = None
 
     def __post_init__(self):
         _types(self)
+        if self.compressed_factors is not None:
+            if self.compressed_factors not in ([], [4], [16], [4, 16]):
+                raise ValueError("compressed_factors must be [], [4], [16], [4,16] or None")
+            if self.architecture != "fractal" or self.scale_execution != "compressed_native":
+                raise ValueError("compressed_factors requires compressed_native fractal execution")
+            if self.compressed_factors != [4, 16] and (
+                self.scale_conditioning or self.fused_film or self.v_cycle or self.inv_vcycle or self.ncm_slots
+            ):
+                raise ValueError("reduced compressed_factors requires FiLM/NCM/V-Cycles disabled")
         if self.context_normalization not in ("none", "rms"):
             raise ValueError("context_normalization must be none|rms")
         if self.context_normalization != "none" and self.architecture == "transformer":

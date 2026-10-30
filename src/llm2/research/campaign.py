@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import signal
 import sys
 import threading
 import time
@@ -85,6 +86,8 @@ def worker_environment(root, gpu=None):
                     f"CUDA_VISIBLE_DEVICES={visible!r}; choose an index within the parent mask"
                 )
             env["CUDA_VISIBLE_DEVICES"] = slots[index]
+        if env.get("LLM2_COMPILER_CACHE_ROOT"):
+            env["TORCHINDUCTOR_CACHE_DIR"] = str(Path(env["LLM2_COMPILER_CACHE_ROOT"])/f"gpu-{index}")
     return env
 
 
@@ -177,6 +180,7 @@ class Campaign:
         self.gpus = gpus if device == "cuda" else [None]
         self.lock, self.cancelled = threading.RLock(), threading.Event()
         self.processes = set()
+        self._group_killers = {}
         self.manifest = {"schema_version": 1, "created_at_utc": datetime.now(timezone.utc).isoformat(),
             "status": "preparing", "root": str(self.root), "python": sys.executable,
             "provenance": source_provenance(), "device": device, "gpu_slots": self.gpus, "runs": [],
@@ -207,8 +211,10 @@ class Campaign:
             stream.write(json.dumps({"command": command, "cwd": str(self.root),
                                      "CUDA_VISIBLE_DEVICES": env.get("CUDA_VISIBLE_DEVICES")})+"\n")
             stream.flush()
+            detached = os.name=="posix" and env.get("LLM2_CYCLE4")=="1"
             process = subprocess.Popen(command, cwd=self.root, env=env, stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+                                       stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                                       start_new_session=detached)
             with self.lock:
                 self.processes.add(process)
             try:
@@ -220,7 +226,7 @@ class Campaign:
                             metrics = json.loads(line[6:])
                         except (ValueError, TypeError):
                             continue  # The original line is already preserved in the technical log.
-                        interval = job.get("progress_interval") or 500
+                        interval = (job or {}).get("progress_interval") or 500
                         if job and (metrics["step"] % interval == 0 or metrics["step"] >= job["max_steps"]):
                             print(progress(metrics, job, time.monotonic()-started), flush=True)
                     elif action == "generate" or re.search(r"\d+ (passed|failed|skipped|deselected)", line):
@@ -228,10 +234,15 @@ class Campaign:
                 returncode = process.wait()
             finally:
                 process.stdout.close()
-                if process.poll() is None:
+                if detached:
+                    try: os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError: pass
+                elif process.poll() is None:
                     process.terminate()
                     process.wait()
                 with self.lock:
+                    killer=self._group_killers.pop(process,None)
+                    if killer is not None:killer.cancel()
                     self.processes.discard(process)
             if returncode:
                 tail = "\n".join(path.read_text(encoding="utf-8").splitlines()[-40:])
@@ -244,7 +255,18 @@ class Campaign:
             for process in tuple(self.processes):
                 if process.poll() is None:
                     try:
-                        process.terminate()
+                        if os.name=="posix" and os.environ.get("LLM2_CYCLE4")=="1":
+                            os.killpg(process.pid, signal.SIGTERM)
+                            if process not in self._group_killers:
+                                def kill_group(owned=process):
+                                    with self.lock:
+                                        if owned not in self.processes:return
+                                        try:os.killpg(owned.pid,signal.SIGKILL)
+                                        except ProcessLookupError:pass
+                                killer=threading.Timer(2.,kill_group);killer.daemon=True
+                                self._group_killers[process]=killer;killer.start()
+                        else:
+                            process.terminate()
                     except OSError:
                         pass
 

@@ -196,7 +196,9 @@ class SharedFractalCore(SharedRecursiveCore):
 class FractalRecursiveBlock(nn.Module):
     def __init__(self, config, research):
         super().__init__()
-        count = len(research.scales)
+        self.factors = tuple((4, 16) if research.compressed_factors is None else research.compressed_factors)
+        self.reduced = self.factors != (4, 16) and self.execution_is_native(research)
+        count = 1 + len(self.factors) if research.scale_execution.startswith("compressed") else len(research.scales)
         self.shared = research.share_scales
         self.execution = research.scale_execution
         self.v_cycle = research.v_cycle
@@ -215,13 +217,29 @@ class FractalRecursiveBlock(nn.Module):
         self.interaction = CrossScaleInteraction(count, config.d_model, fused=research.fused_film,
                                                  exchange=research.cross_scale_exchange)
         if self.execution.startswith("compressed"):
-            self.comp4 = CausalScaleCompressor(4, config.d_model)
-            self.comp16 = CausalScaleCompressor(16, config.d_model)
+            for factor in self.factors:
+                setattr(self, f"comp{factor}", CausalScaleCompressor(factor, config.d_model))
         self.ncm = (
             NeuralContextMemory(research.ncm_slots, config.d_model, init_parameters=False)
             if research.ncm_slots > 0
             else None
         )
+
+    @staticmethod
+    def execution_is_native(research):
+        return research.scale_execution == "compressed_native"
+
+    def selected_compressors(self):
+        return tuple(getattr(self, f"comp{factor}") for factor in self.factors)
+
+    def forward_selected(self, states, contexts, context_is_projected):
+        values = tuple(self.cores[0 if self.shared else index](
+                           state, context, context_is_projected=context_is_projected)
+                       for index, (state, context) in enumerate(zip(states, contexts)))
+        compressors = self.selected_compressors()
+        aligned = (values[0], *(comp.upsample_causal(value, values[0].shape[1])
+                                for comp, value in zip(compressors, values[1:])))
+        return self.interaction.forward_native(aligned, compressors)
 
     def forward(
         self,
@@ -231,6 +249,8 @@ class FractalRecursiveBlock(nn.Module):
         preconditioned: bool = False,
         context_is_projected: bool = False,
     ):
+        if self.reduced:
+            return self.forward_selected(states, contexts, context_is_projected)
         if self.execution.startswith("compressed"):
             s0, s1, s2 = states
             c0, c1, c2 = contexts
@@ -340,7 +360,13 @@ class FractalLatentModel(Backbone):
         context_is_projected = bool(
             self.research.share_scales and getattr(self.research, "cache_context_projection", False)
         )
-        if self.research.scale_execution.startswith("compressed"):
+        if self.block.reduced:
+            c0 = self.embedding(input_ids)
+            contexts = (c0, *(comp.compress(c0) for comp in self.block.selected_compressors()))
+            states = tuple(torch.zeros_like(context) for context in contexts)
+            if context_is_projected:
+                contexts = tuple(self.block.cores[0].project_context(context) for context in contexts)
+        elif self.research.scale_execution.startswith("compressed"):
             c0 = self.embedding(input_ids)
             c1 = self.block.comp4.compress(c0)
             c2 = self.block.comp16.compress(c0)
@@ -397,6 +423,15 @@ class FractalLatentModel(Backbone):
         d, h, s = self.config.d_model, self.config.hidden_dim, seq_len
         count, steps = len(self.research.scales), self.active_iterations()
         cached_ctx = bool(self.research.share_scales and getattr(self.research, "cache_context_projection", False))
+        if self.block.reduced:
+            lengths = (s, *((s + factor - 1) // factor for factor in self.block.factors))
+            core = sum(self.research.core_layers * (8*si*d*d + 6*si*d*h + 4*si*si*d)
+                       + (0 if cached_ctx else 2*si*d*d) for si in lengths)
+            per_iteration = core + 2*sum(lengths)*d*d
+            forward = steps*per_iteration + (2*sum(lengths)*d*d if cached_ctx else 0)
+            forward += 2*s*d*self.config.vocab_size if include_logits else 0
+            recompute = steps*per_iteration if self.training and self.research.gradient_checkpointing else 0
+            return forward, recompute, steps
         if self.research.scale_execution.startswith("compressed"):
             s1 = (s + 3) // 4
             s2 = (s + 15) // 16
@@ -434,8 +469,11 @@ class FractalLatentModel(Backbone):
 
 def fractal_parameter_formula(config, research):
     d, h, n = config.d_model, config.hidden_dim, len(research.scales)
+    factors = (4,16) if research.compressed_factors is None else research.compressed_factors
+    if research.scale_execution.startswith("compressed"):
+        n = 1 + len(factors)
     core = d*d + 2*d + research.core_layers*(4*d*d + 3*d*h + 2*d)
-    extra = 2 * d if research.scale_execution.startswith("compressed") else 0
+    extra = len(factors) * d if research.scale_execution.startswith("compressed") else 0
     ncm = research.ncm_slots * d
     return (config.vocab_size*d + d + (1 if research.share_scales else n)*core
             + d*d + n*n + n + (2*n*d if research.scale_conditioning else 0) + extra + ncm)

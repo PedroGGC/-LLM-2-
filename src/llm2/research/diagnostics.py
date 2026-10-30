@@ -760,6 +760,33 @@ def _collect_lrm_telemetry(model, input_ids, targets, *, precision: str, determi
             h.remove()
 
 
+def _collect_selected_telemetry(model, input_ids, targets, *, precision, deterministic, include_gradients):
+    records, tensors, handles = [], [], []
+    count = 1 + len(model.block.factors)
+    def capture(module, args, output):
+        index = len(records)
+        records.append({"iteration": index // count + 1,
+                        "scale": (1, *model.block.factors)[index % count],
+                        "output_rms": _rms(output), "activation_gradient_l2": None})
+        tensors.append(output)
+    handles.extend(core.register_forward_hook(capture) for core in model.block.cores)
+    try:
+        with torch.enable_grad(), attention_context(deterministic), autocast_context(input_ids.device, precision):
+            logits = model(input_ids).logits
+            parameters = [(name, p) for name, p in model.named_parameters() if p.requires_grad]
+            gradients = (torch.autograd.grad(_lm_loss(logits, targets),
+                [*tensors, *(p for _, p in parameters)], allow_unused=True) if include_gradients else ())
+        if include_gradients:
+            for record, grad in zip(records, gradients[:len(tensors)]):
+                record["activation_gradient_l2"] = None if grad is None else _l2_norm(grad)
+        return logits.detach(), {"kind": "selected_native_scales", "core_calls": records,
+            "parameter_gradients": ({name: None if grad is None else _l2_norm(grad)
+                for (name, _), grad in zip(parameters, gradients[len(tensors):])} if include_gradients else None)}
+    finally:
+        for handle in handles:
+            handle.remove()
+
+
 def diagnose_model(
     model,
     input_ids,
@@ -828,7 +855,8 @@ def diagnose_model(
 
         stage1_telemetry = None
         if hasattr(model, "block"):
-            grad_logits, stage1_telemetry = _collect_fractal_telemetry(
+            collector = _collect_selected_telemetry if getattr(model.block, "reduced", False) else _collect_fractal_telemetry
+            grad_logits, stage1_telemetry = collector(
                 model,
                 input_ids,
                 diag_targets,
