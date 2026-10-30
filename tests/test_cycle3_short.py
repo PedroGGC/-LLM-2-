@@ -138,7 +138,7 @@ def test_bootstrap_preserves_one_clock_and_separates_operator_worker(tmp_path,mo
     monkeypatch.setattr(bootstrap,'urlopen',lambda *a,**k:io.BytesIO(payload))
     monkeypatch.setattr(bootstrap.importlib.metadata,'version',lambda *a:'unchanged')
     monkeypatch.setattr(bootstrap,'checkout_hashes',lambda *a:(bootstrap.WORKER_REVISION,{'core.py':'unchanged'}))
-    monkeypatch.setattr(bootstrap,'previous_results',lambda *a:[])
+    monkeypatch.setattr(bootstrap,'previous_results',lambda *a,**k:[])
     monkeypatch.delenv('CUBLAS_WORKSPACE_CONFIG',raising=False)
     def command(arguments,**kwargs):
         commands.append((list(map(str,arguments)),kwargs))

@@ -28,15 +28,84 @@ def checkout_hashes(source,session):
     return head,hashes
 
 
-def previous_results(work,protocol_id):
-    candidates=sorted(set(work.glob('llm2-campaign-*-results.zip'))|set(Path('/kaggle/input').rglob('llm2-campaign-*-results.zip')))
-    selected=[]
+def _complete_batch(archive,report):
+    if 'campaign.json' not in archive.namelist():return False
+    if archive.getinfo('campaign.json').file_size>10*1024**2:return False
+    campaign=json.loads(archive.read('campaign.json'))
+    if not isinstance(campaign,dict):raise ValueError('campaign metadata must be a JSON object')
+    jobs=campaign.get('runs',[]);rows=report.get('rows',[])
+    if (not isinstance(jobs,list) or not isinstance(rows,list)
+            or any(not isinstance(j,dict) for j in jobs) or any(not isinstance(r,dict) for r in rows)):
+        raise ValueError('invalid session jobs or rows')
+    maximum=campaign.get('max_new_runs')
+    if (campaign.get('operational_mode')!='one_hour_batch' or type(maximum) is not int
+            or maximum not in (1,2) or not 0<len(jobs)<=maximum or len(rows)!=len(jobs)
+            or any(j.get('status')!='complete' for j in jobs)):
+        return False
+    if any(not isinstance(r.get('arm'),str) or type(r.get('seed')) is not int for r in jobs+rows):
+        raise ValueError('invalid session arm or seed')
+    expected={(j.get('arm'),j.get('seed')):j.get('checkpoint_model_sha256') for j in jobs}
+    observed={(r.get('arm'),r.get('seed')):r.get('checkpoint_model_sha256') for r in rows}
+    return (len(expected)==len(jobs) and expected==observed
+            and all(isinstance(h,str) and re.fullmatch(r'[0-9a-f]{64}',h) for h in expected.values()))
+
+
+def previous_results(work,protocol_id,*,input_root=None,audit=None):
+    input_root=Path('/kaggle/input') if input_root is None else Path(input_root)
+    candidates=sorted(set(Path(work).glob('llm2-campaign-*-results.zip'))|set(input_root.rglob('llm2-campaign-*-results.zip')))
+    audit=[] if audit is None else audit
+    selected=[];invalid=[];complete_batches=set()
     for path in candidates:
-        with zipfile.ZipFile(path) as archive:
-            name='history/report.json' if 'history/report.json' in archive.namelist() else 'report/report.json'
-            if name not in archive.namelist():continue
-            if archive.getinfo(name).file_size>10*1024**2:raise ValueError('oversized history report')
-            if json.loads(archive.read(name)).get('protocol_id')==protocol_id:selected.append(path)
+        match=re.fullmatch(r'llm2-campaign-(\d+)(?:-after-\d+)?-results\.zip',path.name)
+        number=int(match[1]) if match else None
+        record={'path':str(path),'campaign_number':number}
+        audit.append(record)
+        try:
+            with zipfile.ZipFile(path) as archive:
+                names=archive.namelist()
+                if len(names)!=len(set(names)):raise ValueError('duplicate archive names')
+                name='history/report.json' if 'history/report.json' in names else 'report/report.json'
+                if name not in names:raise ValueError('no history report in archive')
+                if archive.getinfo(name).file_size>10*1024**2:raise ValueError('oversized history report')
+                report=json.loads(archive.read(name))
+                if not isinstance(report,dict):raise ValueError('history report must be a JSON object')
+                if report.get('protocol_id')!=protocol_id:
+                    record['status']='different_protocol';continue
+                # A cumulative report may contain earlier runs. Coverage of this
+                # specific batch must use its session-only report.
+                current=report
+                if name!='report/report.json' and 'report/report.json' in names:
+                    if archive.getinfo('report/report.json').file_size>10*1024**2:raise ValueError('oversized session report')
+                    current=json.loads(archive.read('report/report.json'))
+                if not isinstance(current,dict):raise ValueError('session report must be a JSON object')
+                if current.get('protocol_id')!=protocol_id:raise ValueError('session and cumulative protocols differ')
+                if name!='report/report.json':
+                    if not isinstance(report.get('rows'),list) or not isinstance(current.get('rows'),list):
+                        raise ValueError('invalid cumulative/session rows')
+                    if any(row not in report['rows'] for row in current['rows']):
+                        raise ValueError('cumulative history is missing current session rows')
+                if number is not None and _complete_batch(archive,current):complete_batches.add(number)
+                selected.append(path);record['status']='selected'
+        except (zipfile.BadZipFile,OSError,EOFError,UnicodeError,ValueError,RuntimeError,NotImplementedError) as exc:
+            record.update(status='unreadable',reason=f'{type(exc).__name__}: {exc}')
+            invalid.append(record)
+            print(f"AVISO: não foi possível ler o histórico {path}: {record['reason']}",flush=True)
+    unresolved=[]
+    for record in invalid:
+        number=record['campaign_number']
+        if number is None:
+            record['status']='ignored_nonstandard_invalid'
+        elif number<=19:
+            record['status']='ignored_legacy_invalid'
+        elif number in complete_batches:
+            record['status']='recovered_from_complete_snapshot'
+            print(f"Histórico da tentativa {number:04d} recuperado de outro snapshot completo válido.",flush=True)
+        else:
+            record['status']='blocked_unknown_recent_history';unresolved.append(record['path'])
+    if unresolved:
+        raise ValueError('Histórico recente ilegível; não vou assumir que esses treinos não terminaram: '
+                         + ', '.join(unresolved)
+                         + '. Forneça o ZIP final válido ou um snapshot que cubra todo esse lote.')
     return selected
 
 
@@ -65,6 +134,11 @@ def bootstrap_git(revision,*,run=False,run_number=20,session_seconds=3600.,max_r
     if head!=WORKER_REVISION:raise ValueError('scientific worker revision changed')
     command(['git','diff','--exit-code','HEAD'],cwd=worker,timeout=session.remaining())
     ledger=json.loads((operator/'docs/results/campaign_0019_ledger.json').read_text(encoding='utf-8'))
+    discovery=[]
+    try:
+        history=previous_results(work,ledger['report']['protocol_id'],audit=discovery)
+    finally:
+        (parent/'history-discovery.json').write_text(json.dumps(discovery,ensure_ascii=False,indent=2)+'\n',encoding='utf-8',newline='\n')
     for name,digest in ledger['report']['identity']['source_sha256'].items():
         if hashes.get(name)!=digest:raise ValueError('scientific source differs from campaign 0019: '+name)
     for name,digest in ledger['report']['identity']['versioned_configs_sha256'].items():
@@ -80,9 +154,9 @@ def bootstrap_git(revision,*,run=False,run_number=20,session_seconds=3600.,max_r
         'operator_git_revision':revision,'operator_source_files_sha256':operator_meta['source_files_sha256'],
         'operator_source_archive':str(source_archive),
         'operator_source_archive_sha256':hashlib.sha256(source_archive.read_bytes()).hexdigest(),
-        'session_limit_seconds':session.limit,'setup_elapsed_seconds':session.elapsed,'torch_preserved':before_torch}
+        'session_limit_seconds':session.limit,'setup_elapsed_seconds':session.elapsed,'torch_preserved':before_torch,
+        'history_discovery':discovery}
     meta=parent/'bootstrap-short.json';meta.write_text(json.dumps(metadata,indent=2),encoding='utf-8',newline='\n')
-    history=previous_results(work,ledger['report']['protocol_id'])
     arguments=[sys.executable,str(operator/'scripts/run_cycle3_short.py'),'--worker-root',worker,'--execute',
         '--cache',work/'llm2-wikitext-pinned-cache','--download','--output',output,'--gpus',*gpus,'--seeds',*seeds,
         '--max-runs',max_runs,'--session-seconds',session.limit,'--export-reserve-seconds',300,

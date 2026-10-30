@@ -51,7 +51,8 @@ host podem variar somente conforme o contrato de agregação já existente.
 ## Como executar e continuar
 
 Ative Internet e GPU T4 x2; cole a célula curta entregue. Ela começa em
-`run_number=20`, `session_seconds=3600`, `max_runs=2`, seeds disponíveis 103/104/105.
+`run_number=21` na entrega corrigida (`20` na inicial), `session_seconds=3600`,
+`max_runs=2`, seeds disponíveis 103/104/105.
 O limite de dois jobs significa que somente o primeiro par pendente será executado.
 
 Ao terminar, baixe:
@@ -75,6 +76,25 @@ O ZIP contém `history/queue.json`, com IDs restantes, e
 `history/available_pairs.json`, com contrastes exploratórios para os pares já
 disponíveis. O relatório principal mantém o requisito original de cinco blocos
 completos para confirmação. Uma sessão completa não significa protocolo completo.
+
+## Descoberta de ZIPs ilegíveis
+
+A revisão `42d9179` podia parar com `BadZipFile` ao encontrar um arquivo vazio,
+truncado ou que só tinha a extensão `.zip`. A correção registra caminho e motivo
+em avisos e em `bootstrap.json/history_discovery`. Não modifica os candidatos.
+Se a descoberta parar cedo, o diagnóstico fica também em `history-discovery.json`
+na pasta temporária de código, antes de reservar número de execução.
+
+Arquivos ilegíveis de tentativas até 0019 são contornados usando a evidência auditada
+que acompanha o operador. Para tentativas >=0020, um histórico ilegível exige outro
+snapshot válido da mesma tentativa que comprove a conclusão de todo seu lote.
+Sem isso, a execução informa o arquivo e pede histórico válido, preservando a garantia
+de não assumir que treinos desconhecidos não terminaram. Conflitos entre resultados,
+código, dados e configurações continuam sendo rejeitados pelo operador.
+
+A entrega usa 0021 porque a tentativa anterior pode ter reservado 0020 antes da falha.
+Não é necessário apagar a reserva ou os arquivos anteriores. O teto de uma hora,
+os dois jobs e o worker científico congelado continuam iguais.
 
 [Plano/riscos](PLAN_CYCLE3_SHORT_SESSIONS.md) · [Validação real](../VALIDATION.md) ·
 [Protocolo científico original](CYCLE3_RUN.md)

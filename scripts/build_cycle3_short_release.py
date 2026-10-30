@@ -7,8 +7,9 @@ from pathlib import Path
 import re
 
 
-def cell(revision,run=True):
+def cell(revision,run=True,*,run_number=20):
     if not re.fullmatch(r'[0-9a-f]{40}',revision):raise ValueError('full SHA required')
+    if type(run_number) is not int or run_number<=0:raise ValueError('positive run number required')
     return f'''import time
 from urllib.request import urlopen
 
@@ -16,7 +17,7 @@ from urllib.request import urlopen
 RUN_CAMPAIGN = {run!r}
 LLM2_REVISION = {revision!r}
 LLM2_SETTINGS = {{
-    "run_number": 20,
+    "run_number": {run_number},
     "session_seconds": 3600,
     "max_runs": 2,
     "seeds": [103, 104, 105],
@@ -42,9 +43,9 @@ else:
 '''
 
 
-def build(directory,revision):
+def build(directory,revision,*,run_number=20):
     directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
-    active=cell(revision);inactive=cell(revision,False)
+    active=cell(revision,run_number=run_number);inactive=cell(revision,False,run_number=run_number)
     names=['rodar_ciclo3_kaggle_1h.py','rodar_ciclo3_kaggle_1h.ipynb','release.json']
     if any((directory/n).exists() for n in names):raise FileExistsError('use a fresh release folder')
     notebook={'nbformat':4,'nbformat_minor':5,'metadata':{'kernelspec':{'name':'python3','display_name':'Python 3','language':'python'}},
@@ -58,7 +59,7 @@ def build(directory,revision):
     for name,value in [(names[0],active),(names[1],json.dumps(notebook,ensure_ascii=False,indent=1)+'\n')]:
         with (directory/name).open('x',encoding='utf-8',newline='\n') as stream:stream.write(value)
     manifest={'revision':revision,'worker_revision':'8798f6b84714d2c6671d970685984270078a982c',
-        'session_seconds':3600,'max_runs':2,'run_number':20,
+        'session_seconds':3600,'max_runs':2,'run_number':run_number,
         'files':{n:hashlib.sha256((directory/n).read_bytes()).hexdigest() for n in names[:2]}}
     with (directory/names[2]).open('x',encoding='utf-8',newline='\n') as stream:stream.write(json.dumps(manifest,indent=2)+'\n')
     return manifest
@@ -66,4 +67,5 @@ def build(directory,revision):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--output-dir',required=True);p.add_argument('--revision',required=True)
-    a=p.parse_args();print(json.dumps(build(a.output_dir,a.revision),indent=2))
+    p.add_argument('--run-number',type=int,default=20)
+    a=p.parse_args();print(json.dumps(build(a.output_dir,a.revision,run_number=a.run_number),indent=2))

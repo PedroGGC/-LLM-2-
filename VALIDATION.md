@@ -254,3 +254,36 @@ o ambiente do novo bootstrap antes da checagem de compatibilidade; não conta co
 aprovada. `CUBLAS_WORKSPACE_CONFIG` segue a política do Trainer antes da comparação;
 o checkout congelado exige bytes LF. CUDA do operador novo permanece pendente da
 execução T4 real, ainda que o código científico já tenha sido validado na 0019.
+
+## Descoberta de ZIPs inválidos — 30/10/2026
+
+O bootstrap `42d9179` propagava `BadZipFile` ao encontrar um candidato ilegível na
+busca automática de histórico. O traceback recebido não identifica o caminho do ZIP;
+não foi atribuído o problema a um arquivo específico sem evidência. Reprodução
+com a API original confirmou a falha antes da correção.
+
+Correção limitada ao operador/entrega: caminhos e motivos são registrados;
+histórico legado ilegível pode ser contornado pela auditoria até 0019. Histórico
+recente ilegível só é recuperado quando outro snapshot da mesma tentativa comprova
+todo o lote e seus hashes de checkpoints; caso contrário, há erro explícito antes
+de treinar. Descoberta precede instalação/reserva de número. Nenhum candidato é
+apagado/modificado e a verificação científica posterior permanece estrita.
+
+Verificações reais:
+
+- `python -m pytest -q tests/test_history_discovery.py tests/test_cycle3_short.py tests/test_cycle2_bootstrap.py tests/test_cycle2_git.py tests/test_cycle3.py -k 'not cuda'`:
+  **77 passed**. Seleção CPU, sem alegação de CUDA aprovado.
+- Cobertura: ZIP vazio, texto, truncado, erro CRC, JSON/metadata inválidos; mistura
+  com históricos válidos; outro protocolo; snapshot completo versus parcial;
+  histórico cumulativo sem linhas do lote; números de tentativa e artefatos exclusivos.
+- Ensaio com cópia do ZIP real 0019 e um candidato 0018 inválido: os 12 resultados
+  foram preservados/deduplicados e a fila continuou no par primário 103. Candidato
+  inválido e ZIP original intactos. Registro em
+  `artifacts/history-discovery-fix-20261030/verification.json`.
+- 29 links locais conferidos em cada checkout e `git diff --check` limpo. Entrega
+  corrigida usa 0021 porque 0020 pode ter sido reservado pela tentativa anterior.
+
+Não houve mudança de modelo, treino, avaliação ou do worker congelado `8798f6b`.
+A suíte completa de 296 testes registrada acima não foi repetida para esta correção
+de descoberta; foram executadas as regressões relevantes indicadas. Plano prévio:
+[PLAN_HISTORY_DISCOVERY_FIX.md](docs/PLAN_HISTORY_DISCOVERY_FIX.md).
