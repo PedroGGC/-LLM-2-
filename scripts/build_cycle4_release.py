@@ -9,17 +9,20 @@ ROOT=Path(__file__).resolve().parents[1]
 NAMES=("01_backup_e_limpeza_kaggle.py","02_rodar_diagnostico_fractal.py")
 
 
-def cells(revision,*,active=True):
+def cells(revision,*,active=True,replace_backup=""):
     if not re.fullmatch(r"[0-9a-f]{40}",revision):raise ValueError("full revision required")
     hashes={name:hashlib.sha256((ROOT/"src/llm2/research"/name).read_bytes()).hexdigest()
         for name in ("kaggle_reset.py","cycle4_bootstrap.py")}
     backup=f'''import hashlib
+from pathlib import Path
 from urllib.request import urlopen
 
 # Primeiro execute em "backup". Baixe o ZIP e confira seu SHA-256 no computador.
 # Depois execute esta mesma celula em "limpar", preenchendo o hash local.
+# Cancele o download anterior antes de substituir o ZIP indicado.
 MODO = {"backup" if active else "desativado"!r}
 BACKUP_LOCAL_SHA256 = ""
+SUBSTITUIR_BACKUP = {replace_backup!r}
 REVISAO = {revision!r}
 
 if MODO in ("backup", "limpar"):
@@ -32,13 +35,14 @@ if MODO in ("backup", "limpar"):
     reset = {{"__name__": "llm2_verified_reset"}}
     exec(compile(source.decode("utf-8"), url, "exec"), reset)
     if MODO == "backup":
-        LLM2_BACKUP_INFO = reset["backup_working"]()
+        LLM2_BACKUP_INFO = reset["backup_working"](compression="deflate9", replace_backup=SUBSTITUIR_BACKUP or None)
         print("PowerShell local: Get-FileHash -LiteralPath 'CAMINHO_DO_ZIP_BAIXADO' -Algorithm SHA256")
         try:
             from IPython.display import display, FileLink
-            display(FileLink(LLM2_BACKUP_INFO["path"]))
+            display(FileLink(Path(LLM2_BACKUP_INFO["path"]).name))
         except ImportError:
             pass
+        print("Se o link não responder, use Download no painel de arquivos do Kaggle, em /kaggle/working.")
     else:
         LLM2_CLEANUP_INFO = reset["clear_working"](BACKUP_LOCAL_SHA256)
 elif MODO == "desativado":

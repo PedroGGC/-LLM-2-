@@ -1,5 +1,38 @@
 # Validação vigente — 30/10/2026
 
+## Compressão e substituição do backup — 30/10/2026
+
+Plano: [PLAN_BACKUP_COMPRESSION.md](docs/PLAN_BACKUP_COMPRESSION.md). O usuário
+relatou ZIP de quase 8 GB e download sem resposta. A inspeção confirmou ZIP_STORED
+na primeira entrega; isso não diagnostica sozinho a causa do download. O padrão
+passou a ZIP DEFLATE nível 9, com heartbeat e link relativo. Substituição exige
+nome exato, ZIP íntegro, originais iguais ao inventário, workers ausentes e espaço
+previsto suficiente. Nenhum original é excluído nessa etapa. A limpeza completa
+continua exigindo o SHA-256 calculado na cópia local do novo backup.
+
+Verificação real, Python 3.12.2/Windows, mesma instalação local:
+
+```text
+python -m pytest -q tests/test_kaggle_reset.py tests/test_backup_delivery.py tests/test_cycle4_operations.py -k "not real_two_process and not weights_profile and not early_stop"
+42 passed, 1 skipped, 6 deselected in 2.07s
+```
+
+O skip é POSIX; seis testes de integração com treino/probes/exportação ficaram
+fora desta seleção, pois não foram alterados. Casos novos cobrem layout legado
+sem campo de compressão; compressão efetiva de bytes repetitivos; DEFLATE/LZMA
+com CRC/hash e limpeza; exclusão somente do ZIP autorizado; reuso sem aninhamento;
+recusa de originais alterados/ausentes, worker, falta de espaço, ZIP corrompido,
+links/diretórios/caminhos externos; falha de compressão mantendo originais e
+removendo a saída temporária. A célula ativa foi exercitada com bootstrap
+simulado, conferindo nome explícito e nível 9; limpar não chama recompressão.
+
+Nenhum backup remoto foi lido, apagado ou comprimido por este agente. Tamanho e
+duração reais do ZIP do usuário não foram medidos. O ensaio com dados repetitivos
+é um teste de compressão/integridade, não previsão da taxa de compressão de pesos.
+Não houve alteração de arquitetura, hiperparâmetros, protocolo ou treino. A entrega
+de correção modifica somente o primeiro entrypoint; o segundo original permanece
+fixado em `6a6af1a`, sem substituir a entrega anterior.
+
 ## Implementação do ciclo 4 — 30/10/2026
 
 Código na branch `experiment/fractal-lrm`, em checkout isolado dentro de

@@ -49,9 +49,10 @@ São 18 treinos de 6.000 passos, com 72 validações completas principais. Meta 
 duas horas, teto de três, condicionado ao piloto conservador no hardware real.
 Nenhuma das tecnologias futuras será adicionada nesta rodada.
 
-Entrega em dois scripts: backup com SHA-256 da cópia local antes de esvaziar
+Entrega em dois scripts: backup ZIP nível 9 com SHA-256 da cópia local antes de esvaziar
 `/kaggle/working`; depois diagnóstico por revisão fixada. Pesos e ZIPs ficam fora
-do Git. Consulte o guia antes da limpeza; ela remove todo o conteúdo do working.
+do Git. O guia inclui substituição verificada do ZIP inicial sem compressão.
+Consulte-o antes da limpeza; ela remove todo o conteúdo do working.
 
 A regra
 pré-fixada para vantagem FLRM exige vitória em quatro das cinco seeds; após duas

@@ -16,6 +16,23 @@ fontes, configurações, relatórios e ZIPs existentes são incluídos conservad
 Links têm suas definições registradas; seus destinos externos não são copiados.
 Caches temporários explicitamente conhecidos são excluídos.
 
+O backup agora usa **ZIP DEFLATE nível 9**. A primeira entrega usava ZIP_STORED,
+sem compressão; ambas são verificadas por CRC/hashes. Para substituir um backup
+grande, cancele primeiro sua tentativa de download e preencha `SUBSTITUIR_BACKUP`
+com o nome exato do ZIP. A entrega de correção já traz o nome informado em
+30/10/2026. O utilitário confere o ZIP e todos os originais contra o inventário,
+calcula espaço e só então remove **esse ZIP**, para liberar espaço para a nova
+compressão. Originais nunca são removidos nessa etapa. Se mudaram ou estão
+ausentes, a substituição é bloqueada. Falha de compressão permite repetir a célula.
+O novo SHA da cópia local será necessário para a limpeza completa.
+
+Há heartbeat a cada 15 s durante verificação/compressão. O recibo inclui tamanho,
+perfil de compressão e identificação/hash do ZIP substituído. O link usa o nome
+relativo do arquivo; também se pode baixar pelo painel de arquivos do Kaggle.
+Não há garantia de redução específica: pesos e ZIPs já comprimidos podem reduzir
+pouco. A correção desta manutenção não exige trocar a revisão científica do
+segundo script entregue originalmente (`6a6af1a`).
+
 Baixe esse ZIP para o computador. Calcule o hash da **cópia baixada**:
 
 ```powershell

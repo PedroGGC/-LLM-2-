@@ -1,5 +1,6 @@
 """Standalone stdlib backup and externally verified reset of Kaggle working."""
 from datetime import datetime, timezone
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -9,12 +10,27 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import threading
+import time
 import zipfile
 
 KIND = "llm2-working-backup-v1"
 EPHEMERAL = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
              ".virtual_documents", ".ipynb_checkpoints"}
 WEIGHTS = {".pt", ".pth", ".ckpt", ".safetensors"}
+COMPRESSION = {"stored": (zipfile.ZIP_STORED, None),
+               "deflate9": (zipfile.ZIP_DEFLATED, 9), "lzma": (zipfile.ZIP_LZMA, None)}
+
+
+@contextmanager
+def progress(label):
+    stopped = threading.Event(); started = time.monotonic()
+    def heartbeat():
+        while not stopped.wait(15):
+            print(f"{label}: em andamento há {time.monotonic()-started:.0f} s", flush=True)
+    monitor = threading.Thread(target=heartbeat, daemon=True); monitor.start()
+    try: yield
+    finally: stopped.set(); monitor.join()
 
 
 def sha256_file(path):
@@ -138,6 +154,9 @@ def read_backup(path, *, expected_root=None, verify=True):
         manifest = json.loads(archive.read("backup_manifest.json"))
         if manifest["kind"] != KIND or (expected_root is not None and manifest["root"] != str(expected_root)):
             raise ValueError("backup root/kind mismatch")
+        method = COMPRESSION.get(manifest.get("compression", "stored"))
+        if method is None or any(info.compress_type != method[0] for info in archive.infolist()):
+            raise ValueError("backup compression differs from manifest")
         if set(names) != {"backup_manifest.json", *("working/"+n for n in manifest["selected_files"])}:
             raise ValueError("backup member set differs from manifest")
         if verify:
@@ -153,37 +172,91 @@ def read_backup(path, *, expected_root=None, verify=True):
         return manifest
 
 
-def backup_working(base="/kaggle/working"):
+def replacement_path(base, name):
+    if not name: return None
+    if not isinstance(name, str) or not re.fullmatch(r"llm2-working-backup-[0-9]{8}-[0-9]{6}-[0-9a-f]{6}\.zip", name):
+        raise ValueError("Informe somente o nome exato do ZIP de backup, sem caminho ou curinga.")
+    path = base/name
+    if path.is_symlink() or (path.exists() and not path.is_file()):
+        raise ValueError("replacement must be a regular backup file, never a link/directory")
+    return path
+
+
+def remove_replaced_backup(base, path):
+    """Delete only an explicitly named generated ZIP after checking all originals."""
+    if path.parent != base or path.is_symlink() or path.resolve().parent != base:
+        raise ValueError("replacement target must stay directly inside working")
+    if not path.exists(): return None  # Retry after a compression failure or a completed replacement.
+    before = path.lstat()
+    print("Conferindo o ZIP anterior e seus arquivos originais antes da substituição.", flush=True)
+    manifest = read_backup(path, expected_root=base)
+    records = inventory(base, exclude=(path,))
+    if records != manifest["inventory"]:
+        raise RuntimeError("Originais mudaram ou estão ausentes; ZIP anterior preservado. Substituição bloqueada.")
+    files, *_ = checkpoint_selection(base, records)
+    required = sum(records[n]["bytes"] for n in files)+512*1024**2
+    if shutil.disk_usage(base).free+before.st_size < required:
+        raise OSError("Espaço insuficiente mesmo após remover o ZIP anterior; nenhum arquivo foi apagado.")
+    digest = sha256_file(path)
+    after = path.lstat()
+    if path.is_symlink() or (before.st_size, before.st_mtime_ns, before.st_ino) != (
+            after.st_size, after.st_mtime_ns, after.st_ino) or active_workers():
+        raise RuntimeError("Backup ou workers mudaram; substituição bloqueada.")
+    path.unlink()
+    print("Removido somente o ZIP anterior: "+path.name+". Arquivos originais preservados.", flush=True)
+    return {"name": path.name, "bytes": before.st_size, "sha256": digest,
+            "original_inventory_verified": True}
+
+
+def backup_working(base="/kaggle/working", *, compression="deflate9", replace_backup=None):
+    if compression not in COMPRESSION: raise ValueError("compression must be deflate9|lzma|stored")
+    with progress("Verificação/compressão do backup"):
+        return _backup_working(base, compression=compression, replace_backup=replace_backup)
+
+
+def _backup_working(base, *, compression, replace_backup):
     base = root_directory(base)
+    replacement = replacement_path(base, replace_backup)
     workers = active_workers()
     if workers: raise RuntimeError("Workers ativos; aguarde o fim antes do backup: "+str(workers))
     # Reuse a matching verified backup after a repeated cell or kernel restart.
     for previous in sorted(base.glob("llm2-working-backup-*.zip"), reverse=True):
-        try: manifest = read_backup(previous, expected_root=base)
+        if previous.is_symlink(): continue
+        try:
+            manifest = read_backup(previous, expected_root=base, verify=False)
+            if manifest.get("compression", "stored") != compression: continue
+            read_backup(previous, expected_root=base)
         except (ValueError, OSError, KeyError, zipfile.BadZipFile): continue
         if inventory(base, exclude=(previous,)) == manifest["inventory"]:
             return backup_receipt(previous, manifest, reused=True)
+    replaced = remove_replaced_backup(base, replacement) if replacement is not None else None
+    print("Inventariando os originais para o novo backup.", flush=True)
     records = inventory(base)
     files, omitted, latest, unclassified, warnings = checkpoint_selection(base, records)
     required = sum(records[n]["bytes"] for n in files) + 512*1024**2
     if shutil.disk_usage(base).free < required:
-        raise OSError("Espaço insuficiente para backup; nenhum dado foi apagado. Necessário: "+str(required))
+        raise OSError("Espaço insuficiente para backup; originais preservados. Cancele downloads antigos se o espaço não foi liberado. Necessário: "+str(required))
     manifest = {"kind": KIND, "root": str(base), "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "inventory": records, "selected_files": files, "omitted_older_checkpoints": omitted,
         "verified_latest_checkpoints": latest, "unclassified_weights_preserved": unclassified,
         "warnings": warnings, "next_run_number": next_run_number(records),
+        "compression": compression, "replaced_backup": replaced,
         "symlinks": "definitions recorded in inventory; external targets not followed"}
     descriptor, name = tempfile.mkstemp(prefix=".llm2-backup-writing-", suffix=".zip", dir=base)
     os.close(descriptor); temporary = Path(name)
     destination = base/("llm2-working-backup-"+datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")+"-"+os.urandom(3).hex()+".zip")
     try:
-        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+        method, level = COMPRESSION[compression]
+        print(f"Comprimindo {sum(records[n]['bytes'] for n in files)/1024**3:.2f} GiB de entrada com {compression}.", flush=True)
+        with zipfile.ZipFile(temporary, "w", compression=method, compresslevel=level, allowZip64=True) as archive:
             archive.writestr("backup_manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
             for index, relative in enumerate(files, 1):
                 path = base/relative
                 if path.is_symlink() or not path.resolve().is_relative_to(base): raise ValueError("file changed to external link")
                 archive.write(path, "working/"+relative)
-                if index % 100 == 0: print(f"Backup: {index}/{len(files)} arquivos", flush=True)
+                if index % 100 == 0:
+                    print(f"Backup: {index}/{len(files)} arquivos; ZIP {temporary.stat().st_size/1024**3:.2f} GiB", flush=True)
+        print("Conferindo CRC, hashes e inventário do ZIP comprimido.", flush=True)
         read_backup(temporary, expected_root=base)
         if active_workers() or inventory(base, exclude=(temporary,)) != records:
             raise RuntimeError("Working mudou durante o backup; nada foi apagado.")
@@ -196,6 +269,9 @@ def backup_working(base="/kaggle/working"):
 def backup_receipt(path, manifest, *, reused=False):
     result = {"status": "backup_ready", "path": str(path), "sha256": sha256_file(path),
               "bytes": path.stat().st_size, "next_run_number": manifest["next_run_number"],
+              "compression": manifest.get("compression", "stored"),
+              "source_bytes": sum(manifest["inventory"][n]["bytes"] for n in manifest["selected_files"]),
+              "replaced_backup": manifest.get("replaced_backup"),
               "latest_checkpoints": len(manifest["verified_latest_checkpoints"]), "reused": reused,
               "warnings": manifest["warnings"], "unclassified_weights": manifest["unclassified_weights_preserved"]}
     print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)

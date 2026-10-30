@@ -96,3 +96,91 @@ def test_linked_metadata_is_not_read_as_checkpoint_metadata(working,tmp_path):
     receipt=reset.backup_working(working)
     assert receipt["warnings"]
     assert reset.read_backup(receipt["path"])["inventory"][meta.relative_to(working).as_posix()]["kind"]=="symlink"
+
+
+def legacy_backup(working):
+    """Build the old stored layout, including the missing compression field."""
+    receipt=reset.backup_working(working,compression="stored")
+    path=Path(receipt["path"])
+    with zipfile.ZipFile(path) as archive:contents={n:archive.read(n) for n in archive.namelist()}
+    manifest=json.loads(contents["backup_manifest.json"]);manifest.pop("compression")
+    contents["backup_manifest.json"]=json.dumps(manifest).encode()
+    with zipfile.ZipFile(path,"w",compression=zipfile.ZIP_STORED) as archive:
+        for name,value in contents.items():archive.writestr(name,value)
+    return path
+
+
+def test_recompress_legacy_backup_real_deflate_and_retry_without_nesting(working):
+    (working/"data/train.bin").write_bytes(b"compressible prepared data\n"*80000)
+    old=legacy_backup(working);before=reset.inventory(working,exclude=(old,));old_size=old.stat().st_size
+    receipt=reset.backup_working(working,replace_backup=old.name)
+    new=Path(receipt["path"])
+    assert not old.exists() and new.stat().st_size<old_size/20
+    assert reset.inventory(working,exclude=(new,))==before
+    assert receipt["compression"]=="deflate9" and receipt["replaced_backup"]["name"]==old.name
+    with zipfile.ZipFile(new) as archive:
+        assert all(i.compress_type==zipfile.ZIP_DEFLATED for i in archive.infolist())
+        assert not any(old.name in n for n in archive.namelist())
+    assert reset.backup_working(working,replace_backup=old.name)["reused"]
+    assert reset.clear_working(receipt["sha256"],working)["status"]=="cleaned"
+
+
+@pytest.mark.parametrize("change",["changed","missing","worker","space","corrupt"])
+def test_replacement_refuses_before_deleting_old_zip(working,monkeypatch,change):
+    from types import SimpleNamespace
+    old=legacy_backup(working)
+    if change=="changed":(working/"data/train.bin").write_bytes(b"new data")
+    if change=="missing":(working/"data/train.bin").unlink()
+    if change=="worker":monkeypatch.setattr(reset,"active_workers",lambda:[123])
+    if change=="space":monkeypatch.setattr(reset.shutil,"disk_usage",lambda *a:SimpleNamespace(free=1))
+    if change=="corrupt":
+        with zipfile.ZipFile(old) as archive:
+            info=archive.getinfo("working/data/train.bin")
+        with old.open("r+b") as stream:
+            stream.seek(info.header_offset+26);lengths=stream.read(4)
+            offset=info.header_offset+30+int.from_bytes(lengths[:2],"little")+int.from_bytes(lengths[2:],"little")
+            stream.seek(offset);original=stream.read(1);stream.seek(offset);stream.write(bytes([original[0]^1]))
+    with pytest.raises((ValueError,RuntimeError,OSError)):reset.backup_working(working,replace_backup=old.name)
+    assert old.exists() and (working/"unclassified.pth").read_bytes()==b"legacy"
+
+
+@pytest.mark.parametrize("name",["../outside.zip",r"..\outside.zip","*.zip","/kaggle/input/backup.zip"])
+def test_replacement_target_cannot_escape_working(working,name):
+    with pytest.raises(ValueError):reset.backup_working(working,replace_backup=name)
+    assert (working/"data/train.bin").exists()
+
+
+def test_replacement_refuses_link_and_directory(working,tmp_path):
+    name="llm2-working-backup-20261030-225306-9a2303.zip"
+    directory=working/name;directory.mkdir()
+    with pytest.raises(ValueError):reset.backup_working(working,replace_backup=name)
+    directory.rmdir()
+    outside=tmp_path/"outside";outside.write_bytes(b"keep")
+    try:(working/name).symlink_to(outside)
+    except OSError:pytest.skip("symlink privilege unavailable")
+    with pytest.raises(ValueError):reset.backup_working(working,replace_backup=name)
+    assert outside.read_bytes()==b"keep"
+
+
+def test_direct_replacement_helper_rejects_external_target(working,tmp_path):
+    outside=tmp_path/"llm2-working-backup-20261030-225306-9a2303.zip"
+    outside.write_bytes(b"keep")
+    with pytest.raises(ValueError):reset.remove_replaced_backup(working,outside)
+    assert outside.read_bytes()==b"keep"
+
+
+def test_compression_failure_removes_only_temp_and_can_retry(working,monkeypatch):
+    old=legacy_backup(working);before=reset.inventory(working,exclude=(old,))
+    with monkeypatch.context() as patch:
+        patch.setattr(zipfile.ZipFile,"write",lambda *a,**k:(_ for _ in ()).throw(OSError("injected compression failure")))
+        with pytest.raises(OSError,match="injected"):reset.backup_working(working,replace_backup=old.name)
+    assert reset.inventory(working)==before and not old.exists()
+    assert not list(working.glob(".llm2-backup-writing-*"))
+    assert reset.backup_working(working,replace_backup=old.name)["compression"]=="deflate9"
+
+
+@pytest.mark.parametrize("compression",["deflate9","lzma"])
+def test_supported_compression_roundtrip(working,compression):
+    result=reset.backup_working(working,compression=compression)
+    assert reset.read_backup(result["path"])["compression"]==compression
+    assert reset.clear_working(result["sha256"],working)["status"]=="cleaned"
