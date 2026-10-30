@@ -351,3 +351,19 @@ Verificações locais reais:
 
 Esses checks são CPU/arquivos locais, não a suíte completa nem execução CUDA ou
 limpeza no Kaggle. Nenhuma alteração de treino, dataset, horizontes ou worker.
+
+## Entrega 0022 — par primário seed 104, 30/10/2026
+
+A saída de manutenção recebida informa ambos os jobs da 0021 completos/exportados,
+sem workers ativos ou avisos. Os ZIPs finais ainda não foram auditados localmente.
+Entrega nova usa o operador já publicado `0066131`, worker congelado `8798f6b`,
+seed 104, até dois jobs e teto de 3.600 s a partir da nova célula. Não altera fontes
+do operador, treino, horizontes ou protocolo. Preservar o histórico mais recente da
+0021 no working/Input para agregação automática.
+
+Verificação da entrega em `dist/cycle3-seed104-1h-20261030/verification.json`:
+hashes do manifesto conferidos; bootstrap remoto igual ao código publicado; célula
+ativa exercitada com bootstrap simulado, confirmando parâmetros e relógio novo;
+notebook desativado sem rede. A seleção retorna `anchor_flrm-seed-104` e
+`flops_transformer-seed-104`; jobs concluídos são pulados. Não houve treino local,
+novo teste CUDA ou repetição da suíte: somente configuração e verificação da entrega.
