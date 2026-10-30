@@ -73,7 +73,7 @@ Todas as execuções tiveram o melhor checkpoint avaliado no passo final; conver
 não foi demonstrada. Os pesos não estão no ZIP de análise: hashes de checkpoints e
 inicialização foram conferidos nos registros, sem rehash de pesos ausentes.
 
-## Evidência mais recente: campanha 0019
+## Evidência anterior: campanha 0019
 
 [Relatório](results/CAMPAIGN_0019.md): 12 treinos e 48 avaliações completos em
 WikiText-103, seeds 101/102. CPU 280 e CUDA FP32 25 testes aprovados no Kaggle.
@@ -92,15 +92,26 @@ NLL 1,320334273. Pesos/estado conferidos por hash; histórico com 13 treinos. O 
 103 estava pendente no snapshot. O erro de número ocupado pertence a uma nova
 tentativa e preserva a pasta existente; não comprova falha do treino original.
 
-## Próxima etapa
+## Evidência mais recente: campanha 0022
 
-[Operar em lotes de até uma hora](CYCLE3_SHORT_RUN.md), até dois treinos novos,
-começando pelo par primário da seed 103. Reaproveitar os 12 completos e preservar
-quatro avaliações completas, curvas e diagnósticos. Código científico original
-congelado em checkout próprio; operador com proveniência separada. Testes remotos
-focados nas famílias presentes, com opção de suíte completa, sem declarar cobertura
-integral onde só houve seleção. Snapshots são salvos após cada conclusão.
+[Relatório auditado](results/CAMPAIGN_0022.md): dois treinos novos, oito avaliações
+completas, 32min05s registrados, 12 CPU e 2 CUDA FP32 aprovados no Kaggle. Histórico
+com 16 treinos e quatro pares primários (101–104). NLL seed 104: FLRM 1,318235,
+Transformer 1,312205. Média das diferenças pareadas +0,001845, IC95% exploratório
+[−0,006698; +0,010387]; duas vitórias para cada arquitetura. Equivalência não demonstrada.
+
+A regra pré-fixada exige FLRM melhor em quatro de cinco seeds para confirmar vantagem.
+Com duas vitórias em quatro pares, uma quinta seed permitiria no máximo três.
+Há somente dois blocos completos de seis braços; o resultado permanece inconclusivo.
+
+## Próxima etapa recomendada
+
+Pausar novos treinos deste protocolo e revisar a hipótese usando os controles já
+medidos. A fila registra 14 jobs pendentes, sem obrigação de executá-los para
+encerrar esta análise exploratória. Uma nova experiência exige pergunta e critérios
+próprios. A auditoria não muda o protocolo original nem inicia treino.
 
 A100, profundidade variável, compressão adaptativa e demais tecnologias permanecem
 condicionais. Uma sessão curta não demonstra aceleração de kernel nem substitui a
-confirmação de cinco seeds. Reavaliar o custo da investigação após a próxima seed.
+confirmação prevista. [Lotes curtos](CYCLE3_SHORT_RUN.md) continuam disponíveis como
+infraestrutura, com preservação de horizontes, avaliações e snapshots.

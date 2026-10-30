@@ -4,6 +4,12 @@ O número ocupado significa que outra pasta/reserva já usa o ID. Os ZIPs after-
 confirmam um FLRM 103 concluído e preservado. O script de manutenção não remove
 campanhas, datasets, ZIPs, checkpoints nem a numeração.
 
+**Resultado recebido em 30/10:** a manutenção removeu 23 checkouts reproduzíveis;
+o consumo de arquivos caiu de 11,478 para 11,434 GiB. Campanhas antigas concentram
+o espaço. Ambos os jobs da 0021 estavam completos/exportados, sem workers ativos
+ou avisos. A [0022](results/CAMPAIGN_0022.md) já concluiu o par 104 e orienta a
+decisão atual. A célula de continuação descrita abaixo registra a recuperação 0021.
+
 ## Célula de manutenção
 
 Cole `limpar_working_kaggle.py` em uma célula e execute. Ele usa apenas a biblioteca

@@ -5,6 +5,13 @@ Vigente após a [campanha 0019](results/CAMPAIGN_0019.md). O usuário escolheu t
 treinos, avaliações e exportação. Os últimos 300 s são reserva de exportação.
 Uma hora é teto; o lote pode terminar antes. Execuções continuam seriais e isoladas.
 
+**Atualização 0022:** [16 treinos preservados, quatro pares primários](results/CAMPAIGN_0022.md).
+O par 104 terminou em cerca de 32 minutos, com as quatro avaliações de cada modelo.
+Recomenda-se revisar a hipótese antes de iniciar outro lote: a regra positiva de
+quatro vitórias FLRM em cinco seeds já não pode ser cumprida após duas vitórias em
+quatro pares. As instruções abaixo descrevem a infraestrutura e as entregas anteriores;
+o relatório atual orienta a decisão sobre os 14 jobs restantes.
+
 ## O que muda
 
 - Até **dois treinos novos por execução**, em vez de tentar seis modelos de uma seed

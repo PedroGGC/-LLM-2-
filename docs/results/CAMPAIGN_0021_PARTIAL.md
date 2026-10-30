@@ -46,3 +46,12 @@ Preservar/anexar o ZIP de resultados after-01 para a fila pular o FLRM já concl
 Não comparar a média FLRM de três seeds à média de um controle com somente duas.
 
 Limpeza preparada: [recuperação do working](../KAGGLE_WORKING_RECOVERY.md).
+
+## Atualização recebida com a 0022
+
+O histórico cumulativo da [0022](CAMPAIGN_0022.md) contém também o Transformer 103
+concluído: 19.472 passos e NLL 1,313700155. O FLRM 103 permanece idêntico ao snapshot
+auditado. A saída de manutenção já informara os dois jobs completos/exportados.
+Os logs e as janelas brutas do Transformer 103 ainda não foram recebidos localmente;
+sua linha foi conferida na agregação, sem reconstrução independente dessa NLL.
+A recuperação do par 103 já não é a próxima ação; consultar o relatório 0022.

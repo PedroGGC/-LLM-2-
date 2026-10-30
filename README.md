@@ -21,43 +21,39 @@ Este checkout contém a pesquisa fractal: **`experiment/fractal-lrm`**.
 A implementação fractal permanece isolada. O identificador `fractal` em uma configuração
 não instala esse código na branch comum. Confira `git branch --show-current` antes de trabalhar.
 
-## Estado atual — 29/10/2026
+## Estado atual — 30/10/2026
 
-A [campanha 0019](docs/results/CAMPAIGN_0019.md) preservou **12 treinos completos e
-48 avaliações completas** em WikiText-103, seeds 101/102. O executor registrou parada
-controlada aos 2h40min45s por previsão de orçamento; a queda de rede não aparece
-como causa de parada no arquivo recebido. Restam as seeds 103/104/105. O
-[snapshot posterior da 0021](docs/results/CAMPAIGN_0021_PARTIAL.md) acrescenta o FLRM
-103 completo: são 13 treinos preservados. O estado vivo do controle 103 ainda precisa
-ser conferido antes de continuar.
+A [campanha 0022](docs/results/CAMPAIGN_0022.md) concluiu o par primário da seed 104
+em cerca de **32 minutos**, mantendo oito avaliações completas. O histórico cumulativo
+preserva **16 treinos** e quatro pares FLRM × Transformer (101–104); somente as seeds
+101/102 têm os seis braços completos. Há 14 jobs pendentes na matriz original.
 
-| FLOPs estimados semelhantes — médias de duas seeds | NLL ↓ |
+| FLOPs estimados semelhantes — médias de quatro seeds | NLL ↓ |
 |---|---:|
-| Transformer de dois blocos | **1,196534** |
-| LRM K=2 | 1,278126 |
-| FLRM com comunicação, sem FiLM | 1,308835 |
-| Transformer pequeno | 1,311478 |
+| Transformer pequeno | **1,312215** |
+| FLRM com comunicação, sem FiLM | 1,314060 |
 
-O ganho FLRM frente ao Transformer pequeno é 0,002643, abaixo do limiar operacional,
-com intervalo amplo cruzando zero. LRM e Transformer de dois blocos tiveram menor
-NLL que o FLRM nas duas seeds. Duas seeds ainda não confirmam a hipótese; parâmetros
-não foram igualados. [Ciclo 2](docs/results/CAMPAIGN_0017.md) e
-[ciclo 1](docs/results/CAMPAIGN_0016.md) permanecem como evidência anterior.
+Diferença FLRM − Transformer: **+0,001845**, IC95% pareado exploratório
+[−0,006698; +0,010387]. Duas vitórias para cada arquitetura. Ainda não há vantagem
+confirmada nem equivalência demonstrada. Os resultados dos controles LRM e Transformer
+de dois blocos continuam limitados às duas seeds da [0019](docs/results/CAMPAIGN_0019.md).
+[Ciclo 2](docs/results/CAMPAIGN_0017.md) e [ciclo 1](docs/results/CAMPAIGN_0016.md)
+permanecem como evidência anterior. Na 0022, 12 testes CPU e 2 CUDA FP32 passaram
+no Kaggle; pesos não constam no ZIP de resultados recebido.
 
-## Próxima etapa
+## Próxima etapa recomendada
 
-Por solicitação do usuário, próximas sessões têm **teto total de uma hora**, com
-**até dois treinos novos**, validação focada e exportação após cada conclusão.
-Na recuperação da 0021, o FLRM 103 já está concluído. A entrega de
-[manutenção e continuação](docs/KAGGLE_WORKING_RECOVERY.md) confere processos/estado,
-preserva backups e executa até um próximo job pendente, com novo número livre.
-Os 12 resultados completos serão reaproveitados. Horizontes, quatro avaliações
-completas, curvas e diagnósticos são preservados.
+Revisar a hipótese e os controles antes de novos treinos deste protocolo. A regra
+pré-fixada para vantagem FLRM exige vitória em quatro das cinco seeds; após duas
+vitórias em quatro pares, uma quinta permitiria no máximo três. A análise permanece
+exploratória/inconclusiva; isso não demonstra inviabilidade geral de outras arquiteturas
+ou regimes. A100 e novas tecnologias continuam condicionais.
 
-O operador novo usa workers no mesmo commit científico da 0019 e registra sua própria
-proveniência separadamente. A confirmação continua exigindo cinco blocos completos;
-um lote completo não encerra toda a pesquisa. A100 e novas tecnologias continuam
-condicionais. [Guia vigente: ciclo 3 em lotes curtos](docs/CYCLE3_SHORT_RUN.md).
+O [executor de lotes curtos](docs/CYCLE3_SHORT_RUN.md) preserva o teto de uma hora,
+até dois treinos novos e exportação incremental. O código científico permanece no
+commit da 0019, com proveniência separada do operador. A confirmação original exige
+cinco blocos completos; quatro pares disponíveis não equivalem a quatro blocos.
+A [manutenção do Kaggle](docs/KAGGLE_WORKING_RECOVERY.md) preserva campanhas e backups.
 
 ## Começar localmente
 

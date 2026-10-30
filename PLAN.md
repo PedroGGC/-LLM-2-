@@ -1,6 +1,6 @@
 # Plano vigente
 
-Atualizado em 29/10/2026. O projeto usa Transformer como baseline e como bloco do núcleo
+Atualizado em 30/10/2026. O projeto usa Transformer como baseline e como bloco do núcleo
 recorrente. Esta etapa valida componentes antes da confirmação independente.
 
 1. Organização concluída, conforme a [auditoria de limpeza](docs/CLEANUP_AUDIT.md).
@@ -9,11 +9,13 @@ recorrente. Esta etapa valida componentes antes da confirmação independente.
 3. Ciclo 2 executado e auditado: [campanha 0017](docs/results/CAMPAIGN_0017.md).
    Manter comunicação como candidata; FiLM opcional, com candidato simplificado
    desligado e pacote completo preservado como referência. Transformer ainda lidera.
-4. Ciclo 3 parcialmente executado: 12 treinos da 0019 e o FLRM 103 completo na
-   [0021](docs/results/CAMPAIGN_0021_PARTIAL.md), total 13. Conferir o estado vivo
-   e liberar somente caches de código com a [manutenção preparada](docs/KAGGLE_WORKING_RECOVERY.md).
-   Recuperação com até um job pendente, novo número e teto de uma hora. Reavaliar
-   investimento após completar o comparador 103; novas tecnologias/A100 condicionais.
+4. Ciclo 3 parcialmente executado: [0022](docs/results/CAMPAIGN_0022.md) preserva
+   16 treinos e quatro pares primários. FLRM − Transformer médio +0,001845 NLL,
+   IC exploratório cruzando zero; duas vitórias por arquitetura. Somente dois
+   blocos de seis braços estão completos. A regra positiva de quatro vitórias em
+   cinco seeds já não é alcançável neste ensaio. Recomendação: pausar novos treinos
+   deste protocolo e revisar a hipótese com os controles existentes; resultado
+   permanece inconclusivo. Novas tecnologias/A100 continuam condicionais.
 
 Implementação científica continua em `experiment/fractal-lrm`. Tecnologias futuras
 são condicionais; resultados novos não autorizam relaxar proveniência/retomada.

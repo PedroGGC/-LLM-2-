@@ -1,11 +1,12 @@
 # Documentação
 
-Atualizado em 29/10/2026. Comece pelos documentos vigentes abaixo. A implementação
+Atualizado em 30/10/2026. Comece pelos documentos vigentes abaixo. A implementação
 fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém esse módulo.
 
 | Documento | Finalidade |
 |---|---|
 | [Estado do projeto](PROJECT_STATUS.md) | Arquitetura real, tecnologias ativas/opcionais e limites |
+| [Campanha 0022](results/CAMPAIGN_0022.md) | Lote de 32 min, quatro pares primários, auditoria e recomendação de revisão |
 | [Campanha 0019](results/CAMPAIGN_0019.md) | Dois blocos completos, custos, NLL e auditoria dos resultados preservados |
 | [Snapshot da 0021](results/CAMPAIGN_0021_PARTIAL.md) | FLRM 103 concluído, pesos conferidos e histórico com 13 treinos |
 | [Espaço e continuação no Kaggle](KAGGLE_WORKING_RECOVERY.md) | Limpeza limitada a código reproduzível e guarda de processos/checkpoints |

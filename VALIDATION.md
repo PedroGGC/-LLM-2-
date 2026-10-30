@@ -367,3 +367,39 @@ ativa exercitada com bootstrap simulado, confirmando parâmetros e relógio novo
 notebook desativado sem rede. A seleção retorna `anchor_flrm-seed-104` e
 `flops_transformer-seed-104`; jobs concluídos são pulados. Não houve treino local,
 novo teste CUDA ou repetição da suíte: somente configuração e verificação da entrega.
+
+## Auditoria dos resultados 0022 — 30/10/2026
+
+[Relatório](docs/results/CAMPAIGN_0022.md) e evidência estruturada/curvas/pares
+versionados em `docs/results/campaign_0022_*`. Plano anterior e auditor local em
+`artifacts/audits/campaign-0022-2026-10-30/`. ZIP original SHA-256
+`460b16daec5895deb87633ed1cd1d4eab40c3e5f64f9c23f22a1f9892a7346ee`,
+4.908.174 bytes, 138 entradas únicas, CRC íntegro; preservado.
+
+Verificações reais: 197 hashes do worker `8798f6b` e 213 do operador `0066131`
+contra Git; snapshot integral do operador e quatro snapshots científicos (376
+membros). Configurações, manifesto/tokenizer, identidade, runtime agregado, passos,
+contadores, fórmulas/enumeração de parâmetros e hashes de pesos entre registros
+consistentes. Oito NLLs reconstruídas de 4.469 janelas / 1.144.064 alvos cada,
+erro máximo 4,03674250e−9. Métricas registradas finitas. Histórico antigo conferido
+contra a evidência curada 0019 e o snapshot 0021 disponível; quatro pares recalculados.
+
+Logs reais do Kaggle: **12 CPU aprovados em 17,16 s** e **2 CUDA FP32 em 59,24 s**,
+seleção focada. Auditoria local executada com sucesso após corrigir a leitura da
+chave do tokenizer no próprio auditor (`files/tokenizer.json`). Não houve alteração
+do dataset nem da validação científica para aceitar o arquivo. Sem treino local,
+nova execução pytest ou alegação de CUDA local. Figura científica inspecionada.
+
+Sessão completa aos 1.925,28 s antes da exportação final; 16 treinos cumulativos,
+quatro pares primários, somente dois blocos de seis braços. NLL 104 FLRM 1,318235045
+e Transformer 1,312205419. Diferença média n=4 +0,001844508, IC95% exploratório
+[−0,006697720; +0,010386737]. Com duas vitórias em quatro pares, o requisito positivo
+pré-fixado de quatro vitórias em cinco já não pode ser satisfeito. Recomendação de
+revisão antes de mais treinos; protocolo e resultado inconclusivo preservados.
+
+Pesos/estado de treino não recebidos neste ZIP e não rehashados/carregados. Os logs
+brutos do Transformer 103 também não estão neste arquivo; sua linha herdada foi
+conferida na agregação, sem reconstrução local daquela NLL. Teste reservado intacto.
+Compilação e aquecimento continuam sem medição isolada. Nenhuma fonte de treino mudou.
+Conferidos 86 links locais em cada checkout; artefatos do relatório espelhados,
+ZIP original rehashado e preservado, `git diff --check` limpo.
