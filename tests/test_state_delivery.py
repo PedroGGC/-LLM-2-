@@ -49,3 +49,28 @@ def test_kaggle_unexpected_source_is_rejected(monkeypatch):
     monkeypatch.setattr(request,"urlopen",lambda *a,**k:io.BytesIO(b"raise RuntimeError('must not execute')"))
     with pytest.raises(ValueError,match="Bootstrap diferente"):
         builtins.exec(compile(CELL.read_text(encoding="utf-8"),str(CELL),"exec"),{})
+
+
+def test_cleanup_cell_pinned_source_and_mock_dispatch(monkeypatch):
+    cell=ROOT/"scripts/04_limpar_temporarios_kaggle.py"
+    tree=ast.parse(cell.read_text(encoding="utf-8"))
+    revision=next(ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign)
+        and isinstance(n.targets[0],ast.Name) and n.targets[0].id=="LLM2_REVISION")
+    payload=subprocess.check_output(["git","show",revision+":src/llm2/research/kaggle_light.py"],cwd=ROOT)
+    assert hashlib.sha256(payload).hexdigest() in cell.read_text(encoding="utf-8")
+    monkeypatch.setattr(request,"urlopen",lambda *a,**k:io.BytesIO(payload))
+    calls=[]
+    def cleanup_exec(code,namespace):
+        builtins.exec(code,namespace)
+        namespace["clean_working"]=lambda base,**kwargs:calls.append((base,kwargs)) or {"mock":True}
+    namespace={"exec":cleanup_exec}
+    builtins.exec(compile(cell.read_text(encoding="utf-8"),str(cell),"exec"),namespace)
+    assert calls==[("/kaggle/working",{"apply":True})]
+    assert namespace["LLM2_CLEANUP_INFO"]=={"mock":True}
+
+
+def test_cleanup_cell_rejects_changed_source(monkeypatch):
+    cell=ROOT/"scripts/04_limpar_temporarios_kaggle.py"
+    monkeypatch.setattr(request,"urlopen",lambda *a,**k:io.BytesIO(b"raise RuntimeError('must not execute')"))
+    with pytest.raises(ValueError,match="revisão verificada"):
+        builtins.exec(compile(cell.read_text(encoding="utf-8"),str(cell),"exec"),{})

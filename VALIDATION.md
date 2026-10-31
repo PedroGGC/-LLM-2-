@@ -36,6 +36,9 @@ experimental. Python local3.12.2/Torch2.14.1+cpu; comandos com `PYTHONPATH=src`.
 - Após proteger também commits locais não publicados: utilitários finais
   **14passed,4,28s**,exit0. Integração completa não foi repetida após essa guarda
   adicional de limpeza; matemática/treino permanecem inalterados.
+- Células de entrega fixadas na revisão1c8ce2a: **6passed,0,25s**,exit0;
+  hashes conferidos contra objetos Git, execução simulada e rejeição de fonte
+  alterada. Não executam limpeza real nem acessam a conta Kaggle nesses testes.
 
 Nenhum CUDA/Inductor novo executado nesta máquina. A0024 valida somente a execução
 antiga e revela sua falha de orçamento; não é aprovação do código novo. O encerramento
