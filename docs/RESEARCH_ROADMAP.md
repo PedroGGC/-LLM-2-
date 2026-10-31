@@ -1,5 +1,34 @@
 # Próximas perguntas de pesquisa
 
+## Roteiro vigente — arquitetura própria inspirada em fractais
+
+O [plano aprovado](PLAN_RECURRENT_FRACTAL.md) substitui as prioridades históricas
+abaixo. Transformer é referência externa; o FLRM antigo permanece reproduzível,
+sem novas repetições previstas. Ciclo5 suspenso como próxima operação.
+
+| Frente | Prioridade e pergunta |
+|---|---|
+| Núcleo recorrente | Selecionar implementação viável de regras RWKV-7/mLSTM/Gated Delta na T4; sem vencedor CPU |
+| Fractal explícito | Mesma hierarquia com núcleo compartilhado versus operações independentes; separar hierarquia de auto-similaridade |
+| Hierarquia e compressão | Caminhos rápido/lento; compressão causal fixa, depois aprendida/adaptativa se justificada; BLT/Cantor como referências |
+| Profundidade variável | Treinar K1/2/4; RINS como organização, ACT/PonderNet somente após benefício de esforço adicional |
+| Memória consultável | MC/GRM é candidato com orçamento de bytes e custo de consulta; não obrigatório |
+| Memória adaptativa | TTT/fast weights é outra possibilidade com escrita, esquecimento e reset |
+| Geração/engenharia | KV cache e estados recorrentes corretos; FractalLLM posterior; AMP/compilação medidos |
+
+Base sólida é correção/reprodução/custo conhecido; não exige vitória prévia do FLRM.
+As [fichas](RECURRENT_CANDIDATES.md) distinguem referências implementadas no laboratório
+das arquiteturas completas dos artigos. [Operação vigente](RECURRENT_RUN.md).
+
+Condicionais: DEQ/equilíbrio/solver; controle espectral/ortogonalidade/nGPT por
+instabilidade; Kronecker/Monarch/MERA/hypernetworks por gargalo medido. Preservados
+desligados: FiLM, JEPA, NCM, RMS de contexto, Ciclo-V, MTP e currículo. Baixa
+prioridade: Fibonacci/φ/lattices, KAN e variantes, Liquid/CfC/LFM2 e L-systems.
+FractalNet/FANN/fractal nodes são referências. Difusão/flow/árvore/NCA/inferência
+ativa são linhas próprias futuras. Quantização/destilação complementam depois.
+
+## Registro histórico até a auditoria 0023 — não é a fila vigente
+
 Atualizado em 31/10/2026, após a auditoria 0023.
 Este documento lista possibilidades; não dispara
 treinos nem autoriza incorporar todas as tecnologias. Estado factual em

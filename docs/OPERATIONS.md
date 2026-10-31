@@ -1,6 +1,9 @@
 # Guia operacional
 
-Operação vigente para a próxima sessão: [limpeza limitada e controle do ciclo 5](CYCLE5_RUN.md).
+Operação vigente: [seleção recorrente e hierarquia](RECURRENT_RUN.md), conforme o
+[plano aprovado](PLAN_RECURRENT_FRACTAL.md). O ciclo5 foi suspenso como prioridade.
+O novo worker usa janelas contidas em documento; `train` genérico preserva o
+sampler packed histórico. Não misturar os resultados dessas políticas.
 As instruções de ciclos anteriores continuam para reprodução. Não executar esses
 treinos como complemento automático do ciclo 4.
 

@@ -5,8 +5,11 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 
 | Documento | Finalidade |
 |---|---|
+| [Plano aprovado: recorrência/fractal](PLAN_RECURRENT_FRACTAL.md) | Hipóteses, candidatos, riscos, critérios e etapas condicionais |
+| [Operação vigente: seleção e hierarquia](RECURRENT_RUN.md) | Etapas A/B, duas sessões distintas, meta2h/teto3h |
+| [Fichas dos candidatos](RECURRENT_CANDIDATES.md) | Fontes fixadas, equações e adaptações; não reproduções dos modelos completos |
 | [Campanha 0023](results/CAMPAIGN_0023.md) | 18 treinos auditados; fino simplifica, Transformer vence neste regime |
-| [Operação atual: ciclo 5 e ZIPs limitados](CYCLE5_RUN.md) | Limpar só redundantes; 12 controles de profundidade, snapshot temporário aos 50% |
+| [Operação histórica: ciclo 5](CYCLE5_RUN.md) | Preservada, suspensa como próxima prioridade |
 | [Plano prévio da auditoria/retenção/ciclo 5](PLAN_CAMPAIGN_0023_RETENTION_CYCLE5.md) | Escopo, riscos e critérios da próxima entrega |
 | [Dois scripts: backup e ciclo 4](CYCLE4_RUN.md) | Backup externo antes de limpeza completa; ablação de escalas, meta 2h/teto 3h |
 | [Plano prévio do ciclo 4](PLAN_CYCLE4.md) | Escopo aprovado, riscos e critérios de aceitação |

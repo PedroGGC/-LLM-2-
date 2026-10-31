@@ -8,6 +8,9 @@ def build_backbone(config):
     research = config.research
     if research is None or research.architecture == "transformer":
         return TransformerLM(config.model)
+    if research.architecture in ("state_recurrent", "state_hierarchy"):
+        from ..architectures.state_recurrent import StateRecurrentModel
+        return StateRecurrentModel(config.model, research)
     if getattr(research, "paired_common_init", False):
         if research.architecture not in ("recursive", "fractal"):
             raise ValueError("paired_common_init is only supported for recursive and fractal architectures")

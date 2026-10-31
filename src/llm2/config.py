@@ -165,6 +165,10 @@ class ResearchConfig:
     context_normalization: str = "none"
     cross_scale_exchange: bool = True
     compressed_factors: list[int] | None = None
+    state_rule: str = "gated_delta"
+    state_execution: str = "chunked"
+    state_chunk_size: int = 32
+    state_factor: int = 4
 
     def __post_init__(self):
         _types(self)
@@ -183,8 +187,20 @@ class ResearchConfig:
             raise ValueError("context_normalization requires a recurrent architecture")
         if not self.cross_scale_exchange and self.architecture != "fractal":
             raise ValueError("cross_scale_exchange=False requires fractal architecture")
-        if self.architecture not in ("transformer", "recursive", "untied", "fractal"):
+        if self.architecture not in ("transformer", "recursive", "untied", "fractal", "state_recurrent", "state_hierarchy"):
             raise ValueError("unknown research architecture")
+        if self.state_rule not in ("gated_delta", "rwkv7", "mlstm") or self.state_execution not in ("sequential", "chunked"):
+            raise ValueError("unknown state rule/execution")
+        if not 1 <= self.state_chunk_size <= 64 or self.state_factor < 2:
+            raise ValueError("state chunk size must be 1..64 and factor >=2")
+        if self.architecture.startswith("state_") and (
+            self.jepa_weight or self.mtp_weight or self.intermediate_weight or self.lm_weight != 1
+            or self.latent_steps or self.latent_warmup_steps or self.detach_every
+            or self.gradient_checkpointing or self.record_states or self.curriculum != "off"
+            or self.context_normalization != "none" or self.cache_context_projection or self.paired_common_init
+            or self.core_layers != 1 or self.iterations != 2 or self.scale_conditioning
+        ):
+            raise ValueError("state backbones require language-only objective and no legacy refinement options")
         if self.scale_execution not in ("reference", "batched", "compressed", "compressed_native", "compressed_grouped"):
             raise ValueError("unknown scale_execution")
         if self.scale_execution != "reference" and (self.architecture != "fractal" or not self.share_scales):

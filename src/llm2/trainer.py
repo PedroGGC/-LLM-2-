@@ -26,7 +26,7 @@ from .research.factory import build_backbone, build_objective
 
 class Trainer:
     def __init__(self, config, *, model=None, objective=None, data=None, resume=None,
-                 flops_estimator=None, model_factory=None, objective_factory=None):
+                 flops_estimator=None, model_factory=None, objective_factory=None, sampler_factory=None):
         self._experiment_started = time.perf_counter()
         # Revalidate even when a caller has mutated a dataclass programmatically.
         self.config = ExperimentConfig.from_dict(config.to_dict())
@@ -52,6 +52,8 @@ class Trainer:
         self.scheduler = build_scheduler(self.optimizer, cfg.optimizer)
         self.sampler = RandomBatchStream(self.data.arrays["train"], cfg.data.seq_len,
                                         cfg.data.batch_size, cfg.train.seed + 1)
+        if sampler_factory is not None:
+            self.sampler = sampler_factory(self.data, cfg)
         if cfg.research is not None and cfg.research.curriculum != "off":
             from .curriculum.stream import MixedCurriculumStream
             self.sampler = MixedCurriculumStream(self.sampler, self.data.tokenizer, cfg.research, cfg.train.seed+2)

@@ -1,4 +1,16 @@
-# Plano vigente
+# Plano vigente — recorrência, hierarquia e contribuição fractal
+
+Atualizado em31/10/2026. O [plano aprovado](docs/PLAN_RECURRENT_FRACTAL.md) substitui
+a prioridade anterior: selecionar uma regra recorrente viável, comparar núcleo
+simples/hierarquia independente/hierarquia compartilhada/Transformer externo.
+Fractal permanece hipótese central de organização. MC/GRM e TTT são candidatos,
+não componentes obrigatórios. Base sólida não exige vitória do FLRM antigo.
+
+Implementação/limites: [operação](docs/RECURRENT_RUN.md),
+[fichas](docs/RECURRENT_CANDIDATES.md), [validação real](VALIDATION.md).
+Seleção na T4 ainda pendente; CPU não escolhe plataforma. Sem novo treino científico.
+
+## Registro anterior — supersedido como próxima operação
 
 Atualizado em 30/10/2026. O projeto usa Transformer como baseline e como bloco do núcleo
 recorrente. Esta etapa valida componentes antes da confirmação independente.

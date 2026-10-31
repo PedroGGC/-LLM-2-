@@ -1,5 +1,47 @@
 # Validação vigente — 31/10/2026
 
+## Arquitetura recorrente/hierárquica inspirada em fractais — 31/10/2026
+
+Plano prévio: [plano aprovado](docs/PLAN_RECURRENT_FRACTAL.md). Código somente no
+checkout `experiment/fractal-lrm`. Python local explícito3.12.2, Torch2.14.1+cpu,
+Windows; nenhum venv, nenhum treino científico, nenhum teste T4 novo executado aqui.
+
+| Verificação realmente executada | Resultado |
+|---|---|
+| Primeira implementação das regras/backbones | 33passed,21,31s |
+| Regras, amostragem por documento, budgets e seleção | 44passed,6skipped,41,57s; depois inicialização pareada44passed,6skipped,22,05s |
+| Primeira integração real em dois processos CPU | 1passed,173,49s; triagem8tentativas,4jobs,8perfis e exportação |
+| `python -m pytest -q`, suíte completa | **504passed,46skipped,553,39s**,exit0, antes do ajuste final de storage compacto/curvas |
+| Após compactar caches e exportar curvas: três arquivos de testes novos | **51passed,6skipped,297,06s**,exit0; inclui integração completa e remoção dos ZIPs temporários verificados |
+| Após isolar falhas de compilação por candidato: núcleo e protocolo | **51passed,6skipped,25,37s**,exit0; falha de um candidato não impede os outros em fixture explicitamente simulada |
+| Contexto real1024, batch1, três regras compartilhadas | Forward/backward finitos, logits(1,1024,257), parâmetros1.136.652/1.132.800/1.136.652; CPU, sem ranking de velocidade |
+| Parâmetros de produção por fórmula/enumeração em meta | Controles independentes2.174.232(GDN/mLSTM),2.166.528(RWKV), Transformer2.164.992; sharing menor sem alargar |
+| Figura de curvas | Inspecionada visualmente; somente validações completas ligadas; rótulo ENGINEERING SMOKE renderizado após ajuste textual final |
+| Links Markdown locais / whitespace | 99destinos válidos,0quebrados; git diff --check sem erros |
+
+As46/6marcações puladas não representam suporte CUDA. Testes novos cobrem referências
+sequenciais independentes contra chunks (outputs/estado/gradientes), causalidade nas
+fronteiras, streaming, memória FP32, finitude, memorização, safetensors ligado, fórmula
+sem duplicação, igualdade inicial dos controles, e próxima atualização retomada
+exatamente igual com dropout0,2/acumulação2. Cache compacto tem teste de storage real,
+evitando views que retenham todo o prefixo. Fixtures não são resultados científicos.
+
+Nova avaliação usa janelas contidas em documentos, exclui EOS da byte-NLL e descarta
+caudas incompletas igualmente. Portanto não comparar diretamente NLL com política
+packed histórica. Tuning usa somente documentos do treino original, com conferência
+de hashes; teste oficial não é avaliado. Fonte/dataset/versões não foram relaxados.
+
+Limites explícitos: são três regras de memória num shell comum, não reproduções
+dos modelos completos dos artigos. Seleção CUDA e aceleração ainda dependem da T4.
+FLOPs dos scans são null; fórmula Transformer antiga não foi aplicada a eles.
+Energia GPU quando disponível não representa host/campanha inteira. Geração com
+cache comparável fica null/pendente. MC/TTT/ACT/DEQ/precisão reduzida/TinyStories/
+escala7–10M não foram implementados como mecanismos ativos: são etapas condicionais.
+
+Suíte completa não foi repetida após os pequenos ajustes finais citados; verificações
+focadas/integradas acima correspondem às alterações. Não inferir validação GPU de
+testes CPU, fixtures de plataforma ou logs de campanhas antigas.
+
 ## Auditoria 0023 e controle/retenção ciclo 5 — 31/10/2026
 
 Plano prévio: [auditoria/retenção/ciclo 5](docs/PLAN_CAMPAIGN_0023_RETENTION_CYCLE5.md).

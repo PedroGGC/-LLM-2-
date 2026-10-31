@@ -1,0 +1,94 @@
+# Arquitetura própria inspirada em fractais — plano aprovado
+
+31/10/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
+históricos. Implementação experimental em `experiment/fractal-lrm`.
+
+## Objetivo e evidência
+
+Buscar qualidade por custo real de treino e uso. Transformer é referência externa;
+fractal permanece hipótese de organização: hierarquia, reutilização da mesma regra
+entre níveis e ritmos diferentes. Isso não pressupõe fractal matemático nem cópia
+biológica. RWKV-7, mLSTM, Gated DeltaNet, MC/GRM e TTT são candidatos, não dependências.
+
+0017 já separou comunicação/FiLM. 0023 não confirmou vantagem das escalas, e o
+Transformer de dois blocos venceu qualidade/custo. K não treinado piorou. Preservar
+FLRM histórico; suspender novas repetições e a prioridade de executar ciclo 5.
+Base sólida significa correção, reprodução e custo conhecido, não vitória prévia.
+
+## Etapas
+
+A. Fichas dos três operadores recorrentes, referências sequenciais, execução por
+chunks e microbenchmarks de forward/backward na T4. Somente casos com correção,
+finitude e memória admissível podem ser selecionados. Medir isoladamente em ambas
+GPUs; escolher menor tempo, empate até 5% por menor estado. Sem CUDA real não há
+seleção científica. Referências implementadas no laboratório não são reproduções
+dos modelos completos RWKV/xLSTM/Gated DeltaNet; documentar cada simplificação.
+
+B. Quatro braços: recorrente simples, hierárquico independente, hierárquico com
+núcleo compartilhado, Transformer de dois blocos. Mesmas dimensões, projeções,
+ritmos e operações entre hierarquias; apenas compartilhamento difere. Caminho fino
+a cada byte, amplo a cada quatro estados contextualizados; grupos incompletos não
+influenciam posições anteriores. Compartilhar somente espaços compatíveis.
+Sem GRM/TTT/FiLM/ACT. Simples, independente e Transformer próximos de 2M (±5%);
+compartilhado pode ser menor, sem aumentar largura para esconder a economia.
+
+WikiText preparado do ciclo 3, byte-level, T1024/B8, FP32/Inductor, dropout0,05,
+6000 passos, seeds241/242/243, 12 jobs. Triagem simétrica LR0,0002/0,0004 em
+validação interna por documento (seed901, 750 passos), sem consumir o teste.
+Validação completa em50/100%, subconjunto fixo em25/75%. Os pilotos não continuam
+nos treinos principais. Horizontes e schedulers congelados; alvos iguais não são
+custo igualado. Contrastes: hierarquia−simples, compartilhado−independente e
+comparações externas com Transformer.
+
+C. Escolher a próxima pergunta pelo diagnóstico: compressão aprendida/adaptativa;
+onde compartilhar; retenção→memória consultável/MC; atualização associativa→TTT;
+benefício de K→profundidade variável e ACT/PonderNet; gargalo de execução→otimização.
+Treinar K1/2/4 antes de testar adaptação. Escrever uma entrada uma vez; refinamento
+não repete gravação. Sem ativação automática de mecanismos por tamanho/K/contexto.
+
+D. No máximo dois mecanismos inicialmente, controle/A/B/A+B. Confirmar cinco seeds
+novas com custo igualado e segundo corpus (TinyStories); depois7–10M com dados
+compatíveis. 10M contra100M é marco futuro em tarefas definidas, não equivalência.
+
+## Orçamento, risco e aceitação
+
+Meta2h/teto3h incluindo setup, compilação, treino e avaliação; dois jobs independentes
+nas duas T4. Pilotos com margem35%; dividir matriz entre sessões se necessário sem
+mudar horizonte. Não selecionar kernel incompatível por tempos fictícios, não
+atribuir lentidão de referência Python à arquitetura e não ampliar sessão para
+preencher tempo. Riscos: estabilidade numérica, custo do scan, grupos com vazamento,
+alias de estados, sharing contado duas vezes e comparações confundidas por parâmetros.
+
+Medir NLL/bits por byte, alvos/FLOPs estimados, tempos separados, RAM/VRAM, bytes
+de pesos/estados/caches e energia GPU quando disponível (caso contrário null).
+Recuperação por distância/distratores/esquecimento e tarefas verificáveis para K;
+mesma cobertura em bytes. Diagnósticos não provam raciocínio geral.
+
+Triagem: redução média≥0,005NLL favorável nas3seeds; eficiência: perda≤0,002 e
+economia≥10% no recurso pré-fixado. Reportar intervalos. Cinco seeds novas para
+confirmação, teste reservado só após seleção. Menos parâmetros isoladamente é
+compactação. Resultados dominados encerrados; incerteza é inconclusiva.
+
+Testar causalidade inclusive fronteiras, sequencial/chunks com gradientes e estado,
+isolamento por documento, forward/backward, finitude, memorização, compartilhamento
+e fórmula de parâmetros, safetensors ligado e próxima atualização retomada igual à
+ininterrupta com dropout/acumulação. Forward das hierarquias deve coincidir quando
+pesos forem copiados e dropout desligado. Nunca seguir código/config/dados/versões
+incompatíveis silenciosamente. Não há suporte CUDA empiricamente validado localmente.
+
+## Catálogo e entregas
+
+Prioritários: recorrência, hierarquia/fractal, compressão, profundidade variável;
+MC/GRM e TTT são possibilidades independentes. RINS/BLT/Cantor são referências,
+não backbones obrigatórios. KV cache/FractalLLM: engenharia de geração posterior.
+ACT/PonderNet requer utilidade de K; DEQ requer equilíbrio/solver/gradientes.
+Espectral/ortogonalidade/nGPT requer dinâmica/instabilidade; Kronecker/Monarch,
+MERA e hypernetworks requerem gargalos medidos. FiLM/JEPA/NCM/RMS de contexto/
+Ciclo-V/MTP/currículo preservados e desligados. Fibonacci/φ/lattices, KAN,
+Liquid/CfC/LFM2 e L-systems: baixa prioridade, hipóteses próprias. FractalNet/FANN/
+fractal nodes: referências. Difusão/flow/árvore/NCA/inferência ativa: linhas próprias.
+Compilação/AMP/caches/quantização/destilação: ganhos separados dos arquiteturais.
+
+Cada etapa entrega configurações, proveniência, resultados por seed, curvas,
+recursos e decisão continuar/simplificar/encerrar/inconclusivo. Atualizar plano,
+README, estado e VALIDATION com verificações reais; nunca marcar CUDA pulado aprovado.

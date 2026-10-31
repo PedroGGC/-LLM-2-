@@ -1,11 +1,13 @@
 # LLM2-Lab
 
-Laboratório Python/PyTorch para comparar um **Transformer causal** com variantes que
-reutilizam seus blocos por recorrência e entre escalas. Inclui preparo de dados,
+Laboratório Python/PyTorch para investigar uma arquitetura própria **inspirada em
+fractais**, com hierarquia, recorrência e compartilhamento entre escalas. O Transformer
+causal é a referência externa. Inclui preparo de dados,
 treinamento, avaliação, checkpoints, diagnóstico e campanhas reproduzíveis.
 
-**Já usamos Transformer dentro do LRM/FLRM.** A pergunta de pesquisa é se outra forma
-de organizar a computação melhora qualidade por custo. Não há superioridade geral
+O LRM/FLRM histórico reutiliza Transformer; os novos backbones `state_recurrent` e
+`state_hierarchy` usam regras de memória recorrentes, sem DecoderBlock/SDPA. A
+pergunta é se outra organização melhora qualidade por custo. Não há superioridade geral
 demonstrada, garantia de raciocínio, ausência de colapso ou ganho por tecnologia.
 
 ## Qual checkout usar
@@ -40,21 +42,22 @@ duas GPUs. Não demonstra equivalência formal ou vantagem fractal. O Transforme
 lidera entre as configurações testadas. Aumentar K sem treinar naquela profundidade
 piorou a NLL; esse probe não avalia treinamento em profundidade variável.
 
-## Próxima etapa — profundidade treinada e menos ZIPs
+## Próxima etapa — seleção recorrente e contribuição fractal
 
-O [ciclo 5](docs/CYCLE5_RUN.md) compara fino K=1/K=2/K=4 treinados do zero e Transformer,
-seeds 221/222/223: 12 treinos com parâmetros próximos e FLOPs estimados iguais.
-Tokens e tempos diferem. Meta de 2h/teto de 3h, duas T4, testes e piloto antes dos treinos.
-Nenhum novo mecanismo da tabela de tecnologias entra nesta rodada.
+A [nova etapa](docs/RECURRENT_RUN.md) começa selecionando uma implementação recorrente
+na T4, sem escolher previamente Gated Delta/RWKV/mLSTM. São regras num shell comum,
+**não reproduções dos modelos publicados**; [fichas e adaptações](docs/RECURRENT_CANDIDATES.md).
+CPU verifica matemática e integração, sem escolher vencedor CUDA.
 
-Entrega: limpeza **somente dos ZIPs after-NN redundantes da 0023**, protegendo
-campanha e definitivos; depois execução por revisão fixada. O novo executor
-salva um único par temporário aos6/12 jobs e o remove após validar os definitivos:
-ficam apenas dois ZIPs finais por campanha. Em interrupção preserva recuperação
-mais exportação parcial. ZIPs, backups e pesos continuam fora do Git.
+Depois: recorrente simples, hierarquia independente, hierarquia compartilhada e
+Transformer2blocos; T1024/B8, 6000passos, seeds241–243. As hierarquias têm as mesmas
+operações; sharing reduz pesos, não estados nem chamadas. Meta2h/teto3h, divisão
+em blocos de seed sem encurtar horizontes. Nenhum GRM/TTT/ACT/JEPA é obrigatório.
 
-Profundidade variável/RINS permanece depois desse controle, condicionada à evidência;
-as outras prioridades continuam no [roadmap](docs/RESEARCH_ROADMAP.md).
+O [plano aprovado](docs/PLAN_RECURRENT_FRACTAL.md) e o [roadmap](docs/RESEARCH_ROADMAP.md)
+mantêm fractal explícito e tecnologias candidatas. Ciclo5 fica preservado como operação
+histórica, suspenso como próxima prioridade. FLOPs dos novos scans são null até
+estimador específico; não usar a fórmula de atenção antiga. Sem vitória nova medida.
 Histórico: [0022](docs/results/CAMPAIGN_0022.md), [0019](docs/results/CAMPAIGN_0019.md),
 [0017](docs/results/CAMPAIGN_0017.md) e [0016](docs/results/CAMPAIGN_0016.md).
 

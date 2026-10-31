@@ -1,5 +1,9 @@
 # Ciclo 5 — profundidades treinadas e ZIPs com retenção limitada
 
+**Histórico, não executar como próxima prioridade.** O novo
+[plano aprovado](PLAN_RECURRENT_FRACTAL.md) suspendeu esta rodada ainda não executada;
+ver [seleção recorrente e hierarquia](RECURRENT_RUN.md). Código permanece reproduzível.
+
 Operação vigente em 31/10/2026, após a [auditoria 0023](results/CAMPAIGN_0023.md).
 Plano prévio: [auditoria, retenção e controle](PLAN_CAMPAIGN_0023_RETENTION_CYCLE5.md).
 Código em `experiment/fractal-lrm`; o ciclo 4 continua reproduzível na revisão 6a6af1a.

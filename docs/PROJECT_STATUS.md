@@ -1,10 +1,22 @@
 # Estado científico e técnico — 31/10/2026
 
+## Direção vigente: arquitetura própria inspirada em fractais
+
+O [plano aprovado](PLAN_RECURRENT_FRACTAL.md) substitui a prioridade do ciclo5.
+Novos backbones: `state_recurrent` e `state_hierarchy`, regras Gated Delta/RWKV-7/
+mLSTM num shell comum; não são modelos completos dos artigos. Hierarquia com
+operações independentes versus núcleo compartilhado testa contribuição fractal.
+Transformer permanece referência externa. Seleção na T4 pendente; não há vencedor
+CPU nem resultado científico novo. MC/GRM/TTT/ACT permanecem candidatos separados.
+Ver [operação](RECURRENT_RUN.md) e [fichas/adaptações](RECURRENT_CANDIDATES.md).
+
+## Evidência histórica e próxima operação anterior
+
 Evidência mais recente: [0023](results/CAMPAIGN_0023.md), 18 treinos e 96 avaliações
 completas auditadas (72 principais +24 probes), pesos finais conferidos. Não houve
 vantagem das escalas; somente fino é candidato de simplificação (~24% menos tempo,
 perda máxima0,00138). Transformer2blocos: NLL1,285904, contra1,349391 do completo,
-com menor custo observado. Aumentar K após treinoK2 piorou. Próxima operação:
+com menor custo observado. Aumentar K após treinoK2 piorou. Operação então preparada:
 [ciclo 5](CYCLE5_RUN.md), profundidades treinadasK1/2/4 a FLOPs estimados iguais;
 sem tecnologia nova. As seções históricas abaixo identificam seus regimes.
 
