@@ -18,6 +18,7 @@ Windows; nenhum venv, nenhum treino científico, nenhum teste T4 novo executado 
 | Parâmetros de produção por fórmula/enumeração em meta | Controles independentes2.174.232(GDN/mLSTM),2.166.528(RWKV), Transformer2.164.992; sharing menor sem alargar |
 | Figura de curvas | Inspecionada visualmente; somente validações completas ligadas; rótulo ENGINEERING SMOKE renderizado após ajuste textual final |
 | Links Markdown locais / whitespace | 99destinos válidos,0quebrados; git diff --check sem erros |
+| Célula curta de entrega, depois de fixar fonte Git | **4passed,0,23s**; hash confere com objeto Git, modo inativo sem rede, rejeição de fonte divergente e dispatch simulado |
 
 As46/6marcações puladas não representam suporte CUDA. Testes novos cobrem referências
 sequenciais independentes contra chunks (outputs/estado/gradientes), causalidade nas

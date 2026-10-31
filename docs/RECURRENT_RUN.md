@@ -6,6 +6,11 @@ Nenhum treino de produção é iniciado na instalação ou sem `--execute`.
 
 ## A: qualificação de plataforma
 
+Cole o [script curto](../scripts/03_selecionar_nucleo_recorrente_kaggle.py) numa
+célula Kaggle com Internet e duas T4. A revisão e o SHA do bootstrap estão fixados;
+numeração começa em24 e avança se o número já existir. Não inicia automaticamente
+a etapa B. O relógio começa na própria célula, antes de baixar/clonar/instalar.
+
 No checkout experimental, Python local já instalado; no Kaggle habilitar duas T4.
 
 ```bash
