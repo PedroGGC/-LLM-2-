@@ -20,10 +20,17 @@ O backup agora usa **ZIP DEFLATE nível 9**. A primeira entrega usava ZIP_STORED
 sem compressão; ambas são verificadas por CRC/hashes. Para substituir um backup
 grande, cancele primeiro sua tentativa de download e preencha `SUBSTITUIR_BACKUP`
 com o nome exato do ZIP. A entrega de correção já traz o nome informado em
-30/10/2026. O utilitário confere o ZIP e todos os originais contra o inventário,
-calcula espaço e só então remove **esse ZIP**, para liberar espaço para a nova
-compressão. Originais nunca são removidos nessa etapa. Se mudaram ou estão
-ausentes, a substituição é bloqueada. Falha de compressão permite repetir a célula.
+30/10/2026. O utilitário lista adições, ausências, alterações reais e timestamps.
+Adições entram no novo backup; timestamps isolados não mudam a identidade dos
+bytes. Havendo conteúdo antigo selecionado que só existe no ZIP ou difere do
+atual, recupera a versão anterior em `llm2-backup-recovery-*/files/<caminho antigo>`,
+sem sobrescrever arquivos atuais. Guarda o manifesto antigo e `recovery.json`
+para identificar essas versões; não as carrega nem restaura automaticamente.
+Confere hashes da recuperação, CRC/SHA do ZIP, espaço, workers e inventário corrente
+antes de remover **esse ZIP**. Se não houver espaço para preservar conteúdo único,
+interrompe mostrando a lista, mantendo o ZIP. Originais nunca são removidos nessa
+etapa. Falha posterior de compressão mantém também as versões recuperadas e
+permite repetir a célula. Ver [plano de reconciliação](PLAN_BACKUP_RECONCILIATION.md).
 O novo SHA da cópia local será necessário para a limpeza completa.
 
 Há heartbeat a cada 15 s durante verificação/compressão. O recibo inclui tamanho,
@@ -46,9 +53,14 @@ backup remoto, datasets, pesos, ZIPs, checkouts e reservas de números. A raiz f
 `/kaggle/input`, destinos de links e arquivos do computador ficam fora do alcance.
 O script não encerra processos automaticamente.
 
+CRC e SHA são verificados em uma leitura completa de cada membro, sem repetir
+descompressão integral. A limpeza completa exige mesmos caminhos/tipos/bytes e
+destinos de links; adições, ausências e alterações reais bloqueiam. Timestamps
+isolados não alteram conteúdo e não impedem reuso ou limpeza do backup.
+
 O recibo impresso e a variável `LLM2_CLEANUP_INFO` guardam o próximo número, mínimo
 23, e o espaço liberado. Guarde esse número se reiniciar o kernel. Alterações no
-inventário bloqueiam a exclusão e exigem novo backup. Falta de espaço para gerar
+conteúdo/caminhos bloqueiam a exclusão e exigem novo backup. Falta de espaço para gerar
 o ZIP interrompe antes de qualquer exclusão; não há fallback destrutivo.
 
 **Git não é backup dos pesos.** ZIPs, dados binários e checkpoints são ignorados.

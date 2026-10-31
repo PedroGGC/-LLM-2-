@@ -1,5 +1,39 @@
 # Validação vigente — 30/10/2026
 
+## Reconciliação do inventário na substituição — 30/10/2026
+
+O usuário recebeu bloqueio após cerca de 60 s; a mensagem antiga não identificava
+as diferenças. Não foi inspecionado o inventário remoto e não se atribuiu uma
+causa específica. O comparador exigia também igualdade de nomes e mtime,
+bloqueando adições e timestamps. [Plano prévio](docs/PLAN_BACKUP_RECONCILIATION.md).
+
+Agora lista categorias/caminhos, admite adições e compara identidade por
+tipo/tamanho/SHA (ou destino do link). Payloads selecionados antigos que estão
+ausentes/diferentes são recuperados para pasta exclusiva, sem sobrescrita, com
+SHA do destino conferido. ZIP antigo só sai após preservação, espaço, verificação
+de CRC/SHA, ausência de workers e rechecagem do conteúdo corrente. Inventário e
+mapa antigos ficam junto das versões recuperadas, incluídos no backup novo.
+
+Com o mesmo Python 3.12.2 local, sem alterações no treino:
+
+```text
+python -m pytest -q tests/test_kaggle_reset.py tests/test_backup_delivery.py tests/test_cycle4_operations.py -k "not real_two_process and not weights_profile and not early_stop"
+53 passed, 1 skipped, 6 deselected in 4.24s
+```
+
+Inclui adições/timestamps, ausência/alteração com preservação de ambas as versões,
+arquivo substituído por link externo sem seguir o destino, espaço de recuperação,
+falha de escrita/hash de destino, mudança concorrente, falha posterior de compressão
+e repetição com versões antigas ainda presentes. CRC inválido detectado durante a
+leitura SHA, sem segunda passagem `testzip`. Conferido no código da stdlib local
+que `ZipExtFile` verifica CRC ao alcançar EOF. Reuso/limpeza ignoram somente mtime;
+bytes/caminhos novos ou alterados ainda bloqueiam e mostram diferenças.
+
+Skip: processo POSIX; seis integrações com treino/probes/exportação não selecionadas.
+Somente fixtures locais foram removidas. Sem execução remota, limpeza de dados do
+usuário ou medição de tempo/tamanho no Kaggle. A causa concreta aparecerá no diff
+impresso pelo script atualizado. Segunda célula científica permanece em `6a6af1a`.
+
 ## Compressão e substituição do backup — 30/10/2026
 
 Plano: [PLAN_BACKUP_COMPRESSION.md](docs/PLAN_BACKUP_COMPRESSION.md). O usuário

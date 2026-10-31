@@ -125,12 +125,10 @@ def test_recompress_legacy_backup_real_deflate_and_retry_without_nesting(working
     assert reset.clear_working(receipt["sha256"],working)["status"]=="cleaned"
 
 
-@pytest.mark.parametrize("change",["changed","missing","worker","space","corrupt"])
+@pytest.mark.parametrize("change",["worker","space","corrupt"])
 def test_replacement_refuses_before_deleting_old_zip(working,monkeypatch,change):
     from types import SimpleNamespace
     old=legacy_backup(working)
-    if change=="changed":(working/"data/train.bin").write_bytes(b"new data")
-    if change=="missing":(working/"data/train.bin").unlink()
     if change=="worker":monkeypatch.setattr(reset,"active_workers",lambda:[123])
     if change=="space":monkeypatch.setattr(reset.shutil,"disk_usage",lambda *a:SimpleNamespace(free=1))
     if change=="corrupt":
@@ -140,8 +138,146 @@ def test_replacement_refuses_before_deleting_old_zip(working,monkeypatch,change)
             stream.seek(info.header_offset+26);lengths=stream.read(4)
             offset=info.header_offset+30+int.from_bytes(lengths[:2],"little")+int.from_bytes(lengths[2:],"little")
             stream.seek(offset);original=stream.read(1);stream.seek(offset);stream.write(bytes([original[0]^1]))
-    with pytest.raises((ValueError,RuntimeError,OSError)):reset.backup_working(working,replace_backup=old.name)
+    with pytest.raises((ValueError,RuntimeError,OSError,zipfile.BadZipFile)):reset.backup_working(working,replace_backup=old.name)
     assert old.exists() and (working/"unclassified.pth").read_bytes()==b"legacy"
+
+
+@pytest.mark.parametrize("change",["added","timestamp"])
+def test_safe_inventory_drift_recompresses_and_reports_paths(working,capsys,change):
+    import os
+    old=legacy_backup(working)
+    data=working/"data/train.bin"
+    if change=="added":(working/"new.log").write_bytes(b"new notebook artifact")
+    else:
+        info=data.stat();os.utime(data,ns=(info.st_atime_ns,info.st_mtime_ns+1000000000))
+    result=reset.backup_working(working,replace_backup=old.name)
+    assert not old.exists() and data.read_bytes()==b"data"
+    assert result["replaced_backup"]["recovery_directory"] is None
+    diff=result["replaced_backup"]["inventory_difference"]
+    assert not diff["missing"] and not diff["changed"]
+    if change=="added":
+        assert diff["added"]==["new.log"]
+        with zipfile.ZipFile(result["path"]) as archive:
+            assert archive.read("working/new.log")==b"new notebook artifact"
+    else:assert diff["timestamps_only"]==["data/train.bin"]
+    assert ("new.log" if change=="added" else "data/train.bin") in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("change",["changed","missing"])
+def test_unique_previous_bytes_recovered_without_overwriting_current(working,change):
+    old=legacy_backup(working);data=working/"data/train.bin"
+    if change=="changed":data.write_bytes(b"current version")
+    else:data.unlink()
+    result=reset.backup_working(working,replace_backup=old.name)
+    replacement=result["replaced_backup"]
+    folder=working/replacement["recovery_directory"]
+    assert (folder/"files/data/train.bin").read_bytes()==b"data"
+    if change=="changed":assert data.read_bytes()==b"current version"
+    else:assert not data.exists()
+    assert replacement["recovered_files"]==["data/train.bin"]
+    assert replacement["previous_payload_preserved"]
+    assert (folder/"original_backup_manifest.json").is_file()
+    with zipfile.ZipFile(result["path"]) as archive:
+        assert archive.read("working/"+folder.name+"/files/data/train.bin")==b"data"
+    assert not old.exists()
+    reset.clear_working(result["sha256"],working)
+    assert not list(working.iterdir())
+
+
+def test_file_replaced_with_external_link_recovers_old_bytes_without_following_link(working,tmp_path):
+    old=legacy_backup(working);data=working/"data/train.bin"
+    outside=tmp_path/"outside";outside.write_bytes(b"external stays private")
+    data.unlink()
+    try:data.symlink_to(outside)
+    except OSError:pytest.skip("symlink privilege unavailable")
+    result=reset.backup_working(working,replace_backup=old.name)
+    folder=working/result["replaced_backup"]["recovery_directory"]
+    assert (folder/"files/data/train.bin").read_bytes()==b"data"
+    reset.clear_working(result["sha256"],working)
+    assert outside.read_bytes()==b"external stays private"
+
+
+def test_recovery_needs_space_before_any_deletion(working,monkeypatch,capsys):
+    from types import SimpleNamespace
+    old=legacy_backup(working);(working/"data/train.bin").unlink()
+    monkeypatch.setattr(reset.shutil,"disk_usage",lambda *a:SimpleNamespace(free=32*1024**2))
+    with pytest.raises(OSError,match="recuperação"):reset.backup_working(working,replace_backup=old.name)
+    assert old.exists() and not list(working.glob("*recovery-*"))
+    assert "data/train.bin" in capsys.readouterr().out
+
+
+def test_recovery_failure_keeps_old_zip_and_current_data(working,monkeypatch):
+    old=legacy_backup(working);data=working/"data/train.bin";data.write_bytes(b"current")
+    original=Path.open
+    def fail_recovery(path,*args,**kwargs):
+        if args and args[0]=="xb" and any(p.startswith(".llm2-recovery-writing-") for p in path.parts):
+            raise OSError("injected recovery failure")
+        return original(path,*args,**kwargs)
+    monkeypatch.setattr(Path,"open",fail_recovery)
+    with pytest.raises(OSError,match="injected recovery"):reset.backup_working(working,replace_backup=old.name)
+    assert old.exists() and data.read_bytes()==b"current"
+    assert not list(working.glob("*recovery-*"))
+
+
+def test_concurrent_change_during_recovery_blocks_deletion(working,monkeypatch):
+    old=legacy_backup(working);data=working/"data/train.bin";data.write_bytes(b"current")
+    original=reset.preserve_previous_versions
+    def change(*a,**k):
+        folder=original(*a,**k);data.write_bytes(b"concurrent");return folder
+    monkeypatch.setattr(reset,"preserve_previous_versions",change)
+    with pytest.raises(RuntimeError,match="durante a verificação"):reset.backup_working(working,replace_backup=old.name)
+    assert old.exists() and data.read_bytes()==b"concurrent"
+    assert not list(working.glob("*recovery-*"))
+
+
+def test_compression_failure_keeps_recovered_previous_versions_for_retry(working,monkeypatch):
+    old=legacy_backup(working);data=working/"data/train.bin";data.write_bytes(b"current")
+    with monkeypatch.context() as patch:
+        patch.setattr(zipfile.ZipFile,"write",lambda *a,**k:(_ for _ in ()).throw(OSError("compression failed")))
+        with pytest.raises(OSError,match="compression failed"):reset.backup_working(working,replace_backup=old.name)
+    assert not old.exists() and data.read_bytes()==b"current"
+    folders=list(working.glob("llm2-backup-recovery-*"));assert len(folders)==1
+    assert (folders[0]/"files/data/train.bin").read_bytes()==b"data"
+    result=reset.backup_working(working,replace_backup=old.name)
+    with zipfile.ZipFile(result["path"]) as archive:
+        assert archive.read("working/"+folders[0].name+"/files/data/train.bin")==b"data"
+
+
+def test_recovered_destination_hash_checked_before_old_backup_deleted(working,monkeypatch):
+    old=legacy_backup(working);(working/"data/train.bin").write_bytes(b"current")
+    original=reset.sha256_file
+    monkeypatch.setattr(reset,"sha256_file",lambda path:"0"*64
+        if any(p.startswith(".llm2-recovery-writing-") for p in Path(path).parts) else original(path))
+    with pytest.raises(ValueError,match="recovered version hash"):reset.backup_working(working,replace_backup=old.name)
+    assert old.exists() and not list(working.glob("*recovery-*"))
+
+
+def test_cleanup_ignores_only_timestamps_and_backup_can_be_reused(working):
+    import os
+    result=reset.backup_working(working)
+    data=working/"data/train.bin";info=data.stat()
+    os.utime(data,ns=(info.st_atime_ns,info.st_mtime_ns+1000000000))
+    assert reset.backup_working(working)["reused"]
+    assert reset.clear_working(result["sha256"],working)["status"]=="cleaned"
+
+
+def test_cleanup_still_blocks_new_payload_and_reports_it(working,capsys):
+    result=reset.backup_working(working)
+    (working/"new-checkpoint.pt").write_bytes(b"must back up first")
+    with pytest.raises(RuntimeError,match="Inventário mudou"):reset.clear_working(result["sha256"],working)
+    assert "new-checkpoint.pt" in capsys.readouterr().out
+    assert Path(result["path"]).exists() and (working/"new-checkpoint.pt").exists()
+
+
+def test_stream_verification_detects_bad_crc_without_separate_testzip_pass(working,monkeypatch):
+    old=legacy_backup(working)
+    with zipfile.ZipFile(old) as archive:info=archive.getinfo("working/data/train.bin")
+    with old.open("r+b") as stream:
+        stream.seek(info.header_offset+26);lengths=stream.read(4)
+        stream.seek(info.header_offset+30+int.from_bytes(lengths[:2],"little")+int.from_bytes(lengths[2:],"little"))
+        stream.write(b"X")
+    monkeypatch.setattr(zipfile.ZipFile,"testzip",lambda *a:pytest.fail("unnecessary full CRC pass"))
+    with pytest.raises(zipfile.BadZipFile,match="CRC"):reset.read_backup(old)
 
 
 @pytest.mark.parametrize("name",["../outside.zip",r"..\outside.zip","*.zip","/kaggle/input/backup.zip"])

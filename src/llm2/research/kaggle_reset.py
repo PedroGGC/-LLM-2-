@@ -160,7 +160,8 @@ def read_backup(path, *, expected_root=None, verify=True):
         if set(names) != {"backup_manifest.json", *("working/"+n for n in manifest["selected_files"])}:
             raise ValueError("backup member set differs from manifest")
         if verify:
-            if archive.testzip() is not None: raise ValueError("backup CRC failed")
+            # Reading every member to EOF validates CRC as well as our SHA-256.
+            # Avoid a second full decompression pass over multi-GiB archives.
             for name in manifest["selected_files"]:
                 if Path(name).is_absolute() or ".." in Path(name).parts or "\\" in name:
                     raise ValueError("unsafe backup member")
@@ -182,30 +183,120 @@ def replacement_path(base, name):
     return path
 
 
+def content_identity(record):
+    return {key: value for key, value in record.items() if key != "mtime_ns"}
+
+
+def inventory_difference(previous, current):
+    common = previous.keys() & current.keys()
+    return {
+        "added": sorted(current.keys()-previous.keys()),
+        "missing": sorted(previous.keys()-current.keys()),
+        "changed": sorted(name for name in common if content_identity(previous[name]) != content_identity(current[name])),
+        "timestamps_only": sorted(name for name in common if previous[name] != current[name]
+                                  and content_identity(previous[name]) == content_identity(current[name])),
+    }
+
+
+def same_inventory_content(previous, current):
+    difference = inventory_difference(previous, current)
+    return not any(difference[kind] for kind in ("added", "missing", "changed"))
+
+
+def print_inventory_difference(difference):
+    labels = {"added": "Novos (serão incluídos)", "missing": "Ausentes desde o backup",
+              "changed": "Conteúdo/tipo alterado", "timestamps_only": "Somente data de modificação"}
+    for kind, names in difference.items():
+        print(f"{labels[kind]}: {len(names)}", flush=True)
+        for name in names[:12]: print("  "+name, flush=True)
+        if len(names)>12: print(f"  ... mais {len(names)-12}; lista completa ficará no manifesto.", flush=True)
+
+
+def preserve_previous_versions(base, backup, manifest, names, difference):
+    """Keep unique old bytes and their original paths without overwriting current files."""
+    temporary = Path(tempfile.mkdtemp(prefix=".llm2-recovery-writing-", dir=base))
+    destination = base/("llm2-backup-recovery-"+os.urandom(6).hex())
+    try:
+        with zipfile.ZipFile(backup) as archive:
+            for name in names:
+                relative = Path(name)
+                if relative.is_absolute() or ".." in relative.parts or "\\" in name:
+                    raise ValueError("unsafe recovery member")
+                target = temporary/"files"/relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if not target.resolve().is_relative_to(temporary.resolve()): raise ValueError("external recovery target")
+                digest = hashlib.sha256()
+                with archive.open("working/"+name) as source, target.open("xb") as output:
+                    for block in iter(lambda: source.read(1024*1024), b""):
+                        output.write(block); digest.update(block)
+                if (digest.hexdigest() != manifest["inventory"][name]["sha256"]
+                    or sha256_file(target) != manifest["inventory"][name]["sha256"]):
+                    raise ValueError("recovered version hash mismatch: "+name)
+        (temporary/"original_backup_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+        (temporary/"recovery.json").write_text(json.dumps({
+            "source_backup": backup.name, "difference": difference, "recovered_files": names,
+            "layout": "files/<original relative path>; current files remain at working/<original relative path>",
+            "purpose": "preserved historical versions; do not automatically load/overlay or resume checkpoints",
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        if destination.exists(): raise FileExistsError("recovery destination exists")
+        temporary.rename(destination)
+    except BaseException:
+        if temporary.exists(): _remove_directory(temporary, base)
+        raise
+    print(f"Versões antigas preservadas: {len(names)} arquivo(s), em {destination.name}", flush=True)
+    return destination
+
+
 def remove_replaced_backup(base, path):
-    """Delete only an explicitly named generated ZIP after checking all originals."""
+    """Delete the named ZIP only when its old payload survives unchanged or recovered."""
     if path.parent != base or path.is_symlink() or path.resolve().parent != base:
         raise ValueError("replacement target must stay directly inside working")
     if not path.exists(): return None  # Retry after a compression failure or a completed replacement.
     before = path.lstat()
-    print("Conferindo o ZIP anterior e seus arquivos originais antes da substituição.", flush=True)
-    manifest = read_backup(path, expected_root=base)
+    print("Comparando o manifesto anterior com os arquivos atuais.", flush=True)
+    manifest = read_backup(path, expected_root=base, verify=False)
     records = inventory(base, exclude=(path,))
-    if records != manifest["inventory"]:
-        raise RuntimeError("Originais mudaram ou estão ausentes; ZIP anterior preservado. Substituição bloqueada.")
+    difference = inventory_difference(manifest["inventory"], records)
+    print_inventory_difference(difference)
+    unique = [name for name in manifest["selected_files"] if name not in records
+              or content_identity(records[name]) != content_identity(manifest["inventory"][name])]
+    needs_recovery = bool(difference["missing"] or difference["changed"])
+    recovery_bytes = (sum(manifest["inventory"][name]["bytes"] for name in unique)
+                      +len(json.dumps(manifest, ensure_ascii=False).encode("utf-8"))+2*1024**2) if needs_recovery else 0
     files, *_ = checkpoint_selection(base, records)
-    required = sum(records[n]["bytes"] for n in files)+512*1024**2
-    if shutil.disk_usage(base).free+before.st_size < required:
+    free = shutil.disk_usage(base).free
+    if recovery_bytes and free < recovery_bytes+64*1024**2:
+        raise OSError(f"ZIP anterior preservado: conteúdo antigo único precisa de {recovery_bytes/1024**2:.1f} MiB "
+                      f"para recuperação, mais 64 MiB de margem; livres {free/1024**2:.1f} MiB. Veja a lista acima.")
+    required = sum(records[n]["bytes"] for n in files)+recovery_bytes+512*1024**2
+    if free+before.st_size-recovery_bytes < required:
         raise OSError("Espaço insuficiente mesmo após remover o ZIP anterior; nenhum arquivo foi apagado.")
-    digest = sha256_file(path)
-    after = path.lstat()
-    if path.is_symlink() or (before.st_size, before.st_mtime_ns, before.st_ino) != (
-            after.st_size, after.st_mtime_ns, after.st_ino) or active_workers():
-        raise RuntimeError("Backup ou workers mudaram; substituição bloqueada.")
-    path.unlink()
+    print("Conferindo CRC e hashes do ZIP anterior.", flush=True)
+    read_backup(path, expected_root=base)
+    recovery = None
+    try:
+        if needs_recovery:
+            recovery = preserve_previous_versions(base, path, manifest, unique, difference)
+        current = inventory(base, exclude=(path, *((recovery,) if recovery else ())))
+        concurrent = inventory_difference(records, current)
+        if concurrent["added"] or concurrent["missing"] or concurrent["changed"]:
+            print_inventory_difference(concurrent)
+            raise RuntimeError("Conteúdo mudou durante a verificação; ZIP anterior preservado.")
+        digest = sha256_file(path)
+        after = path.lstat()
+        if path.is_symlink() or (before.st_size, before.st_mtime_ns, before.st_ino) != (
+                after.st_size, after.st_mtime_ns, after.st_ino) or active_workers():
+            raise RuntimeError("Backup ou workers mudaram; substituição bloqueada.")
+        path.unlink()
+    except BaseException:
+        if recovery is not None: _remove_directory(recovery, base)
+        raise
     print("Removido somente o ZIP anterior: "+path.name+". Arquivos originais preservados.", flush=True)
     return {"name": path.name, "bytes": before.st_size, "sha256": digest,
-            "original_inventory_verified": True}
+            "original_inventory_verified": not needs_recovery, "previous_payload_preserved": True,
+            "inventory_difference": difference, "recovery_directory": recovery.name if recovery else None,
+            "recovered_files": unique}
 
 
 def backup_working(base="/kaggle/working", *, compression="deflate9", replace_backup=None):
@@ -227,7 +318,7 @@ def _backup_working(base, *, compression, replace_backup):
             if manifest.get("compression", "stored") != compression: continue
             read_backup(previous, expected_root=base)
         except (ValueError, OSError, KeyError, zipfile.BadZipFile): continue
-        if inventory(base, exclude=(previous,)) == manifest["inventory"]:
+        if same_inventory_content(manifest["inventory"], inventory(base, exclude=(previous,))):
             return backup_receipt(previous, manifest, reused=True)
     replaced = remove_replaced_backup(base, replacement) if replacement is not None else None
     print("Inventariando os originais para o novo backup.", flush=True)
@@ -258,7 +349,7 @@ def _backup_working(base, *, compression, replace_backup):
                     print(f"Backup: {index}/{len(files)} arquivos; ZIP {temporary.stat().st_size/1024**3:.2f} GiB", flush=True)
         print("Conferindo CRC, hashes e inventário do ZIP comprimido.", flush=True)
         read_backup(temporary, expected_root=base)
-        if active_workers() or inventory(base, exclude=(temporary,)) != records:
+        if active_workers() or not same_inventory_content(records, inventory(base, exclude=(temporary,))):
             raise RuntimeError("Working mudou durante o backup; nada foi apagado.")
         os.link(temporary, destination)
     finally:
@@ -301,7 +392,9 @@ def clear_working(local_sha256, base="/kaggle/working"):
             match = path; break
     if match is None: raise ValueError("SHA local não corresponde a nenhum backup no working.")
     manifest = read_backup(match, expected_root=base)
-    if inventory(base, exclude=(match,)) != manifest["inventory"]:
+    current = inventory(base, exclude=(match,))
+    if not same_inventory_content(manifest["inventory"], current):
+        print_inventory_difference(inventory_difference(manifest["inventory"], current))
         raise RuntimeError("Inventário mudou após o backup; gere um novo backup antes de limpar.")
     if active_workers(): raise RuntimeError("Worker iniciou após a verificação; limpeza bloqueada.")
     before = shutil.disk_usage(base)
