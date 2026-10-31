@@ -1,6 +1,6 @@
 # Guia operacional
 
-Operação vigente para a próxima sessão: [backup/limpeza e diagnóstico do ciclo 4](CYCLE4_RUN.md).
+Operação vigente para a próxima sessão: [limpeza limitada e controle do ciclo 5](CYCLE5_RUN.md).
 As instruções de ciclos anteriores continuam para reprodução. Não executar esses
 treinos como complemento automático do ciclo 4.
 

@@ -1,5 +1,8 @@
 # Ciclo 4 — diagnóstico das escalas e dois scripts Kaggle
 
+Registro histórico da execução concluída na [0023](results/CAMPAIGN_0023.md).
+Operação vigente: [ciclo 5 e limpeza limitada dos ZIPs redundantes](CYCLE5_RUN.md).
+
 Protocolo novo, aprovado em 30/10/2026, na branch `experiment/fractal-lrm`.
 O ciclo 3 e suas regras permanecem históricos. Este ensaio atribui contribuição
 às escalas; não confirma superioridade geral nem eficiência com custo igualado.

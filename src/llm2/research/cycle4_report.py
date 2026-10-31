@@ -49,14 +49,14 @@ def analyze(rows, curves, profiles, *, smoke=False):
         "limitations": "Equal targets, not matched compute; parameter counts differ. t intervals exploratory; secondary contrasts unadjusted. Concurrent train times are operational, not isolated benchmarks. Energy is GPU-only when available. No formal equivalence or general fractal advantage."}
 
 
-def save(destination, result, *, plot=False):
+def save(destination, result, *, plot=False,variants=VARIANTS,seeds=SEEDS):
     destination = Path(destination); destination.mkdir(parents=True, exist_ok=False)
     write_json(destination/"report.json", result)
     for name, records in (("runs.csv",result["rows"]),("curves.csv",result["curves"])):
         if records:
             with (destination/name).open("x",encoding="utf-8",newline="") as stream:
                 writer=csv.DictWriter(stream,fieldnames=list(records[0])); writer.writeheader();writer.writerows(records)
-    lines = ["# Ciclo 4 — diagnóstico exploratório","",
+    lines = [f"# Ciclo {result.get('cycle',4)} — diagnóstico exploratório","",
         "| Variante | Seed | NLL completa | Alvos | Treino concorrente, s |",
         "|---|---:|---:|---:|---:|"]
     for row in result["rows"]:
@@ -68,8 +68,8 @@ def save(destination, result, *, plot=False):
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         fig, axis = plt.subplots(figsize=(9,5))
-        for variant in VARIANTS:
-            for seed in SEEDS:
+        for variant in variants:
+            for seed in seeds:
                 points = [p for p in result["curves"] if p["variant"]==variant and p["seed"]==seed]
                 if points: axis.plot([p["training_flops_estimated"] for p in points],
                     [p["validation_loss"] for p in points],label=f"{variant}/{seed}",alpha=.7)

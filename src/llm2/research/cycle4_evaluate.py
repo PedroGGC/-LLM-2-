@@ -66,7 +66,7 @@ def depth_probe(checkpoint, output, *, device="cuda"):
             "wall_seconds": time.monotonic()-started, **result})
     result = {"checkpoint_model_sha256": meta["files"]["model.safetensors"],
         "dataset_sha256": data.fingerprint, "split": "val", "test_evaluated": False,
-        "rows": rows, "limitations": "K=2 training; sensitivity probe is not evidence of variable-depth training benefit"}
+        "rows": rows, "limitations": f"K={cfg.research.iterations} training; sensitivity probe is not evidence of variable-depth training benefit"}
     write_json(output/"depth.json", result)
     return result
 

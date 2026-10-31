@@ -1,0 +1,318 @@
+{
+  "status": "verified",
+  "results": {
+    "sha256": "e89ff95f2c16518438ea3edbda536c50292265ad2e0bfdf769e564fd934565a2",
+    "bytes": 31823295
+  },
+  "checkpoints": {
+    "sha256": "b41fec39a5c9c3cb7a04df86a13bcca06fbbb6448d9688101b1c6d4850d8919c",
+    "bytes": 464552147
+  },
+  "revision": "6a6af1a3dfe8f1b6348a501f82094b330113fd27",
+  "dataset_sha256": "55a1f1c6abdb7c0095acd4987e14a9c96e7b72ddc3a4a686fbe514f2731277f9",
+  "counts": {
+    "git_files": 232,
+    "snapshots": 44,
+    "snapshot_members": 4576,
+    "checkpoint_hashes": 36,
+    "full_evaluations": 72,
+    "depth_evaluations": 24
+  },
+  "max_reconstructed_nll_error": 7.016919489899465e-09,
+  "environment": {
+    "cpu": "x86_64",
+    "cublas_workspace_config": ":4096:8",
+    "cuda_devices": [
+      {
+        "logical_index": 0,
+        "name": "Tesla T4",
+        "total_memory_bytes": 15636037632,
+        "uuid": "e125c1ed-19dd-c347-3a14-65cb9adec475"
+      }
+    ],
+    "cuda_version": "12.8",
+    "cuda_visible_devices": "0",
+    "cudnn_version": 91900,
+    "device": "Tesla T4",
+    "packages": {
+      "PyYAML": "6.0.3",
+      "numpy": "2.1.3",
+      "pytest": "8.4.2",
+      "safetensors": "0.8.0",
+      "tensorboard": "2.20.0",
+      "tokenizers": "0.23.1",
+      "torch": "2.11.0+cu128"
+    },
+    "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+    "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+  },
+  "summary": {
+    "flrm_fine": {
+      "mean_nll": 1.3485096360494193,
+      "isolated_ms_by_gpu": {
+        "0": 69.98176999968564,
+        "1": 73.80919799970798
+      },
+      "energy_microjoules_per_target_by_gpu": {
+        "0": 627.0029043222403,
+        "1": 651.0280299831081
+      }
+    },
+    "flrm_4": {
+      "mean_nll": 1.352776623407075,
+      "isolated_ms_by_gpu": {
+        "0": 88.8176729999941,
+        "1": 90.65560050021304
+      },
+      "energy_microjoules_per_target_by_gpu": {
+        "0": 768.7255091637186,
+        "1": 814.0836479671823
+      }
+    },
+    "flrm_16": {
+      "mean_nll": 1.3517014686983242,
+      "isolated_ms_by_gpu": {
+        "0": 74.69253400040543,
+        "1": 77.71491999983482
+      },
+      "energy_microjoules_per_target_by_gpu": {
+        "0": 661.4841368140244,
+        "1": 670.1406547567522
+      }
+    },
+    "flrm_full": {
+      "mean_nll": 1.3493910151644024,
+      "isolated_ms_by_gpu": {
+        "0": 91.83322350008893,
+        "1": 97.11261199981891
+      },
+      "energy_microjoules_per_target_by_gpu": {
+        "0": 811.8888373390781,
+        "1": 851.2624821192782
+      }
+    },
+    "lrm_cached": {
+      "mean_nll": 1.349904396909724,
+      "isolated_ms_by_gpu": {
+        "0": 66.59876599997006,
+        "1": 68.33370000003924
+      },
+      "energy_microjoules_per_target_by_gpu": {
+        "0": 583.0267494219869,
+        "1": 613.7823642828525
+      }
+    },
+    "transformer_two": {
+      "mean_nll": 1.2859035530479428,
+      "isolated_ms_by_gpu": {
+        "0": 44.9787925003875,
+        "1": 45.582747499793186
+      },
+      "energy_microjoules_per_target_by_gpu": {
+        "0": 402.3461752379967,
+        "1": 410.4149724029437
+      }
+    }
+  },
+  "contrasts": {
+    "primary_full_minus_fine": {
+      "seeds": [
+        211,
+        212,
+        213
+      ],
+      "n": 3,
+      "mean": 0.0008813791149830941,
+      "sd": 0.001980973716564993,
+      "ci95_paired_t": [
+        -0.004039632400608759,
+        0.0058023906305749474
+      ],
+      "seeds_favoring_flrm": 1
+    },
+    "scale4_without16": {
+      "seeds": [
+        211,
+        212,
+        213
+      ],
+      "n": 3,
+      "mean": 0.004266987357655738,
+      "sd": 0.00032187690367306364,
+      "ci95_paired_t": [
+        0.0034674008026534934,
+        0.005066573912657983
+      ],
+      "seeds_favoring_flrm": 0
+    },
+    "scale16_without4": {
+      "seeds": [
+        211,
+        212,
+        213
+      ],
+      "n": 3,
+      "mean": 0.003191832648904954,
+      "sd": 0.0004987328662641962,
+      "ci95_paired_t": [
+        0.0019529115276565893,
+        0.004430753770153319
+      ],
+      "seeds_favoring_flrm": 0
+    },
+    "scale4_with16": {
+      "seeds": [
+        211,
+        212,
+        213
+      ],
+      "n": 3,
+      "mean": -0.00231045353392186,
+      "sd": 0.0017460828152094144,
+      "ci95_paired_t": [
+        -0.006647963703275316,
+        0.002027056635431597
+      ],
+      "seeds_favoring_flrm": 3
+    },
+    "scale16_with4": {
+      "seeds": [
+        211,
+        212,
+        213
+      ],
+      "n": 3,
+      "mean": -0.003385608242672644,
+      "sd": 0.0021640828641634998,
+      "ci95_paired_t": [
+        -0.008761488097206893,
+        0.001990271611861604
+      ],
+      "seeds_favoring_flrm": 3
+    },
+    "interaction": {
+      "seeds": [
+        211,
+        212,
+        213
+      ],
+      "n": 3,
+      "mean": -0.006577440891577598,
+      "sd": 0.0018674659845689012,
+      "ci95_paired_t": [
+        -0.01121648356952629,
+        -0.0019383982136289045
+      ],
+      "seeds_favoring_flrm": 3
+    },
+    "fine_minus_lrm": {
+      "seeds": [
+        211,
+        212,
+        213
+      ],
+      "n": 3,
+      "mean": -0.0013947608603046557,
+      "sd": 0.00196648987596601,
+      "ci95_paired_t": [
+        -0.0062797925212515,
+        0.003490270800642188
+      ],
+      "seeds_favoring_flrm": 2
+    },
+    "full_minus_transformer": {
+      "seeds": [
+        211,
+        212,
+        213
+      ],
+      "n": 3,
+      "mean": 0.06348746211645961,
+      "sd": 0.006430242828361576,
+      "ci95_paired_t": [
+        0.0475138534098844,
+        0.07946107082303483
+      ],
+      "seeds_favoring_flrm": 0
+    }
+  },
+  "simplifications": {
+    "flrm_fine": {
+      "seeds": [
+        211,
+        212,
+        213
+      ],
+      "nll_differences": [
+        -0.0017166885654247288,
+        -0.0023078909921123714,
+        0.001380442212587818
+      ],
+      "isolated_speed_fraction_by_gpu": {
+        "0": 0.23794714665964145,
+        "1": 0.23996279700678202
+      },
+      "candidate": true
+    },
+    "flrm_4": {
+      "seeds": [
+        211,
+        212,
+        213
+      ],
+      "nll_differences": [
+        0.002183732796526394,
+        0.0020892119935813636,
+        0.005883879937910175
+      ],
+      "isolated_speed_fraction_by_gpu": {
+        "0": 0.03283724980090574,
+        "1": 0.06648993747195175
+      },
+      "candidate": false
+    },
+    "flrm_16": {
+      "seeds": [
+        211,
+        212,
+        213
+      ],
+      "nll_differences": [
+        0.0020356830747156884,
+        0.0007180465524110335,
+        0.004177630974638857
+      ],
+      "isolated_speed_fraction_by_gpu": {
+        "0": 0.1866501996379002,
+        "1": 0.1997443133340936
+      },
+      "candidate": false
+    }
+  },
+  "session_budget": {
+    "elapsed_seconds": 7190.769094806,
+    "export_reserve_seconds": 300.0,
+    "limit_seconds": 10800.0,
+    "scope": "bootstrap/setup + tests + pilot + training + evaluation; export uses reserve",
+    "work_remaining_seconds": 3309.2309040319997
+  },
+  "limitations": "Weights/state hashes only; no pickle load or independent GPU rerun; exploratory three seeds, no reserved test.",
+  "diagnostics": {
+    "files": 18,
+    "finite_float_values": 7119
+  },
+  "depth_means": {
+    "flrm_full": {
+      "1": 1.6286343521672428,
+      "2": 1.3493910151644024,
+      "4": 1.5462169385182205,
+      "8": 2.6283879212692227
+    },
+    "lrm_cached": {
+      "1": 1.6148279731311175,
+      "2": 1.349904396909724,
+      "4": 1.4564869082319911,
+      "8": 1.7654884287892567
+    }
+  }
+}

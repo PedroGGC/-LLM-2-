@@ -5,6 +5,9 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 
 | Documento | Finalidade |
 |---|---|
+| [Campanha 0023](results/CAMPAIGN_0023.md) | 18 treinos auditados; fino simplifica, Transformer vence neste regime |
+| [Operação atual: ciclo 5 e ZIPs limitados](CYCLE5_RUN.md) | Limpar só redundantes; 12 controles de profundidade, snapshot temporário aos 50% |
+| [Plano prévio da auditoria/retenção/ciclo 5](PLAN_CAMPAIGN_0023_RETENTION_CYCLE5.md) | Escopo, riscos e critérios da próxima entrega |
 | [Dois scripts: backup e ciclo 4](CYCLE4_RUN.md) | Backup externo antes de limpeza completa; ablação de escalas, meta 2h/teto 3h |
 | [Plano prévio do ciclo 4](PLAN_CYCLE4.md) | Escopo aprovado, riscos e critérios de aceitação |
 | [Estado do projeto](PROJECT_STATUS.md) | Arquitetura real, tecnologias ativas/opcionais e limites |

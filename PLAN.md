@@ -17,13 +17,16 @@ recorrente. Esta etapa valida componentes antes da confirmação independente.
    deste protocolo e revisar a hipótese com os controles existentes; resultado
    permanece inconclusivo. Novas tecnologias/A100 continuam condicionais.
 
-5. Ciclo 4 implementado para diagnóstico exploratório, ainda sem resultado T4:
-   [plano prévio](docs/PLAN_CYCLE4.md) e [operação](docs/CYCLE4_RUN.md). Seis variantes
-   × seeds 211/212/213 × 6.000 passos; 72 validações principais; meta 2h/teto 3h.
-   Remover escalas por 4/16, preservar controle fino com projeção/gate próprios,
-   comparar com LRM cached e Transformer de dois blocos. Pilotos, perfis isolados,
-   exportação por job e backup antes da limpeza. Não reutiliza a regra positiva
-   nem altera o código congelado do ciclo 3.
+5. Ciclo 4 executado/auditado: [0023](docs/results/CAMPAIGN_0023.md). Dezoito treinos,
+   72 avaliações principais e24probes. Completo−fino+0,000881NLL: nenhum ganho
+   confirmado das escalas. Somente fino cumpre critério de simplificação (~24%
+   menos tempo). Transformer2blocos vence todos neste regime; K não treinado piora.
+6. [Ciclo 5](docs/CYCLE5_RUN.md): 12controles, K1/2/4 treinados do zero e Transformer,
+   seeds221/222/223. Parâmetros próximos e FLOPs estimados igualados; alvos diferentes.
+   Meta2h/teto3h. Sem tecnologia nova. Um par de ZIPs temporários aos6/12jobs,
+   removido após verificar os dois definitivos. Limpeza da0023 só remove ZIPs
+   after-NN redundantes, protegendo pasta/pesos e definitivos. Confirmação posterior
+   com cinco novas seeds depende de sinal favorável; não repetir matriz de escalas.
 
 Implementação científica continua em `experiment/fractal-lrm`. Tecnologias futuras
 são condicionais; resultados novos não autorizam relaxar proveniência/retomada.

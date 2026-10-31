@@ -1,4 +1,47 @@
-# Validação vigente — 30/10/2026
+# Validação vigente — 31/10/2026
+
+## Auditoria 0023 e controle/retenção ciclo 5 — 31/10/2026
+
+Plano prévio: [auditoria/retenção/ciclo 5](docs/PLAN_CAMPAIGN_0023_RETENTION_CYCLE5.md).
+[Resultados 0023](docs/results/CAMPAIGN_0023.md), [operação nova](docs/CYCLE5_RUN.md).
+Auditor executado com `PYTHONPATH=src` e Python explícito3.12.2. A primeira chamada
+sem PYTHONPATH selecionou a instalação editável antiga e não encontrou o módulo;
+foi corrigida a seleção do checkout, sem alterar verificação de dados ou código.
+
+| Verificação real | Resultado |
+|---|---|
+| Dois ZIPs locais recebidos | CRC íntegro, membros únicos; results31.823.295bytes / checkpoints464.552.147bytes |
+| Fonte e snapshots 0023 | 232 arquivos contra Git6a6af1a; 44snapshots /4.576membros consistentes |
+| NLL reconstruída | 72 principais +24probes; 4.469janelas /1.144.064alvos cada; erro máximo7,01692e−9 |
+| Estado final | 36 hashes safetensors/estado de18jobs conferidos por streaming, sem pickle |
+| Diagnósticos | 18arquivos,7.119floats finitos; não prova de raciocínio/eficiência |
+| Novo validador de bundles no material real | Cobertura integral dos18jobs; SHA dos definitivos idêntico às cópias locais |
+| Primeira seleção de storage/profundidade/operação | 36passed,1skipped,11deselected,19,69s |
+| Integrações reais CPU em dois processos (C5novo e C4compatível) | 2passed,47,18s; metade/final e formato legado cobertos |
+| `python -m pytest -q`, executável explícito3.12.2 | **455passed,40skipped**,437,41s,exit0 |
+| Após endurecer apenas a entrada Git do auditor | 1passed,0,44s; metadado ZIP com opção Git rejeitado antes de qualquer comando |
+| Links Markdown e whitespace | 145 destinos locais válidos; `git diff --check` sem erros nos dois checkouts |
+
+Suíte completa inclui causalidade, forward/backward finito, memorização e retomada
+exata CPU/math com dropout0,2/acumulação2 dos quatro braços K1/K2/K4/Transformer;
+parâmetros/embedding ligado/fórmula e horizontes-FLOPs pré-fixados. Inclui dois
+processos reais por sessão de engenharia, publicação aos50% em jobs, remoção só
+após definitivos íntegros, preservação em deadline, conteúdo único, hashes errados,
+ZIP quebrado, estado incompleto, worker, symlink, confinamento e proteção dos finais.
+Células ativas testadas com fontes/bootstrap simulados, números/hashes/relógio
+conferidos; inativas sem rede. Backup anterior fora do Git por novo ignore explícito.
+
+Os40skips não validam CUDA nem comportamento específico de Linux.
+Este ambiente tem Torch2.14.1+cpu/Windows, sem medição GPU nova. Os logs recebidos
+da0023 registram64CPU/Linux e6CUDA/Inductor aprovados em Torch2.11.0+cu128, Python
+3.13.15, duasT4. Evidência remota anterior não valida CUDA dos novos controles;
+o próximo preflight executará os quatro braços no hardware real.
+
+Não houve treino científico nem limpeza remota pelo agente. Somente fixtures
+temporárias foram removidas; os dois arquivos originais da0023 permanecem locais.
+Manifesto/tokenizador e hashes declarados do dataset foram conferidos, sem rehash
+dos bins ausentes nos bundles. Fonte de treino0023 permanece congelada em6a6af1a;
+nova operação tem protocolo/revisão próprios e não relaxa retomada científica.
 
 ## Reconciliação do inventário na substituição — 30/10/2026
 

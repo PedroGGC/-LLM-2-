@@ -13,6 +13,7 @@ import threading
 import time
 import traceback
 import zipfile
+from types import SimpleNamespace
 
 import torch
 import yaml
@@ -27,6 +28,15 @@ from .cycle4_report import analyze, save as save_report
 from .factory import build_backbone
 from .pairing import compute_paired_init_provenance
 from .session import SessionCampaign, SessionBudget, SessionBudgetExceeded
+from .campaign_storage import prune_archives,verify_pair
+
+
+def specification(value):
+    return getattr(value,"study",None) or SimpleNamespace(cycle=4,protocol=PROTOCOL,protocol_id=PROTOCOL_ID,
+        variants=VARIANTS,seeds=SEEDS,ordered_jobs=ordered_jobs,analyze=analyze,post_seconds=900,
+        pilot_variant="flrm_full",post_all_seeds=True,depth_variants=("flrm_full","lrm_cached"),
+        cpu_tests=["tests/test_cycle4_models.py","tests/test_cycle4_operations.py","tests/test_kaggle_reset.py",
+                   "tests/test_json_portability.py"],cuda_tests="tests/test_cycle4_models.py")
 
 
 @contextmanager
@@ -57,6 +67,7 @@ def parser():
     p.add_argument("--export-reserve-seconds",type=float,default=300.)
     p.add_argument("--bootstrap-elapsed-seconds",type=float,default=0.)
     p.add_argument("--bootstrap-metadata")
+    p.add_argument("--export-policy",choices=("per-job","halfway-temporary"),default="per-job")
     return p
 
 
@@ -79,7 +90,7 @@ def validate(args):
 
 def materialize(campaign,args,data):
     directory=campaign.output/"configs";directory.mkdir()
-    jobs=ordered_jobs(data,campaign.output,args.gpus,device=args.device,smoke=args.engineering_smoke)
+    jobs=specification(args).ordered_jobs(data,campaign.output,args.gpus,device=args.device,smoke=args.engineering_smoke)
     common={}
     for job in jobs:
         file=directory/(job["id"]+".yaml")
@@ -107,11 +118,10 @@ def command(campaign,args,arguments,name,*,slot=None,job=None):
 
 
 def tests(campaign,args):
-    names=["tests/test_cycle4_models.py","tests/test_cycle4_operations.py","tests/test_kaggle_reset.py",
-           "tests/test_json_portability.py"]
+    spec=specification(args);names=spec.cpu_tests
     calls=[["-m","pytest","-q",*names,"-m","not cuda"]]
     if args.device=="cuda":
-        calls.append(["-m","pytest","-q","tests/test_cycle4_models.py","-m","cuda"])
+        calls.append(["-m","pytest","-q",spec.cuda_tests,"-m","cuda"])
     campaign.manifest["validation_commands"]=calls
     for i,call in enumerate(calls):
         with phase(campaign,"validation_focused"):
@@ -125,9 +135,10 @@ def require_idle(campaign):
 
 def pilot(campaign,args):
     require_idle(campaign)
+    spec=specification(args)
     records=[];durations={}
     for slot in args.gpus:
-        for variant in VARIANTS:
+        for variant in spec.variants:
             job=next(j for j in campaign.manifest["runs"] if j["variant"]==variant)
             folder=campaign.output/"pilots"/f"{variant}-gpu-{slot}"
             with phase(campaign,"pilot_isolated",variant=variant,gpu_slot=slot):
@@ -146,7 +157,7 @@ def pilot(campaign,args):
     # Disposable concurrent heavy pilots measure host contention, never quality.
     started=time.monotonic()
     def concurrent(slot):
-        job=next(j for j in campaign.manifest["runs"] if j["variant"]=="flrm_full")
+        job=next(j for j in campaign.manifest["runs"] if j["variant"]==spec.pilot_variant)
         folder=campaign.output/"pilots"/f"concurrent-full-{slot}"
         command(campaign,args,["-m","llm2","profile","--execute","--config",job["config"],"--output",folder,
             "--warmup-steps",0 if args.engineering_smoke else 10,"--measure-steps",1 if args.engineering_smoke else 30],
@@ -155,7 +166,7 @@ def pilot(campaign,args):
     with ThreadPoolExecutor(max_workers=2) as pool:
         concurrent_records=dict(pool.map(concurrent,args.gpus))
     factor=max(1.,max(concurrent_records[s]/next(r["mean_step_seconds"] for r in records
-        if r["variant"]=="flrm_full" and r["gpu_slot"]==s) for s in args.gpus))
+        if r["variant"]==spec.pilot_variant and r["gpu_slot"]==s) for s in args.gpus))
     campaign.manifest.update(pilot=records,validation_duration_pilot=durations,
         parallel_pilot={"wall_seconds":time.monotonic()-started,"step_seconds":concurrent_records,"contention_factor":factor},
         pilot_completed_before_training=True)
@@ -171,13 +182,13 @@ def forecast_seconds(jobs,slots):
 
 
 def required_storage(jobs,*,smoke=False):
-    # Four milestones, a per-job archive and a final bundle; 16 bytes/parameter is conservative.
+    # Four milestones + at most one recovery copy/job + final bundle; 16 bytes/parameter is conservative.
     return sum(j["registered_parameters"]*16*6 for j in jobs)+(0 if smoke else 1536*1024**2)
 
 
 def admit(campaign,args):
     jobs=campaign.manifest["runs"]
-    post=0 if args.engineering_smoke else 900
+    post=0 if args.engineering_smoke else specification(args).post_seconds
     prediction=forecast_seconds(jobs,args.gpus)+post
     campaign.manifest["forecast"]={"remaining_seconds":prediction,"safety_factor":1.35,
         "predicted_total_seconds":campaign.budget.elapsed+prediction+campaign.budget.reserve,
@@ -211,7 +222,7 @@ def report_data(campaign):
                 "validation_loss":point["validation_loss"],"validation_tokens":point["validation_tokens"],
                 "training_targets":point["step"]*job["batch_size"]*job["grad_accum_steps"]*job["config_resolved"]["data"]["seq_len"],
                 "training_flops_estimated":point["step"]*job["step_flops_estimated"]})
-    return analyze(rows,curves,campaign.manifest.get("isolated_profiles",[]),smoke=campaign.manifest["engineering_smoke"])
+    return specification(campaign).analyze(rows,curves,campaign.manifest.get("isolated_profiles",[]),smoke=campaign.manifest["engineering_smoke"])
 
 
 def archive_files(destination,files,*,base,extra=None,stored=False):
@@ -248,7 +259,8 @@ def publish(campaign,suffix,*,checkpoint_jobs=(),final=False):
     with campaign.lock:
         campaign.save();result=report_data(campaign)
         destination=campaign.output/"reports"/suffix
-        save_report(destination,result,plot=final)
+        spec=specification(campaign)
+        save_report(destination,result,plot=final,variants=spec.variants,seeds=spec.seeds)
         files=[]
         shared=("campaign.json","bootstrap.json","data/manifest.json","data/tokenizer.json")
         files.extend(campaign.output/n for n in shared if (campaign.output/n).exists())
@@ -308,14 +320,42 @@ def train_parallel(campaign,args):
                     full_validation_loss=records[-1]["validation_loss"],validation_tokens=expected)
                 if records[-1]["checkpoint_model_sha256"]!=job["checkpoint_model_sha256"]:
                     raise ValueError("final weights mismatch")
+                campaign.save()
             with publishing:
                 counter[0]+=1
-                publish(campaign,f"after-{counter[0]:02d}",checkpoint_jobs=[job])
+                maybe_publish_progress(campaign,args,counter[0],job=job)
     run_lanes(args.gpus,worker,campaign.abort)
 
 
 def require_job_budget(campaign,args,job):
-    campaign.budget.require(job["estimated_job_seconds"]+(0 if args.engineering_smoke else 900))
+    campaign.budget.require(job["estimated_job_seconds"]+(0 if args.engineering_smoke else specification(args).post_seconds))
+
+
+def maybe_publish_progress(campaign,args,completed,*,job=None):
+    if getattr(args,"export_policy","per-job")=="per-job":
+        # Preserve the historical operator for reproduction; Cycle 5 selects halfway-temporary.
+        if job is None:raise ValueError("per-job export requires the completed job")
+        return publish(campaign,f"after-{completed:02d}",checkpoint_jobs=[job])
+    total=len(campaign.manifest["runs"])
+    if total>1 and completed==(total+1)//2:
+        with campaign.lock:
+            jobs=[j for j in campaign.manifest["runs"] if j["status"]=="complete"]
+            campaign.manifest["export_progress"]={"completed_jobs":completed,"total_jobs":total,
+                "fraction":completed/total,"unit":"completed training plus full milestone validation"}
+            pair=publish(campaign,"midway",checkpoint_jobs=jobs)
+            verify_pair(*pair)
+            return pair
+
+
+def finish_retention(campaign,args,results,backup):
+    if getattr(args,"export_policy","per-job")!="halfway-temporary":return
+    if campaign.manifest["status"]!="complete":return
+    paths=[campaign.output.parent/(campaign.output.name+"-midway-"+kind+".zip") for kind in ("results","checkpoints")]
+    paths=[p for p in paths if p.exists()]
+    receipt=prune_archives(campaign.output.parent,paths,final_results=results,final_checkpoints=backup,
+        require_complete=True,guard=lambda:list(campaign.processes))
+    write_json(campaign.output/"export-retention.json",receipt)
+    print(f"Exportação final verificada; {len(receipt['deleted'])} ZIPs temporários removidos.",flush=True)
 
 
 def run_lanes(slots,worker,on_error):
@@ -331,9 +371,10 @@ def run_lanes(slots,worker,on_error):
 
 def postprocess(campaign,args):
     require_idle(campaign)
+    spec=specification(args)
     profiles=[]
-    for variant in VARIANTS:
-        job=next(j for j in campaign.manifest["runs"] if j["variant"]==variant and j["seed"]==SEEDS[0])
+    for variant in spec.variants:
+        job=next(j for j in campaign.manifest["runs"] if j["variant"]==variant and j["seed"]==spec.seeds[0])
         for slot in args.gpus:
             folder=campaign.output/"isolated"/f"{variant}-gpu-{slot}"
             command(campaign,args,["-m","llm2","profile","--execute","--config",job["config"],"--output",folder,
@@ -343,7 +384,7 @@ def postprocess(campaign,args):
             value=json.loads((folder/"profile.json").read_text())
             values=[p["step_train_wall_seconds"] for p in value["unprofiled_samples"]]
             chunks=[statistics.median(values[i:i+30]) for i in range(0,len(values),30)]
-            row={"variant":variant,"gpu_slot":slot,"seed":SEEDS[0],"median_step_seconds":statistics.median(chunks),
+            row={"variant":variant,"gpu_slot":slot,"seed":spec.seeds[0],"median_step_seconds":statistics.median(chunks),
                 "repetition_medians":chunks,"energy":value["energy"],"host_memory":value["host_memory"],
                 "scope":"isolated weights-only profiling clone, fresh optimizer; no concurrent workers"}
             benchmark=folder/"inference.json"
@@ -361,24 +402,28 @@ def postprocess(campaign,args):
             row["cache_bytes_scope"]="temporary FP32 context projections per forward; no persistent sequence memory/KV cache"
             profiles.append(row);campaign.manifest["isolated_profiles"]=profiles;campaign.save()
     for job in campaign.manifest["runs"]:
+        if not spec.post_all_seeds and job["seed"]!=spec.seeds[0]:continue
         destination=campaign.output/"post"/job["id"];destination.mkdir(parents=True)
         command(campaign,args,["-m","llm2","diagnose","--checkpoint",job["checkpoint"],"--device",args.device,
             "--samples","128","--batch-size","4","--output",destination/"diagnostics.json"],
             job["id"]+"-diagnose.log",slot=args.gpus[0])
-        if job["variant"] in ("flrm_full","lrm_cached"):
+        if job["variant"] in spec.depth_variants:
             command(campaign,args,["-m","llm2.research.cycle4_evaluate","--checkpoint",job["checkpoint"],
                 "--device",args.device,"--output",destination/"depth"],job["id"]+"-depth.log",slot=args.gpus[0])
 
 
-def execute(args,*,started=None):
+def execute(args,*,started=None,study=None):
+    if study is not None:args.study=study
     validate(args)
     started=time.monotonic() if started is None else started
     budget=SessionBudget(args.session_seconds,args.export_reserve_seconds,
         elapsed=args.bootstrap_elapsed_seconds+time.monotonic()-started)
     campaign=SessionCampaign(ROOT,Path(args.output).resolve(),device=args.device,gpus=args.gpus,budget=budget)
-    campaign.manifest.update(cycle=4,protocol=PROTOCOL,protocol_id=PROTOCOL_ID,
+    campaign.study=spec=specification(args)
+    campaign.manifest.update(cycle=spec.cycle,protocol=spec.protocol,protocol_id=spec.protocol_id,
         engineering_smoke=args.engineering_smoke,tests_skipped=args.skip_tests,test_evaluated=False,
-        target_seconds=args.target_seconds,post_reserve_seconds=0 if args.engineering_smoke else 900,
+        target_seconds=args.target_seconds,post_reserve_seconds=0 if args.engineering_smoke else spec.post_seconds,
+        export_policy=getattr(args,"export_policy","per-job"),
         scheduling="two independent single-GPU lanes; profiles isolated; parallel train time labelled operational",
         isolated_profiles=[])
     error=None
@@ -386,7 +431,7 @@ def execute(args,*,started=None):
     os.environ["LLM2_CYCLE4"]="1"
     os.environ["LLM2_COMPILER_CACHE_ROOT"]=str(campaign.output/"compiler-cache")
     try:
-        with heartbeat(campaign,"ciclo 4"):
+        with heartbeat(campaign,f"ciclo {spec.cycle}"):
             with phase(campaign,"dataset_and_configurations"):
                 data=prepare(campaign,args);materialize(campaign,args,data)
             if not args.skip_tests:tests(campaign,args)
@@ -406,13 +451,20 @@ def execute(args,*,started=None):
         campaign.abort()
         campaign.manifest["session_budget"]=budget.snapshot()
         campaign.save()
-        try:results,backup=publish(campaign,"final",final=True)
+        try:
+            results,backup=publish(campaign,"final",final=True)
+            if getattr(args,"export_policy","per-job")=="halfway-temporary":
+                # Invalid definitive exports are fatal; only redundant-file cleanup is best effort.
+                verify_pair(results,backup,require_complete=campaign.manifest["status"]=="complete")
+            try:finish_retention(campaign,args,results,backup)
+            except Exception as cleanup_error:
+                print(f"Exportação preservada; limpeza de temporários pendente: {cleanup_error}",flush=True)
         finally:
             for key,value in old_flags.items():
                 if value is None:os.environ.pop(key,None)
                 else:os.environ[key]=value
         print(f"Status: {campaign.manifest['status']} | {results.name} | {backup.name}",flush=True)
-    if error:raise RuntimeError(f"Cycle 4 failed; evidence preserved in {results}") from error
+    if error:raise RuntimeError(f"Cycle {spec.cycle} failed; evidence preserved in {results}") from error
     return {"status":campaign.manifest["status"],"results_zip":str(results),"checkpoints_zip":str(backup)}
 
 

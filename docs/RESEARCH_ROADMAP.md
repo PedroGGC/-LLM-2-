@@ -1,16 +1,21 @@
 # Próximas perguntas de pesquisa
 
-Atualizado em 30/10/2026, após a 0022 e aprovação do diagnóstico do ciclo 4.
+Atualizado em 31/10/2026, após a auditoria 0023.
 Este documento lista possibilidades; não dispara
 treinos nem autoriza incorporar todas as tecnologias. Estado factual em
 [PROJECT_STATUS.md](PROJECT_STATUS.md); etapa atual em [PLAN.md](../PLAN.md).
 
 ## Roteiro consolidado após o diagnóstico
 
-O trabalho atual é o [ciclo 4](CYCLE4_RUN.md): contribuição das escalas 4/16,
-controle somente fino, LRM cached e Transformer de dois blocos. O histórico 0022
-não confirmou vantagem fractal. As prioridades abaixo são experimentos posteriores
-separados, sujeitos aos resultados e a orçamentos próprios; não entram nesta rodada.
+O [ciclo 4 / 0023](results/CAMPAIGN_0023.md) não demonstrou ganho das escalas.
+Somente fino cumpriu o critério exploratório de simplificação; o Transformer de
+dois blocos liderou qualidade e custo. Probes de K não treinado pioraram. Antes
+de profundidade variável/RINS, o [ciclo 5](CYCLE5_RUN.md) treina K1/K2/K4 separados
+com FLOPs estimados iguais e referência Transformer. São controles, sem novo
+mecanismo. Não repetir a matriz de escalas ou escalar A100 agora. Se esta forma
+de recorrência continuar sem benefício, interromper investimento nela neste regime
+e escolher uma frente independente justificada pelo objetivo. As prioridades
+abaixo continuam condicionais, sem promessa de incorporação automática.
 
 | Ordem | Tecnologia | Teste e condição |
 |---|---|---|

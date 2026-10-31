@@ -1,11 +1,12 @@
-# Estado científico e técnico — 30/10/2026
+# Estado científico e técnico — 31/10/2026
 
-Etapa operacional atual: [ciclo 4](CYCLE4_RUN.md), implementado, sem resultados
-científicos novos. Remove fisicamente as escalas comprimidas selecionadas,
-preserva o padrão histórico e compara seis variantes em 18 treinos. Meta 2h,
-teto 3h; a GPU real ainda precisa passar no preflight e no piloto. Evidência
-mais recente: [0022](results/CAMPAIGN_0022.md), quatro pares primários e nenhuma
-vantagem geral confirmada. As seções históricas abaixo identificam seus regimes.
+Evidência mais recente: [0023](results/CAMPAIGN_0023.md), 18 treinos e 96 avaliações
+completas auditadas (72 principais +24 probes), pesos finais conferidos. Não houve
+vantagem das escalas; somente fino é candidato de simplificação (~24% menos tempo,
+perda máxima0,00138). Transformer2blocos: NLL1,285904, contra1,349391 do completo,
+com menor custo observado. Aumentar K após treinoK2 piorou. Próxima operação:
+[ciclo 5](CYCLE5_RUN.md), profundidades treinadasK1/2/4 a FLOPs estimados iguais;
+sem tecnologia nova. As seções históricas abaixo identificam seus regimes.
 
 ## Já existe Transformer dentro do modelo
 

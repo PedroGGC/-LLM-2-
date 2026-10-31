@@ -21,51 +21,42 @@ Este checkout contém a pesquisa fractal: **`experiment/fractal-lrm`**.
 A implementação fractal permanece isolada. O identificador `fractal` em uma configuração
 não instala esse código na branch comum. Confira `git branch --show-current` antes de trabalhar.
 
-## Estado atual — 30/10/2026
+## Estado atual — 31/10/2026
 
-A [campanha 0022](docs/results/CAMPAIGN_0022.md) concluiu o par primário da seed 104
-em cerca de **32 minutos**, mantendo oito avaliações completas. O histórico cumulativo
-preserva **16 treinos** e quatro pares FLRM × Transformer (101–104); somente as seeds
-101/102 têm os seis braços completos. Há 14 jobs pendentes na matriz original.
+A [campanha 0023](docs/results/CAMPAIGN_0023.md) concluiu e auditou 18 treinos,
+72 avaliações principais e 24 probes de profundidade em aproximadamente duas horas.
+Pesos e estados finais foram recebidos e seus hashes conferidos sem pickle.
 
-| FLOPs estimados semelhantes — médias de quatro seeds | NLL ↓ |
-|---|---:|
-| Transformer pequeno | **1,312215** |
-| FLRM com comunicação, sem FiLM | 1,314060 |
+| Médias de três seeds, 6.000 passos e alvos iguais | NLL ↓ | ms/step isolado, T4 0 / 1 ↓ |
+|---|---:|---:|
+| Transformer, dois blocos | **1,285904** | **44,98 / 45,58** |
+| FLRM somente fino | 1,348510 | 69,98 / 73,81 |
+| FLRM completo | 1,349391 | 91,83 / 97,11 |
+| LRM K=2 com cache de contexto | 1,349904 | 66,60 / 68,33 |
 
-Diferença FLRM − Transformer: **+0,001845**, IC95% pareado exploratório
-[−0,006698; +0,010387]. Duas vitórias para cada arquitetura. Ainda não há vantagem
-confirmada nem equivalência demonstrada. Os resultados dos controles LRM e Transformer
-de dois blocos continuam limitados às duas seeds da [0019](docs/results/CAMPAIGN_0019.md).
-[Ciclo 2](docs/results/CAMPAIGN_0017.md) e [ciclo 1](docs/results/CAMPAIGN_0016.md)
-permanecem como evidência anterior. Na 0022, 12 testes CPU e 2 CUDA FP32 passaram
-no Kaggle; pesos não constam no ZIP de resultados recebido.
+As escalas não cumpriram o ganho pré-fixado. Somente fino cumpre o critério de
+**simplificação candidata**: perda máxima 0,00138 NLL e cerca de 24% menos tempo nas
+duas GPUs. Não demonstra equivalência formal ou vantagem fractal. O Transformer
+lidera entre as configurações testadas. Aumentar K sem treinar naquela profundidade
+piorou a NLL; esse probe não avalia treinamento em profundidade variável.
 
-## Próxima etapa — diagnóstico das escalas
+## Próxima etapa — profundidade treinada e menos ZIPs
 
-O [ciclo 4](docs/CYCLE4_RUN.md) implementa a revisão da hipótese: seis variantes,
-três seeds novas, remoção real das escalas por 4/16 e controles LRM/Transformer.
-São 18 treinos de 6.000 passos, com 72 validações completas principais. Meta de
-duas horas, teto de três, condicionado ao piloto conservador no hardware real.
-Nenhuma das tecnologias futuras será adicionada nesta rodada.
+O [ciclo 5](docs/CYCLE5_RUN.md) compara fino K=1/K=2/K=4 treinados do zero e Transformer,
+seeds 221/222/223: 12 treinos com parâmetros próximos e FLOPs estimados iguais.
+Tokens e tempos diferem. Meta de 2h/teto de 3h, duas T4, testes e piloto antes dos treinos.
+Nenhum novo mecanismo da tabela de tecnologias entra nesta rodada.
 
-Entrega em dois scripts: backup ZIP nível 9 com SHA-256 da cópia local antes de esvaziar
-`/kaggle/working`; depois diagnóstico por revisão fixada. Pesos e ZIPs ficam fora
-do Git. O guia inclui substituição verificada do ZIP inicial sem compressão.
-Consulte-o antes da limpeza; ela remove todo o conteúdo do working.
+Entrega: limpeza **somente dos ZIPs after-NN redundantes da 0023**, protegendo
+campanha e definitivos; depois execução por revisão fixada. O novo executor
+salva um único par temporário aos6/12 jobs e o remove após validar os definitivos:
+ficam apenas dois ZIPs finais por campanha. Em interrupção preserva recuperação
+mais exportação parcial. ZIPs, backups e pesos continuam fora do Git.
 
-A regra
-pré-fixada para vantagem FLRM exige vitória em quatro das cinco seeds; após duas
-vitórias em quatro pares, uma quinta permitiria no máximo três. A análise permanece
-exploratória/inconclusiva; isso não demonstra inviabilidade geral de outras arquiteturas
-ou regimes. A100 e novas tecnologias continuam condicionais.
-
-O [executor histórico de lotes curtos](docs/CYCLE3_SHORT_RUN.md) preserva o teto de uma hora,
-até dois treinos novos e exportação incremental. O código científico permanece no
-commit da 0019, com proveniência separada do operador. A confirmação original exige
-cinco blocos completos; quatro pares disponíveis não equivalem a quatro blocos.
-A [manutenção anterior](docs/KAGGLE_WORKING_RECOVERY.md) preserva campanhas e backups;
-a limpeza completa nova exige primeiro backup externo verificado.
+Profundidade variável/RINS permanece depois desse controle, condicionada à evidência;
+as outras prioridades continuam no [roadmap](docs/RESEARCH_ROADMAP.md).
+Histórico: [0022](docs/results/CAMPAIGN_0022.md), [0019](docs/results/CAMPAIGN_0019.md),
+[0017](docs/results/CAMPAIGN_0017.md) e [0016](docs/results/CAMPAIGN_0016.md).
 
 ## Começar localmente
 
