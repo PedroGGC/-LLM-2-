@@ -1,6 +1,6 @@
 # Documentação
 
-Atualizado em 30/10/2026. Comece pelos documentos vigentes abaixo. A implementação
+Atualizado em 31/10/2026. Comece pelos documentos vigentes abaixo. A implementação
 fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém esse módulo.
 
 | Documento | Finalidade |
@@ -8,6 +8,8 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 | [Plano aprovado: recorrência/fractal](PLAN_RECURRENT_FRACTAL.md) | Hipóteses, candidatos, riscos, critérios e etapas condicionais |
 | [Operação vigente: seleção e hierarquia](RECURRENT_RUN.md) | Etapas A/B, duas sessões distintas, meta2h/teto3h |
 | [Fichas dos candidatos](RECURRENT_CANDIDATES.md) | Fontes fixadas, equações e adaptações; não reproduções dos modelos completos |
+| [Campanha 0024](results/CAMPAIGN_0024.md) | mLSTM candidato operacional; falha na guarda de compilação exige requalificar |
+| [Correção e armazenamento](PLAN_CAMPAIGN_0024_STORAGE.md) | Download embutido, temporários limitados, limpeza preservando resultados/pesos |
 | [Campanha 0023](results/CAMPAIGN_0023.md) | 18 treinos auditados; fino simplifica, Transformer vence neste regime |
 | [Operação histórica: ciclo 5](CYCLE5_RUN.md) | Preservada, suspensa como próxima prioridade |
 | [Plano prévio da auditoria/retenção/ciclo 5](PLAN_CAMPAIGN_0023_RETENTION_CYCLE5.md) | Escopo, riscos e critérios da próxima entrega |

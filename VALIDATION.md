@@ -1,5 +1,48 @@
 # Validação vigente — 31/10/2026
 
+## Campanha 0024, download e armazenamento — 31/10/2026
+
+Plano prévio: [auditoria/armazenamento](docs/PLAN_CAMPAIGN_0024_STORAGE.md).
+[Conclusão científica](docs/results/CAMPAIGN_0024.md). Alterações somente na branch
+experimental. Python local3.12.2/Torch2.14.1+cpu; comandos com `PYTHONPATH=src`.
+
+- ZIP recebido: CRC íntegro,22membros,87.636bytes; SHA-256 registrado na auditoria.
+  Os120 hashes de fontes/configurações conferem com o commit científico registrado.
+- Seis logs T4 auditados: todos registram o alarme absorvido; primeiros passos
+ 707–968s excedem600s. Tempos de mLSTM são evidência operacional provisória.
+  Nenhum resultado de qualidade ou ganho fractal foi inferido.
+- Primeira rodada focada/regressão:125passed,9skipped,2failed,98,88s. As falhas
+  estavam em fixtures novas (tamanho de `b'cache'` e sessão menor que a reserva);
+  corrigidas, sem enfraquecer verificações do produto.
+- Núcleo, protocolo, armazenamento/download e integração real em dois processos:
+  **64passed,6skipped,242,46s**,exit0. Inclui causalidade, forward/backward,
+  finitude, memorização, retomada com dropout/acumulação, triagem8tentativas,
+  quatro jobs, perfis e par de ZIPs finais sem acúmulo dos intermediários.
+- Regressões de Campaign/Session/bootstrap/ciclos2–4 e utilitários novos:
+  **115passed,9skipped,92,23s**,exit0, após o teste de download em erro parcial e
+  a distinção entre deadline global e timeout de candidato. Sem CUDA local.
+- O supervisor mata um worker real que envolve o trabalho em `except BaseException`;
+  o próximo candidato consegue iniciar. Seleção rejeita registros sem supervisor,
+  com tempo excedido e contratos antigos. Falha de candidato não aprova seu caso.
+- Download: bytes recuperados do HTML são idênticos ao arquivo; partes reconstroem
+  exatamente o original, com hashes, sem cópias em disco. Callback de download em
+  falha parcial do worker é testado por simulação; navegador novo ainda não testado
+  localmente. Usuário confirmou o método base64 no Kaggle na mensagem desta entrega.
+- Limpeza: preserva pesos e ZIPs; bloqueia workers, arquivos ignorados desconhecidos,
+  checkout modificado e alvos externos; links internos não apagam destinos externos.
+  Git shallow com fetch de SHA exato validado contra repositório local de fixture.
+- Limite de cache testado com arquivos pequenos: aborta sem excluir ciência.
+  Não é um limite instantâneo de bytes: amostra5s, podendo ultrapassar entre amostras.
+- Após proteger também commits locais não publicados: utilitários finais
+  **14passed,4,28s**,exit0. Integração completa não foi repetida após essa guarda
+  adicional de limpeza; matemática/treino permanecem inalterados.
+
+Nenhum CUDA/Inductor novo executado nesta máquina. A0024 valida somente a execução
+antiga e revela sua falha de orçamento; não é aprovação do código novo. O encerramento
+de grupos POSIX precisa de verificação no Kaggle; a máquina de testes é Windows.
+Suíte completa não repetida nesta alteração; integração e regressões focadas são
+registradas acima. Horizontes de treinamento e matemática dos backbones não mudaram.
+
 ## Arquitetura recorrente/hierárquica inspirada em fractais — 31/10/2026
 
 Plano prévio: [plano aprovado](docs/PLAN_RECURRENT_FRACTAL.md). Código somente no

@@ -1,5 +1,6 @@
 """Bounded Stage A qualification / Stage B scientific experiment, in separate sessions."""
 import argparse
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor,as_completed
 import csv
 import json
@@ -23,6 +24,47 @@ from .state_platforms import select,validate_report
 from .state_report import analyze
 from .document_windows import tuning_dataset
 from .campaign_storage import prune_archives,verify_pair
+from .kaggle_light import remove_cache,tree_bytes
+
+
+@contextmanager
+def storage_budget(campaign, *, smoke=False, interval=5., cache_limit=2*1024**3):
+    """Supervisor aborts at a measured cache/space limit; no live cache eviction."""
+    stopped=threading.Event()
+    record={"cache_limit_bytes":cache_limit,"reserve_bytes":0 if smoke else 2*1024**3,
+            "peak_cache_bytes":0,"sampling_seconds":interval,"exceeded":None}
+    campaign.manifest["storage_budget"]=record
+    def sample():
+        cache=tree_bytes(campaign.output/"compiler-cache")
+        record["peak_cache_bytes"]=max(record["peak_cache_bytes"],cache)
+        free=shutil.disk_usage(campaign.output).free
+        if cache>cache_limit or free<record["reserve_bytes"]:
+            record["exceeded"]="compiler_cache_limit" if cache>cache_limit else "free_space_reserve"
+            campaign.abort()
+    def monitor():
+        while not stopped.wait(interval):
+            try:sample()
+            except OSError as exc:
+                record["exceeded"]="storage_monitor_failed: "+str(exc);campaign.abort()
+    sample()
+    thread=threading.Thread(target=monitor,daemon=True);thread.start()
+    try:
+        yield
+        if record["exceeded"]:raise OSError(record["exceeded"])
+    finally:
+        stopped.set();thread.join(timeout=interval+1)
+        sample()
+
+
+def discard_compiler_cache(campaign, slot=None):
+    cache=campaign.output/"compiler-cache"
+    if slot is not None:cache=cache/f"gpu-{slot}"
+    if not cache.exists():return
+    # Each command kills/reaps its own compiler group before returning. Other
+    # candidates are isolated, and final cleanup happens after all lanes join.
+    record=remove_cache(campaign.output.parent,cache,guard=lambda:list(campaign.processes))
+    campaign.manifest.setdefault("discarded_compiler_cache",[]).append(record)
+    print(f"Cache temporário removido: {record['bytes']/1024**2:.1f} MiB ({record['name']}).",flush=True)
 
 
 def materialize(cfg,path):
@@ -39,11 +81,30 @@ def qualify(campaign,args):
             destination=campaign.output/"qualification"/f"{rule}-{slot}"
             call=["-m","llm2.research.state_platforms","--execute","--rule",rule,"--slot","0","--output",str(destination)]
             if args.engineering_smoke:call.append("--engineering-smoke")
-            campaign.command(call,f"qualify-{rule}-{slot}.log",gpu=slot if not args.engineering_smoke else None)
-            record=json.loads((destination/"platforms.json").read_text(encoding="utf-8"))["rows"][0]
+            began=time.monotonic()
+            try:
+                campaign.command(call,f"qualify-{rule}-{slot}.log",gpu=slot if not args.engineering_smoke else None,
+                                 timeout=None if args.engineering_smoke else 600.)
+                record=json.loads((destination/"platforms.json").read_text(encoding="utf-8"))["rows"][0]
+            except TimeoutError as exc:
+                record={"rule":rule,"slot":str(slot),"status":"failed","error":str(exc),"failure_kind":"supervisor_timeout"}
+                destination.mkdir(parents=True,exist_ok=True)
+                write_json(destination/"supervisor-failure.json",record)
+            except SessionBudgetExceeded:
+                raise
+            except RuntimeError as exc:
+                if campaign.cancelled.is_set():raise
+                record={"rule":rule,"slot":str(slot),"status":"failed","error":str(exc),"failure_kind":"worker_failure"}
+                destination.mkdir(parents=True,exist_ok=True)
+                write_json(destination/"supervisor-failure.json",record)
+            finally:
+                elapsed=time.monotonic()-began
+                discard_compiler_cache(campaign,slot)
+            record.update(supervisor_elapsed_seconds=elapsed,timeout_enforced_by="parent_process",
+                          candidate_limit_seconds=None if args.engineering_smoke else 600.)
             record["slot"]=str(slot);rows.append(record)
             campaign.manifest["qualification_rows"]=rows;campaign.save()
-    result={"protocol_id":PROTOCOL_ID,"implementation_scope":"common_shell_memory_rules",
+    result={"protocol_id":PROTOCOL_ID,"implementation_scope":"common_shell_memory_rules","qualification_version":2,
         "engineering_smoke":args.engineering_smoke,"source_sha256":source_provenance()["source_sha256"],
         "environment":environment(),"rows":rows,"selected_rule":select(rows,engineering_smoke=args.engineering_smoke)}
     write_json(campaign.output/"platforms.json",result)
@@ -264,11 +325,16 @@ def main(argv=None):
     campaign=SessionCampaign(ROOT,Path(a.output).resolve(),device=a.device,gpus=a.gpus,budget=budget)
     campaign.manifest.update(cycle="state_v1",protocol=PROTOCOL,protocol_id=PROTOCOL_ID,phase=a.phase,engineering_smoke=a.engineering_smoke,
         implementation_scope="common_shell_memory_rules",test_evaluated=False,target_seconds=a.target_seconds)
+    campaign.manifest["limitations"]=("Common-shell rule implementations, not full published models. Platform selection uses synthetic "
+        "training speed, not language quality. Main comparisons use equal targets, not equal computation. "
+        "Concurrent host timings and isolated timings are distinct. Results ZIP excludes checkpoint tensors.")
+    if a.bootstrap_metadata:
+        write_json(campaign.output/"bootstrap.json",json.loads(Path(a.bootstrap_metadata).read_text(encoding="utf-8")))
     previous=os.environ.get("LLM2_CYCLE4");os.environ["LLM2_CYCLE4"]="1"
     old_cache=os.environ.get("LLM2_COMPILER_CACHE_ROOT");os.environ["LLM2_COMPILER_CACHE_ROOT"]=str(campaign.output/"compiler-cache")
     error=None
     try:
-        with heartbeat(campaign,"recorrência/fractal"):
+        with storage_budget(campaign,smoke=a.engineering_smoke),heartbeat(campaign,"recorrência/fractal"):
             campaign.command(["-m","pytest","-q","tests/test_state_recurrent.py","tests/test_state_study.py","-m","not cuda"],"tests-state-cpu.log")
             if a.device=="cuda" and a.phase=="experiment":
                 if not a.platform_report:raise ValueError("Stage B requires platforms.json before CUDA tests")
@@ -287,6 +353,9 @@ def main(argv=None):
     finally:
         campaign.abort();campaign.manifest["session_budget"]=budget.snapshot();campaign.save()
         try:
+            try:discard_compiler_cache(campaign)
+            except (ValueError,OSError,RuntimeError) as cleanup_error:
+                campaign.manifest["cache_cleanup_error"]=str(cleanup_error)
             result,backup=publish(campaign,a)
             mid=[Path(p) for p in campaign.manifest.get("midway_archives",[]) if p and Path(p).exists()]
             if mid and backup:

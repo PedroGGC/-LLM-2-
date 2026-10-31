@@ -1,14 +1,16 @@
 # Executar seleção recorrente e experimento fractal
 
 31/10/2026. [Plano aprovado](PLAN_RECURRENT_FRACTAL.md), [fichas](RECURRENT_CANDIDATES.md).
-Etapas A/B implementadas para execução; seleção/performance T4 continuam pendentes.
+Etapas A/B implementadas. A [auditoria da0024](results/CAMPAIGN_0024.md) encontrou
+timeouts absorvidos pelo compilador: mLSTM é candidato, mas a qualificação limpa
+continua pendente. A nova célula requalifica antes de qualquer treino de corpus.
 Nenhum treino de produção é iniciado na instalação ou sem `--execute`.
 
 ## A: qualificação de plataforma
 
 Cole o [script curto](../scripts/03_selecionar_nucleo_recorrente_kaggle.py) numa
 célula Kaggle com Internet e duas T4. A revisão e o SHA do bootstrap estão fixados;
-numeração começa em24 e avança se o número já existir. Não inicia automaticamente
+numeração começa em25 e avança se o número já existir. Não inicia automaticamente
 a etapa B. O relógio começa na própria célula, antes de baixar/clonar/instalar.
 
 No checkout experimental, Python local já instalado; no Kaggle habilitar duas T4.
@@ -20,11 +22,34 @@ python -m llm2.research.state_study --execute --phase qualify --output /kaggle/w
 Não precisa dataset. Testes CPU primeiro; cada candidato compara CUDA/Inductor
 contra sua referência sequencial antes do piloto. Uma falha de kernel rejeita
 aquele candidato e não impede avaliar os demais. Seis pilotos isolados: três regras
-nas duas placas. No Linux há guarda de600s por caso, incluindo compilação, além
-do watchdog global. Publica `platforms.json` com candidato
+nas duas placas. O processo supervisor impõe600s por caso, incluindo compilação,
+e encerra o grupo do worker no Linux; uma exceção absorvida pelo compilador não
+prolonga esse limite. Há também watchdog global. Usa formas estáticas na
+qualificação. Publica `platforms.json` v2 com candidato
 selecionado, erros, ambiente e hashes. Nenhuma seleção por CPU ou dado de teste.
 O bootstrap disponibilizado com a entrega fixa revisão Git; preserva Torch e
 inclui setup no relógio. Meta2h/teto3h, reserva5min para exportação.
+
+Para liberar temporários existentes, execute antes o
+[script de limpeza](../scripts/04_limpar_temporarios_kaggle.py). Ele não exige
+outro backup: preserva ZIPs finais, campanhas, dados preparados e checkpoints;
+remove somente caches de compilação e checkouts Git limpos. Exibe o inventário
+antes/depois. Workers ativos, arquivos desconhecidos e links externos bloqueiam
+a exclusão correspondente. Não esvazia indiscriminadamente o working.
+
+Novas sessões buscam apenas a revisão Git fixada, sem histórico completo, e
+descartam o checkout limpo ao terminar. Cache é removido após cada candidato e
+no encerramento. Limite monitorado2GiB, amostragem5s, reserva livre2GiB; ao atingir
+limite a sessão para e exporta evidência, sem apagar pesos. Compilação futura
+precisará ser medida novamente após a limpeza; essa economia de disco não é
+apresentada como aceleração.
+
+No final, o bootstrap gera botões de download embutidos (`data:`/base64),
+sem construir endereços do proxy. Limite24MiB por botão. ZIPs maiores oferecem
+`LLM2_BAIXAR('/caminho/arquivo.zip', part=1)` e instruções para reunir e verificar
+as partes localmente; não duplica partes no working. Baixe uma parte de cada vez.
+O uso do atributo HTML está documentado no
+[MDN](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/a#download).
 
 ## B: hierarquia e compartilhamento
 
@@ -34,7 +59,8 @@ Nova sessão, mesmo código/ambiente da seleção, com o `platforms.json` preser
 python -m llm2.research.state_study --execute --phase experiment --platform-report /CAMINHO/platforms.json --cache /kaggle/working/llm2-wikitext-pinned-cache --download --output /kaggle/working/llm2-state-experiment
 ```
 
-Rejeita seleção com fonte/versões diferentes ou sem dois resultados T4 qualificados.
+Rejeita seleção com fonte/versões diferentes, anterior à guarda v2 ou sem dois
+resultados T4 qualificados. O resultado0024 não é migrado silenciosamente.
 Na etapa B, os testes CUDA de hierarquia abrangem a regra selecionada, não exigem
 que todas as alternativas rejeitadas tenham kernels compatíveis.
 Não chama desempenho da referência CPU de desempenho da arquitetura publicada.

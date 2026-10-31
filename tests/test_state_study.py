@@ -43,7 +43,8 @@ def test_platform_selection_requires_two_real_t4s_and_correctness():
         for slot in ("0","1"):
             rows.append({"rule":rule,"slot":slot,"status":"passed","correctness":{"passed":True},
                 "gpu_name":"Tesla T4","median_step_seconds":speed,"peak_vram_bytes":1024,
-                "state_bytes_per_sequence":state})
+                "state_bytes_per_sequence":state,"timeout_enforced_by":"parent_process",
+                "candidate_limit_seconds":600.,"supervisor_elapsed_seconds":10.,"compile_policy":"static_shapes"})
     assert select(rows)=="rwkv7"  # within 5%, smaller state
     assert select(rows,engineering_smoke=True) is None
     assert select(rows[:1]) is None
@@ -139,5 +140,6 @@ def test_mocked_candidate_failure_does_not_abort_other_platforms(monkeypatch,tmp
             "peak_vram_bytes":1024,"state_bytes_per_sequence":100}
     monkeypatch.setattr(platforms,"benchmark",mock_benchmark)
     report=platforms.main(["--execute","--output",str(tmp_path/"mock-only-platforms")])
-    assert report["selected_rule"]=="rwkv7"
+    # A direct in-process call has no external deadline and cannot qualify T4.
+    assert report["selected_rule"] is None
     assert sum(r["status"]=="failed" for r in report["rows"])==2

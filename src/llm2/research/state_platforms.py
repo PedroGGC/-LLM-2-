@@ -3,7 +3,6 @@ import argparse
 import copy
 import json
 import math
-import signal
 from pathlib import Path
 import statistics
 import time
@@ -24,7 +23,7 @@ def qualify(rule,device="cpu",*,compiled=False):
     fast=copy.deepcopy(oracle)
     for cell in fast.cells:cell.execution="chunked";cell.chunk_size=32 if compiled else 4
     ids=torch.randint(0,cfg.model.vocab_size,(1 if compiled else 2,65 if compiled else 17),device=device)
-    implementation=torch.compile(fast,backend="inductor") if compiled else fast
+    implementation=torch.compile(fast,backend="inductor",dynamic=False) if compiled else fast
     expected=oracle(ids).logits;actual=implementation(ids).logits
     torch.testing.assert_close(actual,expected,atol=2e-5,rtol=2e-4)
     expected.square().mean().backward();actual.square().mean().backward()
@@ -46,7 +45,9 @@ def benchmark(rule,slot,*,smoke=False,warmup=10,steps=30):
     cfg=configuration("recurrent",rule,"unused","unused",17,smoke=smoke,device="cpu" if smoke else "cuda")
     setup_runtime(cfg.train)
     model=build_backbone(cfg).to(device).train()
-    measured=torch.compile(model,backend="inductor") if not smoke else model
+    # The small correctness case has a different shape. Do not generalize that
+    # graph to symbolic B/T when the actual experiment uses fixed-size windows.
+    measured=torch.compile(model,backend="inductor",dynamic=False) if not smoke else model
     optimizer=torch.optim.AdamW(model.parameters(),lr=.0004)
     ids=torch.randint(0,cfg.model.vocab_size,(cfg.data.batch_size,cfg.data.seq_len),device=device)
     targets=torch.roll(ids,1,1)
@@ -67,7 +68,8 @@ def benchmark(rule,slot,*,smoke=False,warmup=10,steps=30):
         "mean_step_seconds":statistics.mean(samples),"median_step_seconds":statistics.median(samples),
         "step_samples_seconds":samples,"warmup_seconds":sum(warm),"first_step_seconds":warm[0] if warm else None,
         "peak_vram_bytes":None if smoke else torch.cuda.max_memory_allocated(device),
-        "host_memory":host_memory(),"gpu_energy_joules":None,"config":cfg.to_dict(),**model_statistics(cfg)}
+        "host_memory":host_memory(),"gpu_energy_joules":None,"compile_policy":"static_shapes",
+        "config":cfg.to_dict(),**model_statistics(cfg)}
     return row
 
 
@@ -78,6 +80,10 @@ def select(rows,*,engineering_smoke=False):
         group=[r for r in rows if r.get("rule")==rule]
         if len(group)!=2 or {r.get("slot") for r in group}!={"0","1"}:continue
         if not all(r.get("status")=="passed" and r.get("correctness",{}).get("passed") is True
+                   and r.get("timeout_enforced_by")=="parent_process"
+                   and r.get("candidate_limit_seconds")==600.
+                   and r.get("supervisor_elapsed_seconds",math.inf)<=602.
+                   and r.get("compile_policy")=="static_shapes"
                    and "T4" in str(r.get("gpu_name"))
                    and math.isfinite(r.get("median_step_seconds",math.inf)) and r["median_step_seconds"]>0
                    and type(r.get("peak_vram_bytes")) is int and 0<r["peak_vram_bytes"]<13*1024**3 for r in group):continue
@@ -91,6 +97,7 @@ def select(rows,*,engineering_smoke=False):
 def validate_report(value,*,allow_smoke=False):
     smoke=value.get("engineering_smoke")
     if (type(smoke) is not bool or smoke and not allow_smoke or value.get("protocol_id")!=PROTOCOL_ID
+        or value.get("qualification_version")!=2
         or value.get("implementation_scope")!="common_shell_memory_rules"
         or value.get("source_sha256")!=source_provenance()["source_sha256"]):
         raise ValueError("platform report/source/scope mismatch; rerun qualification")
@@ -118,18 +125,10 @@ def main(argv=None):
     for slot in ((a.slot,) if a.rule else ((0,) if a.engineering_smoke else (0,1))):
         for rule in ((a.rule,) if a.rule else RULES):
             print(f"Qualificando {rule}, slot {slot}...",flush=True)
-            previous=None
-            if not a.engineering_smoke and hasattr(signal,"SIGALRM"):
-                previous=signal.getsignal(signal.SIGALRM)
-                def timeout_case(signum,frame):raise TimeoutError("candidate exceeded 600 seconds (compile included)")
-                signal.signal(signal.SIGALRM,timeout_case);signal.alarm(600)
             try:row=benchmark(rule,slot,smoke=a.engineering_smoke,warmup=1 if a.engineering_smoke else 10,
                               steps=2 if a.engineering_smoke else 30)
             except Exception as exc:
                 row={"rule":rule,"slot":str(slot),"status":"failed","error":str(exc),"traceback":traceback.format_exc()}
-            finally:
-                if previous is not None:
-                    signal.alarm(0);signal.signal(signal.SIGALRM,previous)
             rows.append(row);write_json(output/f"{rule}-slot-{slot}.json",row)
             if torch.cuda.is_available():torch.cuda.empty_cache()
     result={"protocol_id":PROTOCOL_ID,"implementation_scope":"common_shell_memory_rules",

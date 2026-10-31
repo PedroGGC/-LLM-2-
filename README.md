@@ -44,6 +44,13 @@ piorou a NLL; esse probe não avalia treinamento em profundidade variável.
 
 ## Próxima etapa — seleção recorrente e contribuição fractal
 
+A [0024](docs/results/CAMPAIGN_0024.md) mediu mLSTM em94,67/96,48ms por passo,
+o melhor entre as regras testadas, mas os seis pilotos ultrapassaram a guarda
+de600s: a exceção foi absorvida pelo compilador. A próxima célula requalifica com
+supervisor externo e formas estáticas. Não é evidência de qualidade de linguagem.
+Download embutido e limpeza de caches/checkouts descartáveis passam a ser padrão;
+[limpeza do working](scripts/04_limpar_temporarios_kaggle.py) preserva arquivos científicos.
+
 A [nova etapa](docs/RECURRENT_RUN.md) começa selecionando uma implementação recorrente
 na T4, sem escolher previamente Gated Delta/RWKV/mLSTM. São regras num shell comum,
 **não reproduções dos modelos publicados**; [fichas e adaptações](docs/RECURRENT_CANDIDATES.md).

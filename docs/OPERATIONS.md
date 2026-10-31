@@ -7,6 +7,13 @@ sampler packed histórico. Não misturar os resultados dessas políticas.
 As instruções de ciclos anteriores continuam para reprodução. Não executar esses
 treinos como complemento automático do ciclo 4.
 
+A0024 revelou guarda de600s absorvida na compilação; usar a célula nova de
+[qualificação corrigida](../scripts/03_selecionar_nucleo_recorrente_kaggle.py),
+não iniciar etapaB com aquela seleção. Antes, a
+[limpeza de temporários](../scripts/04_limpar_temporarios_kaggle.py) mede e remove
+caches/checkouts limpos, preservando ciência. Downloads novos são botões embutidos
+no notebook; não construir links a partir do domínio do proxy.
+
 ## Interpretador e checkout
 
 Usar Python >=3.10 e instalação direta. Não substituir automaticamente o Torch existente.

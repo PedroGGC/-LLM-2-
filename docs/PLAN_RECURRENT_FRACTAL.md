@@ -15,6 +15,12 @@ Transformer de dois blocos venceu qualidade/custo. K não treinado piorou. Prese
 FLRM histórico; suspender novas repetições e a prioridade de executar ciclo 5.
 Base sólida significa correção, reprodução e custo conhecido, não vitória prévia.
 
+Atualização0024: as três regras executaram nas duas T4, mLSTM com melhor tempo
+observado. A auditoria detectou alarme de600s absorvido pelo compilador nos seis
+casos; repetir qualificação com supervisor externo antes da etapaB. Não alterar
+as hipóteses científicas nem promover o ranking operacional a ganho de linguagem.
+Ver [evidência](results/CAMPAIGN_0024.md) e [correção](PLAN_CAMPAIGN_0024_STORAGE.md).
+
 ## Etapas
 
 A. Fichas dos três operadores recorrentes, referências sequenciais, execução por

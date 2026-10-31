@@ -1,0 +1,172 @@
+{
+  "zip_sha256": "04266ec69663e89eafe736b4ef06f7212ccdf3618c5d911cba7fde637c0ac201",
+  "zip_bytes": 87636,
+  "status_reported": "complete",
+  "source_revision": "ffc6fb832c756771f92bb3212294813e7109e10f",
+  "protocol_id": "930f7b812b7b80f353291a98c20699f753becf17a9910fc5c370cac8c6e12761",
+  "environment": {
+    "cpu": "x86_64",
+    "cublas_workspace_config": ":4096:8",
+    "cuda_devices": [
+      {
+        "logical_index": 0,
+        "name": "Tesla T4",
+        "total_memory_bytes": 15636037632,
+        "uuid": "45abf98a-933f-d48e-7178-93e5f4bddbb0"
+      },
+      {
+        "logical_index": 1,
+        "name": "Tesla T4",
+        "total_memory_bytes": 15636037632,
+        "uuid": "10adbc0a-c686-1121-1442-1921087f8bf1"
+      }
+    ],
+    "cuda_version": "12.8",
+    "cuda_visible_devices": null,
+    "cudnn_version": 91900,
+    "device": "Tesla T4",
+    "packages": {
+      "PyYAML": "6.0.3",
+      "numpy": "2.1.3",
+      "pytest": "8.4.2",
+      "safetensors": "0.8.0",
+      "tensorboard": "2.20.0",
+      "tokenizers": "0.23.1",
+      "torch": "2.11.0+cu128"
+    },
+    "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+    "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+  },
+  "reported_selected_rule": "mlstm",
+  "scientific_training_jobs": 0,
+  "session_budget": {
+    "elapsed_seconds": 5575.6303752290005,
+    "export_reserve_seconds": 300.0,
+    "limit_seconds": 10800.0,
+    "scope": "bootstrap/setup + tests + pilot + training + evaluation; export uses reserve",
+    "work_remaining_seconds": 4924.369623715
+  },
+  "rows": [
+    {
+      "rule": "gated_delta",
+      "slot": "0",
+      "status": "passed",
+      "median_step_seconds": 0.27185500100006266,
+      "first_step_seconds": 964.7661008320001,
+      "warmup_seconds": 967.2523219960001,
+      "peak_vram_bytes": 3132568064,
+      "parameters": 2174232,
+      "state_bytes_per_sequence": 196608,
+      "timeout_in_log": true,
+      "first_step_exceeded_600s": true,
+      "correctness_reported": true,
+      "supervisor_verified": false
+    },
+    {
+      "rule": "rwkv7",
+      "slot": "0",
+      "status": "passed",
+      "median_step_seconds": 0.37385215850008535,
+      "first_step_seconds": 834.4245234530001,
+      "warmup_seconds": 837.8343133320002,
+      "peak_vram_bytes": 4002266624,
+      "parameters": 2166528,
+      "state_bytes_per_sequence": 196608,
+      "timeout_in_log": true,
+      "first_step_exceeded_600s": true,
+      "correctness_reported": true,
+      "supervisor_verified": false
+    },
+    {
+      "rule": "mlstm",
+      "slot": "0",
+      "status": "passed",
+      "median_step_seconds": 0.0946671599997444,
+      "first_step_seconds": 707.2353072839996,
+      "warmup_seconds": 708.1075332129999,
+      "peak_vram_bytes": 783197696,
+      "parameters": 2174232,
+      "state_bytes_per_sequence": 199728,
+      "timeout_in_log": true,
+      "first_step_exceeded_600s": true,
+      "correctness_reported": true,
+      "supervisor_verified": false
+    },
+    {
+      "rule": "gated_delta",
+      "slot": "1",
+      "status": "passed",
+      "median_step_seconds": 0.268973787999812,
+      "first_step_seconds": 968.0550236519998,
+      "warmup_seconds": 970.5002921819996,
+      "peak_vram_bytes": 3132568064,
+      "parameters": 2174232,
+      "state_bytes_per_sequence": 196608,
+      "timeout_in_log": true,
+      "first_step_exceeded_600s": true,
+      "correctness_reported": true,
+      "supervisor_verified": false
+    },
+    {
+      "rule": "rwkv7",
+      "slot": "1",
+      "status": "passed",
+      "median_step_seconds": 0.37178053900015584,
+      "first_step_seconds": 835.5894590549997,
+      "warmup_seconds": 838.9694044749986,
+      "peak_vram_bytes": 4002266624,
+      "parameters": 2166528,
+      "state_bytes_per_sequence": 196608,
+      "timeout_in_log": true,
+      "first_step_exceeded_600s": true,
+      "correctness_reported": true,
+      "supervisor_verified": false
+    },
+    {
+      "rule": "mlstm",
+      "slot": "1",
+      "status": "passed",
+      "median_step_seconds": 0.09648443850028343,
+      "first_step_seconds": 753.3704928839998,
+      "warmup_seconds": 754.2416352989994,
+      "peak_vram_bytes": 783197696,
+      "parameters": 2174232,
+      "state_bytes_per_sequence": 199728,
+      "timeout_in_log": true,
+      "first_step_exceeded_600s": true,
+      "correctness_reported": true,
+      "supervisor_verified": false
+    }
+  ],
+  "grouped": {
+    "rwkv7": {
+      "mean_median_step_ms": 372.8163487501206,
+      "timeout_affected_slots": [
+        "0",
+        "1"
+      ]
+    },
+    "mlstm": {
+      "mean_median_step_ms": 95.57579925001392,
+      "timeout_affected_slots": [
+        "0",
+        "1"
+      ]
+    },
+    "gated_delta": {
+      "mean_median_step_ms": 270.4143944999373,
+      "timeout_affected_slots": [
+        "0",
+        "1"
+      ]
+    }
+  },
+  "disk_footprint_bytes": null,
+  "qualification_decision": "requalify_external_timeout",
+  "limitations": [
+    "not a language quality experiment",
+    "common-shell memory rules, not full published architectures",
+    "disk footprint outside ZIP was not recorded",
+    "timeout can be swallowed/retried by compiler; log does not establish final fallback backend"
+  ]
+}

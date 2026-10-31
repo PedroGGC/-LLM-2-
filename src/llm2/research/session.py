@@ -45,7 +45,7 @@ class SessionCampaign(Campaign):
         self.budget.require()
         super().__init__(*args, **kwargs)
 
-    def command(self, arguments, log_name, *, gpu=None, job=None):
+    def command(self, arguments, log_name, *, gpu=None, job=None, timeout=None):
         self.budget.require()
         expired = threading.Event()
 
@@ -63,11 +63,11 @@ class SessionCampaign(Campaign):
         watchdog = threading.Thread(target=monitor, daemon=True)
         watchdog.start()
         try:
-            result = super().command(arguments, log_name, gpu=gpu, job=job)
+            result = super().command(arguments, log_name, gpu=gpu, job=job, timeout=timeout)
             if expired.is_set():
                 raise SessionBudgetExceeded("subprocess reached session work deadline")
             return result
-        except RuntimeError as exc:
+        except (RuntimeError, TimeoutError) as exc:
             if expired.is_set():
                 raise SessionBudgetExceeded("subprocess stopped at session work deadline; prior complete checkpoints preserved") from exc
             raise

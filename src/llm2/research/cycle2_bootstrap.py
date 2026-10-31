@@ -155,16 +155,24 @@ def bootstrap_git(revision, *, run=False, run_number=17, session_seconds=7200., 
     return _run_source(source, parent, metadata, session, hardware, run_number)
 
 
-def checkout_git_source(revision, session, hardware):
+def checkout_git_source(revision, session, hardware, *, shallow=False):
     """Shared exact-revision checkout; callers supply their own campaign protocol."""
     if not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("use a complete 40-character commit SHA")
     parent = Path(tempfile.mkdtemp(prefix="llm2-cycle2-git-", dir=hardware[0]))
     source = parent / "source"
     url = "https://github.com/PedroGGC/-LLM-2-.git"
-    bounded_command(["git", "clone", "--no-checkout", "--single-branch", "--branch",
-                     "experiment/fractal-lrm", url, source], cwd=parent, timeout=session.remaining())
-    bounded_command(["git", "checkout", "--detach", revision], cwd=source, timeout=session.remaining())
+    if shallow:
+        source.mkdir()
+        bounded_command(["git", "init", "--quiet", str(source)], cwd=parent, timeout=session.remaining())
+        bounded_command(["git", "remote", "add", "origin", url], cwd=source, timeout=session.remaining())
+        bounded_command(["git", "fetch", "--depth=1", "--no-tags", "origin", revision],
+                        cwd=source, timeout=session.remaining())
+        bounded_command(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=source, timeout=session.remaining())
+    else:
+        bounded_command(["git", "clone", "--no-checkout", "--single-branch", "--branch",
+                         "experiment/fractal-lrm", url, source], cwd=parent, timeout=session.remaining())
+        bounded_command(["git", "checkout", "--detach", revision], cwd=source, timeout=session.remaining())
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True,
                                    timeout=session.remaining()).strip()
     if head != revision:
@@ -178,7 +186,7 @@ def checkout_git_source(revision, session, hardware):
         if path.is_symlink() or not path.resolve().is_relative_to(source.resolve()) or not path.is_file():
             raise ValueError(f"unsupported source member: {name}")
         hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
-    metadata = {"source_mode": "git", "source_git_url": url, "source_git_revision": revision,
+    metadata = {"source_mode": "git", "source_git_url": url, "source_git_revision": revision, "shallow": shallow,
                 "source_files_sha256": hashes}
     return source, parent, metadata
 

@@ -8,6 +8,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -88,6 +89,8 @@ def worker_environment(root, gpu=None):
             env["CUDA_VISIBLE_DEVICES"] = slots[index]
         if env.get("LLM2_COMPILER_CACHE_ROOT"):
             env["TORCHINDUCTOR_CACHE_DIR"] = str(Path(env["LLM2_COMPILER_CACHE_ROOT"])/f"gpu-{index}")
+            env["TRITON_CACHE_DIR"] = str(Path(env["TORCHINDUCTOR_CACHE_DIR"])/"triton")
+            env["CUDA_CACHE_PATH"] = str(Path(env["TORCHINDUCTOR_CACHE_DIR"])/"cuda-driver")
     return env
 
 
@@ -193,7 +196,9 @@ class Campaign:
             write_json(temporary, self.manifest)
             os.replace(temporary, self.output / "campaign.json")
 
-    def command(self, arguments, log_name, *, gpu=None, job=None):
+    def command(self, arguments, log_name, *, gpu=None, job=None, timeout=None):
+        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("invalid command timeout")
         if self.cancelled.is_set():
             raise RuntimeError("campaign cancelled after another worker failed")
         path = self.output / "logs" / log_name
@@ -217,6 +222,20 @@ class Campaign:
                                        start_new_session=detached)
             with self.lock:
                 self.processes.add(process)
+            expired = threading.Event()
+            def expire_command():
+                expired.set()
+                try:
+                    if detached:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    elif process.poll() is None:
+                        process.kill()
+                except ProcessLookupError:
+                    pass
+            deadline = threading.Timer(timeout, expire_command) if timeout is not None else None
+            if deadline is not None:
+                deadline.daemon = True
+                deadline.start()
             try:
                 for line in process.stdout:
                     stream.write(line)
@@ -233,6 +252,9 @@ class Campaign:
                         print(line.rstrip(), flush=True)
                 returncode = process.wait()
             finally:
+                if deadline is not None:
+                    deadline.cancel()
+                    deadline.join(timeout=1.)
                 process.stdout.close()
                 if detached:
                     try: os.killpg(process.pid, signal.SIGKILL)
@@ -244,6 +266,8 @@ class Campaign:
                     killer=self._group_killers.pop(process,None)
                     if killer is not None:killer.cancel()
                     self.processes.discard(process)
+            if expired.is_set():
+                raise TimeoutError(f"supervisor stopped command after {timeout:g}s; complete log: {path}")
             if returncode:
                 tail = "\n".join(path.read_text(encoding="utf-8").splitlines()[-40:])
                 raise RuntimeError(f"command exited {returncode}; complete log: {path}\n{tail}")
