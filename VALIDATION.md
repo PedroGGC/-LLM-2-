@@ -8,6 +8,9 @@ permanecem1c8ce2a; nova operação é executada como arquivo separado.
 
 - `python -m pytest -q tests/test_state_diagnostic.py tests/test_state_diagnostic_bootstrap.py`:
   **18passed,35,36s,exit0**, no Python3.12.2/Torch2.14.1+cpu local, `PYTHONPATH=src`.
+- Célula06 fixada em55dec8e: **4passed,0,22s,exit0**. SHA literal conferido
+  contra o objeto Git; execução desativada não acessa rede, payload alterado é
+  rejeitado e despacho/download são simulados. Não executa conta Kaggle local.
 - Integração extrai Git archive1c8ce2a para diretório novo, fabrica quatro pesos
   CPU/T17 e dados por documento, depois executa o novo operador contra esse pacote
   original em subprocessos. Quatro jobs/11condições, zero optimizer-steps, NLL

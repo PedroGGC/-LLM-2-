@@ -3,13 +3,16 @@
 01/11/2026. [Escopo prévio](PLAN_STATE_DIAGNOSTIC.md),
 [auditoria que motivou a rodada](results/CAMPAIGN_0027.md).
 
-Use `scripts/06_diagnosticar_pesos_0027_kaggle.py`, em uma célula com Internet e
+Use [06_diagnosticar_pesos_0027_kaggle.py](../scripts/06_diagnosticar_pesos_0027_kaggle.py), em uma célula com Internet e
 duas T4. Começa em0028 e avança se o número estiver reservado. O relógio começa
 na célula; limite padrão7200s (duas horas), máximo configurável10800s. Não é duração
 obrigatória nem há trabalho adicional para preencher tempo. Duração T4 desta
 operação ainda não foi medida; um piloto de dois batches estima a cobertura
 restante com35% de margem. Se não couber, falha e exporta os resultados completos
 anteriores, sem encurtar a avaliação e chamá-la de completa.
+
+Revisão operacional fixada:`55dec8e7b4d10c89722c7a0a9982b621daf74837`.
+SHA-256 do bootstrap:`ef5405deed514cd11614595a3bd2da21784baa177e498200cf009bf483fdfe5e`.
 
 ## Antes de executar
 
