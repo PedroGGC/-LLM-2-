@@ -55,6 +55,9 @@ Download embutido e limpeza de caches/checkouts descartáveis passam a ser padr�
 A [etapa B](docs/STATE_B_RUN.md) avançará aos controles com mLSTM selecionado
 por medições T4. Nova operação mantém uma família de cache por GPU e preserva o
 worker científico qualificado. Primeiro lote: quatro braços da seed241.
+Tentativa0026 parou antes dos treinos por checksum do cache bruto. A célula05
+atualizada verifica/recupera esse cache antes dos testes CUDA e começa em0027,
+preservando os hashes e a ciência qualificada.
 São regras num shell comum,
 **não reproduções dos modelos publicados**; [fichas e adaptações](docs/RECURRENT_CANDIDATES.md).
 CPU verifica matemática e integração; a escolha operacional foi feita nas duas T4.

@@ -14,6 +14,8 @@ da corrupção não são conhecidos. A guarda de integridade funcionou.
   a instalação/CUDA:20passed/1deselected,4,67s; versão com recibo persistente:
   **21passed,1deselected,4,73s**,exit0.
 - Regressões de importação WikiText/contrato: **3passed,25deselected,0,56s**,exit0.
+- Células por revisão/hash após fixar6396959: **10passed,0,49s**,exit0;
+  fonte conferida contra Git e despacho simulado, sem iniciar conta Kaggle.
 - Quatro shards reais do backup local foram lidos e extraídos em diretório novo
   de artifacts, sem modificar o backup. Todos conferem com SHA originais.
 - Corpus preparado novamente a partir desses shards; `verify_dataset` aceitou

@@ -3,9 +3,9 @@ import time
 from urllib.request import urlopen
 
 RUN_CAMPAIGN = True
-LLM2_REVISION = "2c834f7494a38376a3112338271fd790eb28974a"
+LLM2_REVISION = "639695979ee4d328950ef93502aef6045cccf378"
 LLM2_SETTINGS = {
-    "run_number": 26,
+    "run_number": 27,
     "seeds": [241],
     "target_seconds": 7200,
     "session_seconds": 10800,
@@ -20,7 +20,7 @@ if RUN_CAMPAIGN:
     )
     with urlopen(url, timeout=60) as response:
         source = response.read(1024 * 1024 + 1)
-    if hashlib.sha256(source).hexdigest() != "1466a128261783eb1745fb1b71937472ada9c4ab5f699684ac1ea55783e68572":
+    if hashlib.sha256(source).hexdigest() != "c60ee6f646d5c26bb80cc54c029028f414dbb9d0f45bb89ebb8ce90680e4f6e6":
         raise ValueError("Bootstrap diferente da revisão verificada.")
     namespace = {"__name__": "llm2_state_b_pinned_bootstrap"}
     exec(compile(source.decode("utf-8"), url, "exec"), namespace)

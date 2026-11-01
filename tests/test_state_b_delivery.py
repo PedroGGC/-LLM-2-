@@ -46,7 +46,7 @@ def test_cell_dispatch_and_download_callback_mocked(monkeypatch):
     builtins.exec(compile(CELL.read_text(encoding="utf-8"),str(CELL),"exec"),namespace)
     assert len(calls)==1
     settings=calls[0][1]
-    assert settings["run_number"]==26 and settings["seeds"]==[241]
+    assert settings["run_number"]==27 and settings["seeds"]==[241]
     assert settings["target_seconds"]==7200 and settings["session_seconds"]==10800
     assert settings["started_at"]>0 and namespace["LLM2_BAIXAR"] is callback
 
