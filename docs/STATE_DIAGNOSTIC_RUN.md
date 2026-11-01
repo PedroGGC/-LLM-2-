@@ -1,13 +1,18 @@
-# Próxima sessão — diagnóstico congelado da 0027
+# Operação — diagnóstico congelado da 0027
 
 01/11/2026. [Escopo prévio](PLAN_STATE_DIAGNOSTIC.md),
 [auditoria que motivou a rodada](results/CAMPAIGN_0027.md).
 
+Executada como [campanha0028](results/CAMPAIGN_0028.md):11condições concluídas em
+109,24s registrados,419.492bytes no ZIP; reprodução máxima2,61e-9. Reduzir o amplo
+piorou. Célula preservada para reprodução, sem indicação de executá-la de novo
+como próximo ensaio; a próxima pergunta envolve controles treinados próprios.
+
 Use [06_diagnosticar_pesos_0027_kaggle.py](../scripts/06_diagnosticar_pesos_0027_kaggle.py), em uma célula com Internet e
 duas T4. Começa em0028 e avança se o número estiver reservado. O relógio começa
 na célula; limite padrão7200s (duas horas), máximo configurável10800s. Não é duração
-obrigatória nem há trabalho adicional para preencher tempo. Duração T4 desta
-operação ainda não foi medida; um piloto de dois batches estima a cobertura
+obrigatória nem há trabalho adicional para preencher tempo. A0028 fornece uma
+medição operacional na T4, sem garantia de duração para outra sessão. Um piloto de dois batches estima a cobertura
 restante com35% de margem. Se não couber, falha e exporta os resultados completos
 anteriores, sem encurtar a avaliação e chamá-la de completa.
 
@@ -86,6 +91,6 @@ piloto e previsão detalhada ficam nos logs. Ao final, a tabela de perdas/deltas
 é impressa e aparece o botão de download embutido. `LLM2_BAIXAR` fica disponível
 para solicitar novamente o arquivo, sem depender de URL do proxy Kaggle.
 
-As verificações CPU locais e integração com fonte original estão em
-`VALIDATION.md`. Nenhuma nova medição CUDA/eager local foi feita; a execução no
-Kaggle validará esta operação no ambiente real.
+As verificações CPU locais, integração com fonte original e execução0028 no Kaggle
+estão em `VALIDATION.md`. Nenhuma medição CUDA/eager local foi feita. A operação foi
+exercitada nas duas T4 da0028; isso não valida outros hardwares/precisões.

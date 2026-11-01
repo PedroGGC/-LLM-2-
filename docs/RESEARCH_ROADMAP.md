@@ -13,6 +13,12 @@ e perda da segunda transformação fina. Não confirma fracasso geral do fractal
 justifica adicionar memória/adaptação sem identificar a limitação. Matriz original
 preservada; etapas condicionais abaixo continuam no catálogo.
 
+O [diagnóstico0028](results/CAMPAIGN_0028.md) foi concluído: reduzir/remover o ramo
+amplo piorou as duas hierarquias. Priorizar controle treinado de profundidade fina
+e do momento causal de leitura do grupo fechado; sinal de defasagem na quarta
+posição é descritivo. Compressão aprendida, sharing, memória e esforço adaptativo
+mantêm suas condições, sem introdução automática. Diagnóstico não é ablação treinada.
+
 | Frente | Prioridade e pergunta |
 |---|---|
 | Núcleo recorrente | Etapa A concluída na0025: mLSTM selecionado nas duas T4; RWKV aprovado, Gated Delta fora do orçamento de compilação |

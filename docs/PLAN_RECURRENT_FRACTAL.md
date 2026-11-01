@@ -46,10 +46,20 @@ depois controle somente fino e uma alteração isolada, com protocolo próprio d
 antes de treinar. Fractal permanece hipótese explícita; nenhuma nova tecnologia
 entra automaticamente. Geração/retenção não foram medidas; não extrapolar treino.
 
-Próxima entrega: [diagnóstico congelado](STATE_DIAGNOSTIC_RUN.md),11leituras nos
+Entrega de diagnóstico: [operação congelada](STATE_DIAGNOSTIC_RUN.md),11leituras nos
 quatro checkpoints já treinados, antes de uma nova campanha. Não altera a matrizB
 nem implementa gate/compressão aprendida. Ambiente/dados/fontes/pesos originais
 verificados; objetivo é decidir qual controle treinado isolará a limitação.
+
+Atualização0028: diagnóstico concluído nas duas T4, originais reproduzidos em2,61e-9,
+sem treino. Silenciar/reduzir o amplo piorou. O componente participa da previsão,
+mas a arquitetura continua inferior aos controles. Padrão descritivo na quarta
+posição é compatível com defasagem: resumo do grupo fechado entra no byte seguinte.
+Próximo ensaio recomendado: controle fino treinado do zero e mudança isolada para
+ler o resumo assim que o grupo fecha, mantendo a média e os controles. Nova matriz
+deve ser pré-fixada antes de treinar; não alterar os critérios/seeds pendentes daB.
+Não diagnostica sozinho a compressão nem justifica combinar novas tecnologias.
+Compartilhamento permanece hipótese explícita. [Auditoria](results/CAMPAIGN_0028.md).
 
 ## Etapas
 

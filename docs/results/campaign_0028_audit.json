@@ -1,0 +1,201 @@
+{
+  "zip_sha256": "677e682101929cdc04c151195f124ee3eb892e368b064f87bbf3a6f377d7a380",
+  "zip_bytes": 419492,
+  "members": 14,
+  "uncompressed_bytes": 680150,
+  "crc_valid": true,
+  "source_revision": "1c8ce2abb8f47d3167454b3503598854b7756dad",
+  "operator_revision": "55dec8e7b4d10c89722c7a0a9982b621daf74837",
+  "scientific_source_files_checked": 80,
+  "scientific_config_files_checked": 43,
+  "operator_files_checked": 5,
+  "source_snapshots_checked": 2,
+  "originals_reproduced": 4,
+  "max_absolute_reproduction_delta": 2.6091016014362367e-09,
+  "conditions": 11,
+  "optimizer_steps": 0,
+  "seed": 241,
+  "validation_targets_per_condition": 1113088,
+  "test_evaluated": false,
+  "rows": [
+    {
+      "variant": "recurrent",
+      "condition": "original",
+      "validation_loss": 1.3136474868569836,
+      "delta_original": 0.0,
+      "bits_per_byte": 1.89519271476482,
+      "validation_targets": 1113088,
+      "reproduced_original": true
+    },
+    {
+      "variant": "recurrent",
+      "condition": "fine_only",
+      "validation_loss": 2.68444677333616,
+      "delta_original": 1.3707992864791763,
+      "bits_per_byte": 3.8728380474224573,
+      "validation_targets": 1113088,
+      "reproduced_original": true
+    },
+    {
+      "variant": "hierarchy_independent",
+      "condition": "original",
+      "validation_loss": 1.4315684412343168,
+      "delta_original": 0.0,
+      "bits_per_byte": 2.0653166908618923,
+      "validation_targets": 1113088,
+      "reproduced_original": true
+    },
+    {
+      "variant": "hierarchy_independent",
+      "condition": "fine_only",
+      "validation_loss": 1.6252583859266654,
+      "delta_original": 0.19368994469234857,
+      "bits_per_byte": 2.3447522135396013,
+      "validation_targets": 1113088,
+      "reproduced_original": true
+    },
+    {
+      "variant": "hierarchy_independent",
+      "condition": "coarse_gain_0.25",
+      "validation_loss": 1.527557041383611,
+      "delta_original": 0.09598860014929422,
+      "bits_per_byte": 2.203798968279153,
+      "validation_targets": 1113088,
+      "reproduced_original": true
+    },
+    {
+      "variant": "hierarchy_independent",
+      "condition": "coarse_gain_0.5",
+      "validation_loss": 1.469305202824805,
+      "delta_original": 0.03773676159048822,
+      "bits_per_byte": 2.1197593296676986,
+      "validation_targets": 1113088,
+      "reproduced_original": true
+    },
+    {
+      "variant": "hierarchy_shared",
+      "condition": "original",
+      "validation_loss": 1.4620669213704016,
+      "delta_original": 0.0,
+      "bits_per_byte": 2.1093166969088726,
+      "validation_targets": 1113088,
+      "reproduced_original": true
+    },
+    {
+      "variant": "hierarchy_shared",
+      "condition": "fine_only",
+      "validation_loss": 1.6143838434407396,
+      "delta_original": 0.15231692207033798,
+      "bits_per_byte": 2.32906356502322,
+      "validation_targets": 1113088,
+      "reproduced_original": true
+    },
+    {
+      "variant": "hierarchy_shared",
+      "condition": "coarse_gain_0.25",
+      "validation_loss": 1.5402485456867625,
+      "delta_original": 0.07818162431636089,
+      "bits_per_byte": 2.2221089385987303,
+      "validation_targets": 1113088,
+      "reproduced_original": true
+    },
+    {
+      "variant": "hierarchy_shared",
+      "condition": "coarse_gain_0.5",
+      "validation_loss": 1.4939125639021065,
+      "delta_original": 0.031845642531704854,
+      "bits_per_byte": 2.1552602474632856,
+      "validation_targets": 1113088,
+      "reproduced_original": true
+    },
+    {
+      "variant": "transformer_two",
+      "condition": "original",
+      "validation_loss": 1.2734935223572743,
+      "delta_original": 0.0,
+      "bits_per_byte": 1.837262789309058,
+      "validation_targets": 1113088,
+      "reproduced_original": true
+    }
+  ],
+  "diagnostics": [
+    {
+      "variant": "recurrent",
+      "phase4_minus_mean_phases123": -0.0012454994480499693,
+      "reproduction_delta": -1.596047738416928e-10,
+      "moments": {
+        "fine_square": 136663818.55031952,
+        "broad_square": 667124199.1923113,
+        "dot": 60231535.29865449,
+        "elements": 427425792,
+        "fine_rms": 0.5654528704924034,
+        "broad_rms": 1.2493179638211669,
+        "broad_to_fine_rms": 2.2094113037807115,
+        "cosine": 0.19947745126624075
+      }
+    },
+    {
+      "variant": "hierarchy_independent",
+      "phase4_minus_mean_phases123": 0.03276537507199828,
+      "reproduction_delta": 2.1200365907247942e-09,
+      "moments": {
+        "fine_square": 308609393.76313645,
+        "broad_square": 84044113.46099275,
+        "dot": 19157580.712464664,
+        "elements": 427425792,
+        "fine_rms": 0.8497168063822238,
+        "broad_rms": 0.4434281784112204,
+        "broad_to_fine_rms": 0.5218540754762421,
+        "cosine": 0.11895492925515644
+      }
+    },
+    {
+      "variant": "hierarchy_shared",
+      "phase4_minus_mean_phases123": 0.02061423206883428,
+      "reproduction_delta": 1.9637809156591857e-09,
+      "moments": {
+        "fine_square": 227378101.84065145,
+        "broad_square": 52269861.40068402,
+        "dot": 18259466.84768057,
+        "elements": 427425792,
+        "fine_rms": 0.7293633823317263,
+        "broad_rms": 0.34969974185143177,
+        "broad_to_fine_rms": 0.4794588682714849,
+        "cosine": 0.16748969818226944
+      }
+    },
+    {
+      "variant": "transformer_two",
+      "phase4_minus_mean_phases123": -0.0006822121874521248,
+      "reproduction_delta": -2.6091016014362367e-09,
+      "moments": {
+        "fine_square": 0.0,
+        "broad_square": 0.0,
+        "dot": 0.0,
+        "elements": 0,
+        "fine_rms": null,
+        "broad_rms": null,
+        "broad_to_fine_rms": null,
+        "cosine": null
+      }
+    }
+  ],
+  "session_budget": {
+    "elapsed_seconds": 109.24015541899996,
+    "export_reserve_seconds": 300,
+    "limit_seconds": 7200.0,
+    "scope": "bootstrap/setup/tests/data + frozen-weight evaluation; export uses reserve",
+    "work_remaining_seconds": 6790.759843378
+  },
+  "native_weights_reused": true,
+  "limitations": [
+    "one seed; post-training interventions are not separately trained ablations",
+    "runtime guard compares versions; observed runtime inventory is not separately recorded in result JSON",
+    "no tensors/data binaries in this ZIP; declared hashes and immutable evaluation code verified",
+    "timing and VRAM are concurrent diagnostic evaluation, not a comparable training/generation benchmark",
+    "session clock recorded before final export; no postexport cleanup receipt",
+    "position modulo4 is relative to a reset window, not global document position",
+    "gain1 is best among tested0,0.25,0.5,1; gains above1 and learned gates not tested"
+  ],
+  "local_model_evaluation_performed": false
+}

@@ -1,6 +1,35 @@
 # Validação vigente — 01/11/2026
 
-## Diagnóstico congelado da0027 — próxima operação
+## Auditoria da campanha0028
+
+[Relatório](docs/results/CAMPAIGN_0028.md),
+[dados conferidos](docs/results/campaign_0028_audit.json). Somente análise/documentação.
+
+- ZIP419.492bytes,14membros, CRC íntegro, sem duplicação/caminhos externos ou
+  payloads de pesos/pickle/datasets. SHA registrado; dois snapshots verificados.
+- 80fontes/43configurações científicas contra Git1c8ce2a;5arquivos operacionais
+  contra Git55dec8e. Referência idêntica à entregue. Manifesto/fingerprint igual0027.
+- Quatro originais reproduzidos; erro máximo2,6091e-9. Onze condições têm as mesmas
+  1087janelas/136batches/1.113.088alvos. Zero optimizer-steps/teste reservado.
+- Perdas/deltas/bits por byte e totais por fase/quarto da janela recalculados.
+  Somatórios, RMS/cossenos e contagens consistentes entre JSONs/CSV/campanha.
+- Logs lidos integralmente: sem traceback/OOM/timeout; máscaras0/1 comprovam
+  uso das duas GPUs nos quatro workers. Dados/pesos nativos reutilizados.
+- Auditoria local exit0, sem carregar/avaliar modelos. Figura gerada com apenas
+  valores auditados e verificada visualmente. Suite de treino não repetida, pois
+  nenhum modelo, contrato ou treinamento foi modificado.
+- Análise do índice original, conferido por SHA:2244casos de offsets0–3 e
+  comprimentos1–33 verificam que ler o grupo recém-fechado usaria apenas bytes
+  observados. É análise matemática, não teste de uma implementação futura.
+
+Uma seed e intervenções pós-treino, sem IC entre seeds/ablação treinada. Contraste
+por posição não demonstra causa nem ganho de uma mudança de leitura. Runtime
+observado não foi exportado como inventário separado; o código fixado compara
+versões com a referência. ZIP sem tensores para rehash direto; durações/VRAM são
+diagnósticos concorrentes, sem alegação de eficiência de treino/geração. Relógio
+antes de exportação final; sem inventário remoto completo ou recibo de limpeza.
+
+## Diagnóstico congelado da0027 — implementação e entrega
 
 [Escopo/riscos/aceitação prévios](docs/PLAN_STATE_DIAGNOSTIC.md),
 [instruções](docs/STATE_DIAGNOSTIC_RUN.md). Modelo/treino científicos originais

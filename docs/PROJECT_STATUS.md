@@ -36,12 +36,23 @@ guarda sem violação. GPU/Inductor desta operação exercitados nas duas T4 na0
 pytest de preflight CUDA rodou apenas naGPU0. Tensores finais não acompanhavam
 o ZIP de resultados.
 
-Entrega seguinte: [diagnóstico pós-treino](STATE_DIAGNOSTIC_RUN.md),11leituras de
+Entrega de diagnóstico: [operação pós-treino](STATE_DIAGNOSTIC_RUN.md),11leituras de
 quatro pesos da241, sem treino. Nova operação separada usa a fonte científica
 original; inspeção de componentes e intervenções de leitura, sem mudar backbone.
 O backup de checkpoints foi localizado localmente depois da auditoria: quatro
 hashes reais/safetensors e contagens únicas conferidos. Sem avaliação científica
-local desses pesos, pois o ambiente local difere do Kaggle. Diagnóstico T4 pendente.
+local desses pesos, pois o ambiente local difere do Kaggle.
+
+A [0028](results/CAMPAIGN_0028.md) executou o diagnóstico nas duas T4:11condições,
+zero optimizer-steps, erro máximo de reprodução2,61e-9,109,24s antes da exportação.
+ZIP419.492bytes. Silenciar o amplo piora0,193690/0,152317NLL; ganho0,5 também piora.
+RMS amplo/fino0,522/0,479; atenuação global não melhorou nos valores testados.
+Quarta posição tem perda0,032765/0,020614acima da média das demais nas hierarquias,
+sem padrão semelhante nos controles. A leitura atual só usa o novo resumo no byte
+seguinte ao fechamento. Isso sugere controle de defasagem, não comprova sua causa.
+Próximo ensaio recomendado: núcleo fino treinado sozinho e comparação isolada do
+momento de leitura, com controles atuais. Sem alteração de código/treino nesta
+auditoria, sem confirmação de vantagem fractal ou consulta ao teste reservado.
 
 ## Evidência histórica e próxima operação anterior
 

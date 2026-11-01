@@ -25,6 +25,14 @@ não instala esse código na branch comum. Confira `git branch --show-current` a
 
 ## Estado atual — 01/11/2026
 
+A [campanha0028](docs/results/CAMPAIGN_0028.md) concluiu11avaliações congeladas,
+sem treino, em109,24s registrados; ZIP410KiB. Reproduziu as quatro perdas da0027
+com erro máximo2,61e-9. Reduzir/silenciar o ramo amplo piorou ambas as hierarquias.
+Há sinal descritivo de perda maior na quarta posição dos grupos; o código adia
+para o byte seguinte a leitura do grupo recém-completado. A próxima pergunta
+recomendada é um controle treinado do momento de leitura e de profundidade fina,
+sem acrescentar tecnologias nem concluir causalidade a partir desse padrão.
+
 A [campanha 0027](docs/results/CAMPAIGN_0027.md) concluiu o primeiro bloco da etapa B:
 quatro treinos de6000passos, seed241, T1024/B8, mLSTM e Transformer. NLL final:
 Transformer1,273494; recorrente simples1,313647; hierarquia independente1,431568;
@@ -42,10 +50,10 @@ restantes continuam pendentes. Hipótese fractal e candidatos futuros permanecem
 Sessão registrada1h55min38s antes da exportação final, cache máximo amostrado1,124GiB;
 nenhuma violação da guarda de armazenamento registrada.
 
-A [próxima operação](docs/STATE_DIAGNOSTIC_RUN.md) avalia os pesos da0027 em11
-condições, sem treino novo. Duas T4, execução eager sem cache de compilação,
-limite de duas horas e um ZIP pequeno. Preserve a pasta0027 ou seu backup de
-checkpoints; `results.zip` sozinho não contém os pesos necessários.
+A [operação de diagnóstico](docs/STATE_DIAGNOSTIC_RUN.md) permanece disponível
+para reprodução da0028. Duas T4/eager, sem cache de compilação ou novo treino.
+Não é indicação de repeti-la automaticamente. Preserve a pasta0027 ou seu backup
+de checkpoints; `results.zip` sozinho não contém os pesos necessários.
 
 ## Evidência histórica — FLRM com atenção, contexto256
 

@@ -10,7 +10,8 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 | [Etapa B: primeiro bloco mLSTM/fractal](STATE_B_RUN.md) | Quatro braços seed241, ciência qualificada congelada e cache por GPU |
 | [Fichas dos candidatos](RECURRENT_CANDIDATES.md) | Fontes fixadas, equações e adaptações; não reproduções dos modelos completos |
 | [Campanha 0027](results/CAMPAIGN_0027.md) | Primeiro bloco de hierarquia/sharing; Transformer vence, diagnóstico recomendado antes de novas seeds |
-| [Diagnóstico dos pesos0027](STATE_DIAGNOSTIC_RUN.md) | Próxima célula:11condições congeladas, duas T4, sem treino ou novos checkpoints |
+| [Campanha 0028](results/CAMPAIGN_0028.md) | Diagnóstico reproduzido; amplo contribui, sinal de defasagem recomenda controle treinado |
+| [Diagnóstico dos pesos0027](STATE_DIAGNOSTIC_RUN.md) | Célula da0028 preservada para reprodução;11condições, sem treino ou novos checkpoints |
 | [Campanha 0025](results/CAMPAIGN_0025.md) | mLSTM qualificado; etapa A concluída, próximo controle de hierarquia/sharing |
 | [Campanha 0024](results/CAMPAIGN_0024.md) | mLSTM candidato operacional; falha na guarda de compilação exige requalificar |
 | [Correção e armazenamento](PLAN_CAMPAIGN_0024_STORAGE.md) | Download embutido, temporários limitados, limpeza preservando resultados/pesos |
