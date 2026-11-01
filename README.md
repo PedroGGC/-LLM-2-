@@ -52,8 +52,9 @@ amostrado abaixo de928MiB;4,70GiB acumulados de cache removidos. A falha da
 Download embutido e limpeza de caches/checkouts descartáveis passam a ser padrão;
 [limpeza do working](scripts/04_limpar_temporarios_kaggle.py) preserva arquivos científicos.
 
-A [nova etapa](docs/RECURRENT_RUN.md) avançará aos controles com mLSTM selecionado
-por medições T4. Antes do script B, revisar a retenção de cache entre workers.
+A [etapa B](docs/STATE_B_RUN.md) avançará aos controles com mLSTM selecionado
+por medições T4. Nova operação mantém uma família de cache por GPU e preserva o
+worker científico qualificado. Primeiro lote: quatro braços da seed241.
 São regras num shell comum,
 **não reproduções dos modelos publicados**; [fichas e adaptações](docs/RECURRENT_CANDIDATES.md).
 CPU verifica matemática e integração; a escolha operacional foi feita nas duas T4.

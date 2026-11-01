@@ -27,6 +27,11 @@ fonte qualificada, não repetir a etapa A. Próxima pergunta: contribuição de
 hierarquia e compartilhamento na etapa B. Retenção de caches entre workers é
 pendência operacional antes de lançar B; [auditoria](results/CAMPAIGN_0025.md).
 
+Entrega B: a [nova operação](STATE_B_RUN.md) resolve a retenção por GPU/variante
+sem alterar o worker qualificado. Agrupa piloto/triagem e perfis isolados para
+reduzir recompilações; primeiro lote com os quatro braços da seed241. A qualificação
+do núcleo permanece a0025; resultados de qualidade desta etapa ainda pendentes.
+
 ## Etapas
 
 A. Fichas dos três operadores recorrentes, referências sequenciais, execução por

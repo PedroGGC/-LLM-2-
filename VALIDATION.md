@@ -1,5 +1,43 @@
 # Validação vigente — 31/10/2026
 
+## Entrega da etapa B — ciência qualificada e operação separadas
+
+Plano prévio: [escopo/riscos/aceitação](docs/PLAN_STATE_B_DELIVERY.md).
+[Operação](docs/STATE_B_RUN.md). A fonte científica permanece fixada em1c8ce2a;
+novos arquivos operacionais não substituem o validador científico nem seus hashes.
+Python local3.12.2, Torch2.14.1+cpu, Windows, instalação direta, `PYTHONPATH=src`.
+
+| Verificação executada | Resultado |
+|---|---|
+| Primeiros testes operacionais, sem integração | 9passed,1deselected,5,09s |
+| Operação B + núcleo/protocolo/utilitários, com integração real | **76passed,6skipped,306,46s**,exit0 |
+| Após acrescentar somente campos/print de previsão e seeds restantes | **10passed,1deselected,5,19s**,exit0; integração não repetida após esse acréscimo de metadados |
+
+A integração extrai o Git archive da revisão científica1c8ce2a e executa o novo
+operador como arquivo em subprocesso com `PYTHONPATH` do worker antigo. Executou
+quatro jobs mLSTM/Transformer em duas lanes CPU, oito tentativas de taxa, oito
+pilotos isolados, piloto concorrente e oito perfis finais. Todos os checkpoints
+e a campanha possuem exatamente os hashes da fonte científica qualificada da0025.
+Foi verificado `operator-source.zip`, identificação operacional no relatório,
+curvas, par ZIP definitivo e ausência dos ZIPs temporários após cobertura validada.
+Esse smoke tem4passos/T17; não é resultado de linguagem nem evidência de desempenho.
+
+Testes focados cobrem: família mantida entre comandos, troca de variante,
+impossibilidade de limpar GPU0 em uso, preservação de GPU1 e arquivos científicos,
+liberação de lock em falha, reserva de pós-perfis incluindo compilação fria,
+rejeição de tuning incompatível, importação da fonte errada e fonte de bootstrap
+alterada. O bootstrap simulado instala somente o worker científico e passa seu
+`PYTHONPATH`; SHA do relatório original da0025 e fontes Git foram conferidos.
+Os testes de núcleo/protocolo incluem causalidade, forward/backward, finitude,
+memorização, compartilhamento e retomada com dropout/acumulação.
+
+Limitações: nenhuma nova execução CUDA/Inductor local. A0025 qualifica a regra
+recorrente na T4, não toda a hierarquia nem esta operação B. Os preflights originais
+na T4 continuam obrigatórios. Manter cache não garante cache hit; warmup, tempo
+de comando e tempo total são medidos. Pilotos/estimativas podem recusar um bloco;
+não há garantia de conclusão em2h. Sem alteração de horizonte, scheduler ou dataset.
+Suíte completa não repetida; verificações focadas e integração reais acima.
+
 ## Auditoria da campanha 0025 — 31/10/2026
 
 [Relatório](docs/results/CAMPAIGN_0025.md),

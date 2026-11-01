@@ -2,9 +2,9 @@
 
 31/10/2026. [Plano aprovado](PLAN_RECURRENT_FRACTAL.md), [fichas](RECURRENT_CANDIDATES.md).
 Etapa A concluída na [0025](results/CAMPAIGN_0025.md): mLSTM qualificado nas duas
-T4. Não repetir a célula03 agora; ela permanece para reprodução. Etapa B é a próxima
-pergunta científica, após revisar descarte de cache entre seus workers, pois o
-limite2GiB pode interromper a acumulação de várias variantes. Sem novo treino de corpus.
+T4. Não repetir a célula03 agora; ela permanece para reprodução. Usar a
+[nova operação B](STATE_B_RUN.md), com cache por variante/GPU, fonte científica
+qualificada congelada e primeiro lote da seed241. Sem novo resultado de corpus.
 Nenhum treino de produção é iniciado na instalação ou sem `--execute`.
 
 ## A: qualificação de plataforma
@@ -56,10 +56,10 @@ O uso do atributo HTML está documentado no
 
 ## B: hierarquia e compartilhamento
 
-Prontidão científica: mLSTM selecionado. Prontidão operacional: revisar retenção
-por worker antes de lançar o script B; ver a pendência detalhada na auditoria0025.
-Os comandos abaixo documentam o runner existente; não comprovam que a matriz
-ampla já foi validada na T4 nem que caberá numa única sessão.
+Prontidão científica: mLSTM selecionado. A [entrega B](STATE_B_RUN.md) separa a
+nova operação do worker qualificado. Os comandos diretos abaixo documentam o
+runner histórico sem a extensão de cache/ordenação: preferir a célula05. A matriz
+ampla ainda não foi validada na T4 e pode exigir mais sessões.
 
 Nova sessão, mesmo código/ambiente da seleção, com o `platforms.json` preservado:
 

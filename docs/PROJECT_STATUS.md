@@ -9,8 +9,9 @@ operações independentes versus núcleo compartilhado testa contribuição frac
 Transformer permanece referência externa. A [0025](results/CAMPAIGN_0025.md)
 qualificou mLSTM e RWKV nas duas T4 com guarda externa; Gated Delta excedeu600s.
 mLSTM selecionado:93,43/89,99ms por passo,746,92MiB de VRAM. Etapa A concluída;
-não há resultado de qualidade novo. Antes de executar B, revisar retenção de cache
-entre seus workers. MC/GRM/TTT/ACT permanecem candidatos separados.
+não há resultado de qualidade novo. A [operação B](STATE_B_RUN.md) mantém a ciência
+qualificada e implementa cache por variante/GPU; primeiro lote da seed241.
+MC/GRM/TTT/ACT permanecem candidatos separados.
 Ver [operação](RECURRENT_RUN.md) e [fichas/adaptações](RECURRENT_CANDIDATES.md).
 
 ## Evidência histórica e próxima operação anterior
