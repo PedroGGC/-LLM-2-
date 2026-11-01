@@ -1,4 +1,4 @@
-# Estado científico e técnico — 31/10/2026
+# Estado científico e técnico — 01/11/2026
 
 ## Direção vigente: arquitetura própria inspirada em fractais
 
@@ -8,8 +8,8 @@ mLSTM num shell comum; não são modelos completos dos artigos. Hierarquia com
 operações independentes versus núcleo compartilhado testa contribuição fractal.
 Transformer permanece referência externa. A [0025](results/CAMPAIGN_0025.md)
 qualificou mLSTM e RWKV nas duas T4 com guarda externa; Gated Delta excedeu600s.
-mLSTM selecionado:93,43/89,99ms por passo,746,92MiB de VRAM. Etapa A concluída;
-não há resultado de qualidade novo. A [operação B](STATE_B_RUN.md) mantém a ciência
+mLSTM selecionado:93,43/89,99ms por passo,746,92MiB de VRAM na qualificação. Etapa A concluída.
+A [operação B](STATE_B_RUN.md) mantém a ciência
 qualificada e implementa cache por variante/GPU; primeiro lote da seed241.
 MC/GRM/TTT/ACT permanecem candidatos separados.
 
@@ -17,6 +17,23 @@ Tentativa0026: CPU e dois testes CUDA aprovados, mas cache bruto de WikiText
 divergiu antes do treino. Novo preflight recupera cópias verificadas em cache
 separado, antes de gastar compilação CUDA; ciência e protocolo preservados.
 Ver [operação](RECURRENT_RUN.md) e [fichas/adaptações](RECURRENT_CANDIDATES.md).
+
+A [0027](results/CAMPAIGN_0027.md) concluiu quatro treinos/seed241 e6000passos:
+NLL Transformer1,273494, simples1,313647, hierarquia independente1,431568 e
+compartilhada1,462067. Fontes, configurações, oito avaliações completas e oito de
+subconjunto conferidas. Nenhum teste reservado; uma seed, sem IC entre seeds.
+Hierarquia economiza32% por passo frente ao simples, mas perde0,117921NLL.
+Sharing economiza47,72% dos pesos, perde0,030498NLL e reduz só3–4% do tempo.
+Transformer vence qualidade, tempo isolado e VRAM de treino, sem medição de geração.
+
+Próximo passo recomendado: diagnosticar o ramo amplo antes das seeds242/243.
+Controle simples tem segunda célula por byte; a hierarquia a substitui por
+processamento comprimido. Compressão, profundidade fina e mistura não foram
+isoladas. Manter hipótese fractal; não promover esta implementação nem adicionar
+GRM/TTT/ACT automaticamente. Protocolo permanece congelado, seeds restantes pendentes.
+Relógio1h55min38s antes da exportação final; cache máximo amostrado1,124GiB,
+guarda sem violação. GPU/Inductor desta operação exercitados nas duas T4 na0027;
+pytest de preflight CUDA rodou apenas naGPU0. Tensores finais não recebidos.
 
 ## Evidência histórica e próxima operação anterior
 

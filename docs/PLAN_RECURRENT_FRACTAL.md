@@ -30,7 +30,21 @@ pendência operacional antes de lançar B; [auditoria](results/CAMPAIGN_0025.md)
 Entrega B: a [nova operação](STATE_B_RUN.md) resolve a retenção por GPU/variante
 sem alterar o worker qualificado. Agrupa piloto/triagem e perfis isolados para
 reduzir recompilações; primeiro lote com os quatro braços da seed241. A qualificação
-do núcleo permanece a0025; resultados de qualidade desta etapa ainda pendentes.
+do núcleo permanece a0025.
+
+Atualização0027 (01/11/2026): primeiro bloco B concluído, quatro braços/seed241.
+Transformer1,273494NLL; simples1,313647; independente1,431568; compartilhada1,462067.
+Não há candidato favorável de qualidade/custo. Sharing reduziu47,72% dos pesos,
+com perda0,030498NLL e só3–4% menos tempo por passo. É triagem de uma seed, sem
+confirmação estatística. [Auditoria e limites](results/CAMPAIGN_0027.md).
+
+Recomendação de continuidade: diagnosticar compressão/mistura e a substituição da
+segunda transformação fina antes das seeds242/243. O desenho atual troca resolução
+e trabalho; não isola apenas hierarquia. Preservar a matriz original com1/3seeds,
+sem reescrever seus critérios. Primeiro intervenções diagnósticas nos pesos finais;
+depois controle somente fino e uma alteração isolada, com protocolo próprio definido
+antes de treinar. Fractal permanece hipótese explícita; nenhuma nova tecnologia
+entra automaticamente. Geração/retenção não foram medidas; não extrapolar treino.
 
 ## Etapas
 

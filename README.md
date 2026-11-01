@@ -23,7 +23,26 @@ Este checkout contém a pesquisa fractal: **`experiment/fractal-lrm`**.
 A implementação fractal permanece isolada. O identificador `fractal` em uma configuração
 não instala esse código na branch comum. Confira `git branch --show-current` antes de trabalhar.
 
-## Estado atual — 31/10/2026
+## Estado atual — 01/11/2026
+
+A [campanha 0027](docs/results/CAMPAIGN_0027.md) concluiu o primeiro bloco da etapa B:
+quatro treinos de6000passos, seed241, T1024/B8, mLSTM e Transformer. NLL final:
+Transformer1,273494; recorrente simples1,313647; hierarquia independente1,431568;
+compartilhada1,462067. Fontes/métricas conferidas; teste reservado não consultado.
+Só uma seed: resultado exploratório, sem confirmação estatística ou vantagem fractal.
+
+A hierarquia economizou cerca de32% por passo frente ao simples, com forte perda de
+qualidade. Sharing reduziu47,72% dos parâmetros frente à hierarquia independente,
+mas piorou0,030498NLL e economizou apenas3–4% de tempo. Transformer liderou também
+tempo isolado e VRAM de treino. Geração/recuperação ainda não medidas.
+
+Recomendação: diagnosticar compressão, perda de profundidade fina e mistura do ramo
+amplo antes de investir nas seeds242/243. Protocolo original preservado; as seeds
+restantes continuam pendentes. Hipótese fractal e candidatos futuros permanecem.
+Sessão registrada1h55min38s antes da exportação final, cache máximo amostrado1,124GiB;
+nenhuma violação da guarda de armazenamento registrada.
+
+## Evidência histórica — FLRM com atenção, contexto256
 
 A [campanha 0023](docs/results/CAMPAIGN_0023.md) concluiu e auditou 18 treinos,
 72 avaliações principais e 24 probes de profundidade em aproximadamente duas horas.
@@ -42,7 +61,7 @@ duas GPUs. Não demonstra equivalência formal ou vantagem fractal. O Transforme
 lidera entre as configurações testadas. Aumentar K sem treinar naquela profundidade
 piorou a NLL; esse probe não avalia treinamento em profundidade variável.
 
-## Próxima etapa — seleção recorrente e contribuição fractal
+## Plataforma recorrente e operação da etapa B
 
 A [0025](docs/results/CAMPAIGN_0025.md) concluiu a qualificação corrigida: mLSTM
 aprovado nas duas T4,93,43/89,99ms por passo,746,92MiB de pico de VRAM. RWKV
@@ -52,7 +71,7 @@ amostrado abaixo de928MiB;4,70GiB acumulados de cache removidos. A falha da
 Download embutido e limpeza de caches/checkouts descartáveis passam a ser padrão;
 [limpeza do working](scripts/04_limpar_temporarios_kaggle.py) preserva arquivos científicos.
 
-A [etapa B](docs/STATE_B_RUN.md) avançará aos controles com mLSTM selecionado
+A [etapa B](docs/STATE_B_RUN.md) executou os controles com mLSTM selecionado
 por medições T4. Nova operação mantém uma família de cache por GPU e preserva o
 worker científico qualificado. Primeiro lote: quatro braços da seed241.
 Tentativa0026 parou antes dos treinos por checksum do cache bruto. A célula05
@@ -62,7 +81,7 @@ São regras num shell comum,
 **não reproduções dos modelos publicados**; [fichas e adaptações](docs/RECURRENT_CANDIDATES.md).
 CPU verifica matemática e integração; a escolha operacional foi feita nas duas T4.
 
-Depois: recorrente simples, hierarquia independente, hierarquia compartilhada e
+Matriz registrada: recorrente simples, hierarquia independente, hierarquia compartilhada e
 Transformer2blocos; T1024/B8, 6000passos, seeds241–243. As hierarquias têm as mesmas
 operações; sharing reduz pesos, não estados nem chamadas. Meta2h/teto3h, divisão
 em blocos de seed sem encurtar horizontes. Nenhum GRM/TTT/ACT/JEPA é obrigatório.

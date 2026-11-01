@@ -6,6 +6,13 @@ O [plano aprovado](PLAN_RECURRENT_FRACTAL.md) substitui as prioridades históric
 abaixo. Transformer é referência externa; o FLRM antigo permanece reproduzível,
 sem novas repetições previstas. Ciclo5 suspenso como próxima operação.
 
+A [0027](results/CAMPAIGN_0027.md) concluiu somente seed241 da etapaB. Hierarquia e
+sharing perderam qualidade; Transformer venceu também tempo isolado e VRAM de treino.
+Antes de repetir as seeds restantes, recomenda-se diagnosticar compressão, mistura
+e perda da segunda transformação fina. Não confirma fracasso geral do fractal nem
+justifica adicionar memória/adaptação sem identificar a limitação. Matriz original
+preservada; etapas condicionais abaixo continuam no catálogo.
+
 | Frente | Prioridade e pergunta |
 |---|---|
 | Núcleo recorrente | Etapa A concluída na0025: mLSTM selecionado nas duas T4; RWKV aprovado, Gated Delta fora do orçamento de compilação |

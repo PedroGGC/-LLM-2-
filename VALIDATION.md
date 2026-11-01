@@ -1,4 +1,36 @@
-# Validação vigente — 31/10/2026
+# Validação vigente — 01/11/2026
+
+## Auditoria da campanha 0027
+
+[Relatório](docs/results/CAMPAIGN_0027.md),
+[conferência estruturada](docs/results/campaign_0027_audit.json).
+Somente análise/documentação; sem alteração de modelo, worker, contrato ou células.
+
+- ZIP12.342.536bytes,363membros, CRC válido, sem duplicação/caminhos externos.
+- 80fontes +43configurações contra Git1c8ce2a;30snapshots com123arquivos cada;
+  quatro arquivos e snapshot operacionais contra Git6396959. Qualificação0025
+  preservada byte a byte; mapa operacional igual em bootstrap/campanha/relatório.
+- Protocol ID recalculado; quatro configurações validadas, parâmetros por fórmula
+  e enumeração meta conferidos. Quatro treinos6000passos reiniciados do zero;
+  49.152.000alvos por braço; metadados3000/6000, métricas e contadores consistentes.
+- Oito avaliações completas e oito em subconjunto; NLL/bits por byte/perplexidade
+  conferidos entre métricas/workers/relatório. Oito tentativas LR; seleção recalculada
+  e divisão interna1408/175/175documentos verificada disjunta dos oficiais.
+- Oito perfis isolados,30amostras positivas/finitas cada: medianas/médias e energia
+  por alvo recalculadas; contraste/decisão refeitos por `state_report.analyze`.
+- Logs Kaggle: CPU51passed/6deselected32,17s; CUDA2passed/40deselected72,63s
+  naGPU0. Duas T4 executaram treino/perfis. Sem traceback/OOM/erro de compilação
+  nos logs lidos. Nenhum modelo consultou teste reservado.
+- Auditoria local executada com sucesso (exit0), sem carregar pickle/pesos,
+  treinar ou avaliar modelos. Figura original conferida visualmente; conecta só
+  avaliações completas. Uma seed241; texto genérico “Three seeds” não é evidência
+  de três réplicas. Pesos e binários preparados ausentes: apenas hashes declarados
+  e consistência de metadados conferidos, sem rehash de tensores/dados ausentes.
+
+Nenhum teste GPU local novo. Suíte de treino não repetida por alteração exclusiva
+de análise/documentação. Sem IC entre seeds, medição de geração/recuperação ou
+custo igualado. Duração registrada antes da exportação final; lista de snapshots
+intermediários não prova sua remoção remota posterior.
 
 ## Recuperação do cache após falha0026
 

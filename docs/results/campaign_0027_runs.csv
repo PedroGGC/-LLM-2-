@@ -1,0 +1,5 @@
+variant,seed,validation_loss,bits_per_byte,validation_targets,parameters,state_bytes_per_sequence,flops_estimate,train_wall_seconds,timing_scope,gpu_slot
+recurrent,241,1.3136474870165884,1.8951927149950811,1113088,2174232,199728,,709.6589107229402,concurrent operational training,0
+hierarchy_independent,241,1.4315684391142802,2.065316687803326,1113088,2174232,205872,,753.8768524169809,concurrent operational training,1
+hierarchy_shared,241,1.4620669194066207,2.1093166940757353,1113088,1136652,205872,,725.4196568159596,concurrent operational training,0
+transformer_two,241,1.273493524966376,1.837262793073196,1113088,2164992,,"{'exclusions': 'norms, RoPE, activations, softmax, loss, optimizer, embedding lookup, dropout, validation, generation, compile; attention counted as dense square', 'forward_per_sequence': 7651196928, 'is_estimate': True, 'method': 'dense_matmuls_forward_x3_v1', 'training_per_sequence': 22953590784}",408.9550915110476,concurrent operational training,1

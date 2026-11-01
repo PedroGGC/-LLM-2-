@@ -4,6 +4,12 @@
 [qualificação0025](results/CAMPAIGN_0025.md),
 [plano científico](PLAN_RECURRENT_FRACTAL.md).
 
+Atualização01/11/2026: [0027 concluída e auditada](results/CAMPAIGN_0027.md), quatro
+braços/seed241. Hierarquias perderam qualidade; Transformer liderou qualidade,
+tempo isolado e VRAM de treino. Recomenda-se diagnóstico antes de repetir242/243.
+A célula abaixo preserva a operação histórica; executá-la novamente repetiria241,
+não produziria réplica nova. Não é uma indicação de relançar automaticamente.
+
 ## Célula Kaggle
 
 Use [05_testar_hierarquia_mlstm_kaggle.py](../scripts/05_testar_hierarquia_mlstm_kaggle.py)
@@ -106,5 +112,6 @@ serão novamente conferidos. Não misturar seeds repetidas como réplicas novas.
 
 Uma seed é exploratória: não promove ganho fractal nem equivalência. A decisão
 principal continuará separando hierarquia, compartilhamento e confronto externo
-com Transformer. GPU/Inductor desta orquestração ainda dependem do teste Kaggle;
-integração CPU não substitui essa validação.
+com Transformer. GPU/Inductor desta orquestração foram exercitados nas duas T4 da0027;
+o preflight CUDA pytest foi executado naGPU0. Isso não valida outras precisões,
+hardware ou mecanismos futuros. Integração CPU não substitui essa validação.
