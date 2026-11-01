@@ -1,5 +1,37 @@
 # Validação vigente — 31/10/2026
 
+## Recuperação do cache após falha0026
+
+[Plano prévio](docs/PLAN_STATE_B_CACHE_RECOVERY.md),
+[conferência real do corpus](docs/results/STATE_B_CACHE_RECOVERY.json).
+O log fornecido contém CPU51passed/6deselected (36,15s) e CUDA2passed/40deselected
+(78,88s); falhou no checksum de shard existente, antes dos pilotos/treinos.
+Não houve NLL nem checkpoint. Sem arquivo atual do Kaggle, causa/hash observado
+da corrupção não são conhecidos. A guarda de integridade funcionou.
+
+- Novo preflight apenas operacional; worker científico e hashes continuam1c8ce2a.
+- Testes de cache/bootstrap:19passed/1deselected,5,10s; após testar falha anterior
+  a instalação/CUDA:20passed/1deselected,4,67s; versão com recibo persistente:
+  **21passed,1deselected,4,73s**,exit0.
+- Regressões de importação WikiText/contrato: **3passed,25deselected,0,56s**,exit0.
+- Quatro shards reais do backup local foram lidos e extraídos em diretório novo
+  de artifacts, sem modificar o backup. Todos conferem com SHA originais.
+- Corpus preparado novamente a partir desses shards; `verify_dataset` aceitou
+  os quatro hashes originais (train/val/test/tokenizer), sem alteração de contrato.
+  Fingerprint:f10ae5a31fb066205e9da284726f5f0b756cf2e2e68bd7cb15caf0ca17018c81.
+- Download real do shard de validação fixado:657.209bytes, SHA original conferido;
+  esse teste de transporte não avalia um modelo no conjunto de validação/teste.
+- Fixtures provam preservação do legado inválido, cópia independente de válidos,
+  rejeição de HTML/hash incorreto, falha de rede, limpeza de temporário em erro
+  normal, publicação concorrente sem sobrescrita, links, limite de transferência
+  e parser AST que não executa o código de origem. Recibo de falha sobrevive à
+  exclusão do checkout. Preflight que falha impede instalação e despacho do worker.
+
+Não repetido treino/integrador de5min: esta alteração não muda matemática,
+otimizador, sampler ou passos; modifica transporte/verificação prévia de arquivos.
+Nenhuma nova execução GPU local. Os testes CUDA acima são os do log do usuário,
+não aprovação da nova rotina de cache no Kaggle. Suite completa não repetida.
+
 ## Entrega da etapa B — ciência qualificada e operação separadas
 
 Plano prévio: [escopo/riscos/aceitação](docs/PLAN_STATE_B_DELIVERY.md).

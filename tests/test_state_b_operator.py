@@ -104,30 +104,42 @@ def test_bootstrap_rejects_changed_helper(monkeypatch):
         bootstrap.bootstrap_git("a"*40,run=True)
 
 
-def test_bootstrap_dispatches_file_operator_with_qualified_pythonpath(tmp_path,monkeypatch):
+@pytest.mark.parametrize("preflight_fails",[False,True])
+def test_bootstrap_dispatches_file_operator_with_qualified_pythonpath(tmp_path,monkeypatch,preflight_fails):
     import importlib.metadata
     science=tmp_path/"scientific-source";science.mkdir()
     op_parent=tmp_path/"op-parent";op_parent.mkdir()
     worker_parent=tmp_path/"worker-parent";worker_parent.mkdir()
     qualified=json.loads(REPORT.read_text(encoding="utf-8"))
     op_files={name:operator.digest(ROOT/name) for name in (
-        "src/llm2/research/state_b_operator.py","src/llm2/research/state_b_bootstrap.py","docs/results/campaign_0025_platforms.json")}
+        "src/llm2/research/state_b_operator.py","src/llm2/research/state_b_bootstrap.py","src/llm2/research/wikitext_cache.py","docs/results/campaign_0025_platforms.json")}
     op_meta={"source_git_revision":"a"*40,"source_files_sha256":op_files}
     sci_meta={"source_git_revision":bootstrap.SCIENTIFIC_REVISION,"source_files_sha256":qualified["source_sha256"]}
     output=tmp_path/"llm2-campaign-0026"
     monkeypatch.setattr(bootstrap.runpy,"run_path",lambda *a:{"numbered_output":lambda *a,**k:output})
     calls=[]
-    def command(args,**kwargs):calls.append((args,kwargs))
+    def command(args,**kwargs):
+        calls.append((args,kwargs))
+        if "--report" in args:
+            if preflight_fails:raise OSError("raw preflight rejected")
+            Path(args[args.index("--report")+1]).write_text(json.dumps({"status":"verified","selected_cache":str(tmp_path/"llm2-wikitext-verified-cache")}))
     session=SimpleNamespace(remaining=lambda **k:1000.,elapsed=2.)
-    result=bootstrap._run(ROOT,science,op_parent,worker_parent,op_meta,sci_meta,
+    arguments=(ROOT,science,op_parent,worker_parent,op_meta,sci_meta,
         {"bounded_command":command},session,(tmp_path,["0","1"],importlib.metadata.version("torch")),26,(241,),None,7200,10800)
+    if preflight_fails:
+        with pytest.raises(OSError,match="preflight rejected"):bootstrap._run(*arguments)
+        assert len(calls)==1 and calls[0][0][1].endswith("wikitext_cache.py")
+        return
+    result=bootstrap._run(*arguments)
     args,kwargs=calls[-1]
     assert args[1]==str(ENTRY)
     assert kwargs["env"]["PYTHONPATH"]==str(science/"src")
     assert args[args.index("--phase")+1]=="experiment"
     assert args[args.index("--seeds")+1]=="241" and "--engineering-smoke" not in args
     assert result["scientific_revision"]==bootstrap.SCIENTIFIC_REVISION
-    assert "--no-cache-dir" in calls[0][0]
+    assert calls[0][0][1].endswith("wikitext_cache.py")
+    assert "--no-cache-dir" in calls[1][0]
+    assert args[args.index("--cache")+1]==str(tmp_path/"llm2-wikitext-verified-cache")
 
 
 def test_frozen_tuning_mismatch_is_not_accepted():
@@ -151,7 +163,7 @@ def test_real_stage_b_uses_pinned_scientific_worker(training_config,tmp_path):
     science=tmp_path/"qualified-source";science.mkdir()
     payload=subprocess.check_output(["git","archive","--format=zip",bootstrap.SCIENTIFIC_REVISION],cwd=ROOT)
     with zipfile.ZipFile(io.BytesIO(payload)) as z:z.extractall(science)
-    names=("src/llm2/research/state_b_operator.py","src/llm2/research/state_b_bootstrap.py","docs/results/campaign_0025_platforms.json")
+    names=("src/llm2/research/state_b_operator.py","src/llm2/research/state_b_bootstrap.py","src/llm2/research/wikitext_cache.py","docs/results/campaign_0025_platforms.json")
     meta={"revision":"engineering-uncommitted","scientific_revision":bootstrap.SCIENTIFIC_REVISION,
           "files_sha256":{n:operator.digest(ROOT/n) for n in names},"scope":"CPU engineering fixture"}
     meta_path=tmp_path/"operator.json";meta_path.write_text(json.dumps(meta))

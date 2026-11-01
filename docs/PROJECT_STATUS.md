@@ -12,6 +12,10 @@ mLSTM selecionado:93,43/89,99ms por passo,746,92MiB de VRAM. Etapa A concluída;
 não há resultado de qualidade novo. A [operação B](STATE_B_RUN.md) mantém a ciência
 qualificada e implementa cache por variante/GPU; primeiro lote da seed241.
 MC/GRM/TTT/ACT permanecem candidatos separados.
+
+Tentativa0026: CPU e dois testes CUDA aprovados, mas cache bruto de WikiText
+divergiu antes do treino. Novo preflight recupera cópias verificadas em cache
+separado, antes de gastar compilação CUDA; ciência e protocolo preservados.
 Ver [operação](RECURRENT_RUN.md) e [fichas/adaptações](RECURRENT_CANDIDATES.md).
 
 ## Evidência histórica e próxima operação anterior

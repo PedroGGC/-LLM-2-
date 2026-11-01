@@ -37,6 +37,18 @@ Snapshots de treino continuam contendo a ciência original. O relatório analít
 também identifica o operador. Não misture custos de operadores diferentes sem
 conferir essa identificação; o agregador antigo não impõe esse campo adicional.
 
+Após a falha0026, o bootstrap verifica os shards brutos **antes** de instalar ou
+executar testes CUDA. Lê revisão/SHA do importador científico original, preserva
+`llm2-wikitext-pinned-cache` e publica arquivos corretos em
+`llm2-wikitext-verified-cache`. Válidos são copiados/reutilizados; ausentes ou
+inválidos são baixados com verificação e publicação exclusiva. Não altera os
+hashes aceitos nem datasets preparados. Falha de rede/checksum não inicia CUDA;
+um recibo JSON pequeno é preservado fora dos checkouts descartáveis.
+Cache verificado inesperadamente alterado é preservado e bloqueia execução.
+Uma interrupção forçada pode deixar um `.part` incompleto, que nunca é consumido
+como shard. O relatório registra esperado/observado/tamanho, sem presumir a causa
+de corrupção do cache legado. [Plano da correção](PLAN_STATE_B_CACHE_RECOVERY.md).
+
 | Braço | Organização | Parâmetros |
 |---|---|---:|
 | Recorrente simples | Duas células mLSTM, sem hierarquia | 2.174.232 |

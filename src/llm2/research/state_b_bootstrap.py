@@ -19,7 +19,7 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def bootstrap_git(revision, *, run=False, run_number=26, seeds=(241,), tuning_report=None,
+def bootstrap_git(revision, *, run=False, run_number=27, seeds=(241,), tuning_report=None,
                   target_seconds=7200, session_seconds=10800, started_at=None):
     if not run:
         return {"status":"not_started"}
@@ -63,6 +63,12 @@ def bootstrap_git(revision, *, run=False, run_number=26, seeds=(241,), tuning_re
         globals()["download_file"]=downloads["download_file"]
         return _run(operator,worker,op_parent,worker_parent,op_checkout,worker_checkout,
                     helper,session,hardware,run_number,seeds,tuning_report,target_seconds,session_seconds)
+    except Exception:
+        try:
+            if "op_parent" in locals():export_cache_failure(work,op_parent)
+        except Exception as exc:
+            print(f"Diagnóstico continua no log; não consegui exportar o recibo: {exc}",flush=True)
+        raise
     finally:
         for parent in reversed(parents):
             try:
@@ -70,6 +76,19 @@ def bootstrap_git(revision, *, run=False, run_number=26, seeds=(241,), tuning_re
                 print(f"Checkout temporário removido: {row['bytes']/1024**2:.1f} MiB.",flush=True)
             except Exception as exc:
                 print(f"Checkout preservado para inspeção: {parent}: {exc}",flush=True)
+
+
+def export_cache_failure(work,parent):
+    path=Path(parent)/"bootstrap.json"
+    if not path.is_file():return None
+    report=json.loads(path.read_text(encoding="utf-8"))
+    if report.get("status")!="failed":return None
+    receipt=Path(work)/f"llm2-data-cache-error-{time.time_ns()}.json"
+    with receipt.open("x",encoding="utf-8",newline="\n") as stream:
+        json.dump(report,stream,indent=2,ensure_ascii=False);stream.write("\n")
+    print(f"Diagnóstico do cache preservado: {receipt.name}",flush=True)
+    if "download_file" in globals():download_file(receipt)
+    return receipt
 
 
 def _run(operator,worker,op_parent,worker_parent,op_checkout,worker_checkout,
@@ -84,17 +103,27 @@ def _run(operator,worker,op_parent,worker_parent,op_checkout,worker_checkout,
             if name.startswith("src/") and name.endswith(".py") or name=="pyproject.toml"}
     if qualified["source_sha256"]!=actual or qualified.get("selected_rule")!="mlstm":
         raise ValueError("qualified source map differs from scientific checkout")
-    names=("src/llm2/research/state_b_operator.py","src/llm2/research/state_b_bootstrap.py",
+    names=("src/llm2/research/state_b_operator.py","src/llm2/research/state_b_bootstrap.py","src/llm2/research/wikitext_cache.py",
            "docs/results/campaign_0025_platforms.json")
     for name in names:
         if sha(operator/name)!=op_checkout["source_files_sha256"].get(name):
             raise ValueError("operator checkout file hash mismatch")
+    meta=op_parent/"bootstrap.json"
+    # Recover raw inputs before spending time on installation or CUDA compilation.
+    helper["bounded_command"]([sys.executable,str(operator/"src/llm2/research/wikitext_cache.py"),
+        "--base",str(work),"--source",str(worker/"src/llm2/research/wikitext.py"),
+        "--source-sha256",worker_checkout["source_files_sha256"]["src/llm2/research/wikitext.py"],
+        "--report",str(meta)],cwd=worker,timeout=session.remaining())
+    raw_cache=json.loads(meta.read_text(encoding="utf-8"))
+    if raw_cache.get("status")!="verified":raise ValueError("raw corpus cache did not pass preflight")
+    selected_cache=Path(raw_cache["selected_cache"])
+    if selected_cache.is_symlink() or selected_cache.resolve().parent!=work.resolve():
+        raise ValueError("raw cache path outside working")
     op_meta={"revision":op_checkout["source_git_revision"],"scientific_revision":SCIENTIFIC_REVISION,
              "files_sha256":{name:sha(operator/name) for name in names},
              "policy":"variant-scoped per-GPU cache; grouped tuning; paired train/isolated profiles",
-             "qualified_platform_sha256":PLATFORM_SHA256,
+             "qualified_platform_sha256":PLATFORM_SHA256,"raw_cache_preflight":raw_cache,
              "scope":"operation only; model/optimizer/sampler/evaluation/checkpoints from unchanged worker"}
-    meta=op_parent/"bootstrap.json"
     meta.write_text(json.dumps(op_meta,indent=2)+"\n",encoding="utf-8",newline="\n")
     helper["bounded_command"]([sys.executable,"-m","pip","install","--quiet","--no-cache-dir","-e",
                                 str(worker)+"[dev,research,wikitext]"],cwd=worker,timeout=session.remaining())
@@ -115,7 +144,7 @@ def _run(operator,worker,op_parent,worker_parent,op_checkout,worker_checkout,
     command=[sys.executable,str(operator/"src/llm2/research/state_b_operator.py"),
         "--worker-source",str(worker),"--operator-root",str(operator),"--operator-metadata",str(meta),
         "--execute","--phase","experiment","--platform-report",str(report),"--output",str(output),
-        "--gpus",*gpus,"--seeds",*map(str,seeds),"--cache",str(work/"llm2-wikitext-pinned-cache"),"--download",
+        "--gpus",*gpus,"--seeds",*map(str,seeds),"--cache",str(selected_cache),"--download",
         "--target-seconds",str(target_seconds),"--session-seconds",str(session_seconds),
         "--bootstrap-elapsed-seconds",str(session.elapsed),"--bootstrap-metadata",str(bootstrap)]
     if tuning_report:

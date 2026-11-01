@@ -1,0 +1,18 @@
+{
+  "kind": "dataset preparation verification; no model evaluation",
+  "source": "verified original shards from local backup",
+  "prepared_files": {
+    "test.bin": "ba26e93bca72e59dbd2f12a6b1758fdafb97ce3b652310cb44de218ff91536cf",
+    "tokenizer.json": "f88f84a387d00bb8027db376d50fff07c86c4ee137f1678351521fefe0f8d252",
+    "train.bin": "0d4d9109a5acd6820a3a050a20da2f2073a3d5f0da2b25138c9c47a9bd28906c",
+    "val.bin": "b2ce29824a4e56d51d396231f467c22e0ac3cb8916f5a01c69833207f4340b97"
+  },
+  "dataset_fingerprint": "f10ae5a31fb066205e9da284726f5f0b756cf2e2e68bd7cb15caf0ca17018c81",
+  "pinned_hashes_match": true,
+  "tokens": {
+    "train": 33570713,
+    "val": 1144308,
+    "test": 1287718
+  },
+  "live_validation_shard_bytes_verified": 657209
+}
