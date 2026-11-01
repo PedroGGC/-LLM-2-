@@ -8,6 +8,7 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 | [Plano aprovado: recorrência/fractal](PLAN_RECURRENT_FRACTAL.md) | Hipóteses, candidatos, riscos, critérios e etapas condicionais |
 | [Operação vigente: seleção e hierarquia](RECURRENT_RUN.md) | Etapas A/B, duas sessões distintas, meta2h/teto3h |
 | [Fichas dos candidatos](RECURRENT_CANDIDATES.md) | Fontes fixadas, equações e adaptações; não reproduções dos modelos completos |
+| [Campanha 0025](results/CAMPAIGN_0025.md) | mLSTM qualificado; etapa A concluída, próximo controle de hierarquia/sharing |
 | [Campanha 0024](results/CAMPAIGN_0024.md) | mLSTM candidato operacional; falha na guarda de compilação exige requalificar |
 | [Correção e armazenamento](PLAN_CAMPAIGN_0024_STORAGE.md) | Download embutido, temporários limitados, limpeza preservando resultados/pesos |
 | [Campanha 0023](results/CAMPAIGN_0023.md) | 18 treinos auditados; fino simplifica, Transformer vence neste regime |

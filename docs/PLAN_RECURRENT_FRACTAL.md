@@ -21,6 +21,12 @@ casos; repetir qualificação com supervisor externo antes da etapaB. Não alter
 as hipóteses científicas nem promover o ranking operacional a ganho de linguagem.
 Ver [evidência](results/CAMPAIGN_0024.md) e [correção](PLAN_CAMPAIGN_0024_STORAGE.md).
 
+Atualização0025: qualificação corrigida concluída nas duas T4. Selecionar mLSTM;
+RWKV também aprovado e Gated Delta fora do orçamento de compilação. Preservar a
+fonte qualificada, não repetir a etapa A. Próxima pergunta: contribuição de
+hierarquia e compartilhamento na etapa B. Retenção de caches entre workers é
+pendência operacional antes de lançar B; [auditoria](results/CAMPAIGN_0025.md).
+
 ## Etapas
 
 A. Fichas dos três operadores recorrentes, referências sequenciais, execução por

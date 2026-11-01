@@ -8,7 +8,7 @@ sem novas repetições previstas. Ciclo5 suspenso como próxima operação.
 
 | Frente | Prioridade e pergunta |
 |---|---|
-| Núcleo recorrente | Selecionar implementação viável de regras RWKV-7/mLSTM/Gated Delta na T4; sem vencedor CPU |
+| Núcleo recorrente | Etapa A concluída na0025: mLSTM selecionado nas duas T4; RWKV aprovado, Gated Delta fora do orçamento de compilação |
 | Fractal explícito | Mesma hierarquia com núcleo compartilhado versus operações independentes; separar hierarquia de auto-similaridade |
 | Hierarquia e compressão | Caminhos rápido/lento; compressão causal fixa, depois aprendida/adaptativa se justificada; BLT/Cantor como referências |
 | Profundidade variável | Treinar K1/2/4; RINS como organização, ACT/PonderNet somente após benefício de esforço adicional |

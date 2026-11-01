@@ -1,0 +1,281 @@
+{
+  "campaign": 25,
+  "zip_sha256": "5d827ac94d387fadb69b144ab0d12b32aea03f0986bcc12c587bad5547e3044b",
+  "zip_bytes": 75152,
+  "zip_members": 21,
+  "crc_valid": true,
+  "source_revision": "1c8ce2abb8f47d3167454b3503598854b7756dad",
+  "source_config_hashes_checked": 123,
+  "source_config_hash_mismatches": [],
+  "protocol_id": "930f7b812b7b80f353291a98c20699f753becf17a9910fc5c370cac8c6e12761",
+  "qualification_version": 2,
+  "selection_recomputed": "mlstm",
+  "reported_selected_rule": "mlstm",
+  "decision": "stage_a_qualified_mlstm",
+  "scientific_training_jobs": 0,
+  "test_evaluated": false,
+  "environment": {
+    "cpu": "x86_64",
+    "cublas_workspace_config": ":4096:8",
+    "cuda_devices": [
+      {
+        "logical_index": 0,
+        "name": "Tesla T4",
+        "total_memory_bytes": 15636037632,
+        "uuid": "6f93dc79-1334-bad9-47ed-fa8dc035b3b9"
+      },
+      {
+        "logical_index": 1,
+        "name": "Tesla T4",
+        "total_memory_bytes": 15636037632,
+        "uuid": "a580ecff-d704-cf35-2257-c055af3b310d"
+      }
+    ],
+    "cuda_version": "12.8",
+    "cuda_visible_devices": null,
+    "cudnn_version": 91900,
+    "device": "Tesla T4",
+    "packages": {
+      "PyYAML": "6.0.3",
+      "numpy": "2.1.3",
+      "pytest": "8.4.2",
+      "safetensors": "0.8.0",
+      "tensorboard": "2.20.0",
+      "tokenizers": "0.23.1",
+      "torch": "2.11.0+cu128"
+    },
+    "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+    "python": "3.13.15 (main, Aug  6 2026, 11:06:22) [GCC 13.3.0]"
+  },
+  "session_seconds": 3309.901324959,
+  "storage_budget": {
+    "cache_limit_bytes": 2147483648,
+    "exceeded": null,
+    "peak_cache_bytes": 973024602,
+    "reserve_bytes": 2147483648,
+    "sampling_seconds": 5.0
+  },
+  "discarded_compiler_cache_bytes": 5042199342,
+  "discarded_compiler_cache": [
+    {
+      "bytes": 983284482,
+      "name": "llm2-campaign-0025/compiler-cache/gpu-0"
+    },
+    {
+      "bytes": 852807469,
+      "name": "llm2-campaign-0025/compiler-cache/gpu-0"
+    },
+    {
+      "bytes": 690799452,
+      "name": "llm2-campaign-0025/compiler-cache/gpu-0"
+    },
+    {
+      "bytes": 971844908,
+      "name": "llm2-campaign-0025/compiler-cache/gpu-1"
+    },
+    {
+      "bytes": 852807474,
+      "name": "llm2-campaign-0025/compiler-cache/gpu-1"
+    },
+    {
+      "bytes": 690655557,
+      "name": "llm2-campaign-0025/compiler-cache/gpu-1"
+    },
+    {
+      "bytes": 0,
+      "name": "llm2-campaign-0025/compiler-cache"
+    }
+  ],
+  "checkout_bytes": 3556024,
+  "checkout_removal_proven_in_zip": false,
+  "rows": [
+    {
+      "candidate_limit_seconds": 600.0,
+      "error": "supervisor stopped command after 600s; complete log: /kaggle/working/llm2-campaign-0025/logs/qualify-gated_delta-0.log",
+      "failure_kind": "supervisor_timeout",
+      "rule": "gated_delta",
+      "slot": "0",
+      "status": "failed",
+      "supervisor_elapsed_seconds": 600.417205478,
+      "timeout_enforced_by": "parent_process"
+    },
+    {
+      "candidate_limit_seconds": 600.0,
+      "compile_policy": "static_shapes",
+      "correctness": {
+        "checks": [
+          "sequential/chunked forward and gradients",
+          "causality",
+          "streaming",
+          "finite gradients"
+        ],
+        "compiled": true,
+        "max_forward_absolute_error": 1.1324882507324219e-06,
+        "passed": true
+      },
+      "first_step_seconds": 472.5650390889998,
+      "flops_estimate": null,
+      "flops_estimator_available": false,
+      "gpu_energy_joules": null,
+      "gpu_name": "Tesla T4",
+      "host_memory": {
+        "peak_process_rss_bytes": 4245585920,
+        "process_pss_bytes": 3770481664
+      },
+      "mean_step_seconds": 0.3659186308000244,
+      "median_step_seconds": 0.36498735150007633,
+      "parameters": 2166528,
+      "peak_vram_bytes": 4002266624,
+      "rule": "rwkv7",
+      "slot": "0",
+      "state_bytes_per_sequence": 196608,
+      "status": "passed",
+      "supervisor_elapsed_seconds": 548.0000929359999,
+      "timeout_enforced_by": "parent_process",
+      "warmup_seconds": 475.8663594389998,
+      "weight_bytes": 8666112
+    },
+    {
+      "candidate_limit_seconds": 600.0,
+      "compile_policy": "static_shapes",
+      "correctness": {
+        "checks": [
+          "sequential/chunked forward and gradients",
+          "causality",
+          "streaming",
+          "finite gradients"
+        ],
+        "compiled": true,
+        "max_forward_absolute_error": 2.2649765014648438e-06,
+        "passed": true
+      },
+      "first_step_seconds": 406.87341181600027,
+      "flops_estimate": null,
+      "flops_estimator_available": false,
+      "gpu_energy_joules": null,
+      "gpu_name": "Tesla T4",
+      "host_memory": {
+        "peak_process_rss_bytes": 3810504704,
+        "process_pss_bytes": 3347871744
+      },
+      "mean_step_seconds": 0.09409056043336932,
+      "median_step_seconds": 0.09342849199992997,
+      "parameters": 2174232,
+      "peak_vram_bytes": 783197184,
+      "rule": "mlstm",
+      "slot": "0",
+      "state_bytes_per_sequence": 199728,
+      "status": "passed",
+      "supervisor_elapsed_seconds": 471.0043465609999,
+      "timeout_enforced_by": "parent_process",
+      "warmup_seconds": 407.7359245619998,
+      "weight_bytes": 8696928
+    },
+    {
+      "candidate_limit_seconds": 600.0,
+      "error": "supervisor stopped command after 600s; complete log: /kaggle/working/llm2-campaign-0025/logs/qualify-gated_delta-1.log",
+      "failure_kind": "supervisor_timeout",
+      "rule": "gated_delta",
+      "slot": "1",
+      "status": "failed",
+      "supervisor_elapsed_seconds": 600.4186779299998,
+      "timeout_enforced_by": "parent_process"
+    },
+    {
+      "candidate_limit_seconds": 600.0,
+      "compile_policy": "static_shapes",
+      "correctness": {
+        "checks": [
+          "sequential/chunked forward and gradients",
+          "causality",
+          "streaming",
+          "finite gradients"
+        ],
+        "compiled": true,
+        "max_forward_absolute_error": 1.0132789611816406e-06,
+        "passed": true
+      },
+      "first_step_seconds": 477.2043240949997,
+      "flops_estimate": null,
+      "flops_estimator_available": false,
+      "gpu_energy_joules": null,
+      "gpu_name": "Tesla T4",
+      "host_memory": {
+        "peak_process_rss_bytes": 4253261824,
+        "process_pss_bytes": 3771331584
+      },
+      "mean_step_seconds": 0.3649421824999839,
+      "median_step_seconds": 0.36446115650005595,
+      "parameters": 2166528,
+      "peak_vram_bytes": 4002266624,
+      "rule": "rwkv7",
+      "slot": "1",
+      "state_bytes_per_sequence": 196608,
+      "status": "passed",
+      "supervisor_elapsed_seconds": 553.2056602029998,
+      "timeout_enforced_by": "parent_process",
+      "warmup_seconds": 480.49375367599987,
+      "weight_bytes": 8666112
+    },
+    {
+      "candidate_limit_seconds": 600.0,
+      "compile_policy": "static_shapes",
+      "correctness": {
+        "checks": [
+          "sequential/chunked forward and gradients",
+          "causality",
+          "streaming",
+          "finite gradients"
+        ],
+        "compiled": true,
+        "max_forward_absolute_error": 2.5033950805664062e-06,
+        "passed": true
+      },
+      "first_step_seconds": 405.558963857,
+      "flops_estimate": null,
+      "flops_estimator_available": false,
+      "gpu_energy_joules": null,
+      "gpu_name": "Tesla T4",
+      "host_memory": {
+        "peak_process_rss_bytes": 3879358464,
+        "process_pss_bytes": 3416378368
+      },
+      "mean_step_seconds": 0.09020830036667273,
+      "median_step_seconds": 0.08998763650015462,
+      "parameters": 2174232,
+      "peak_vram_bytes": 783197184,
+      "rule": "mlstm",
+      "slot": "1",
+      "state_bytes_per_sequence": 199728,
+      "status": "passed",
+      "supervisor_elapsed_seconds": 469.88689608999994,
+      "timeout_enforced_by": "parent_process",
+      "warmup_seconds": 406.39821980799934,
+      "weight_bytes": 8696928
+    }
+  ],
+  "interpretation": {
+    "scope": "memory rules in common shell; synthetic operational training benchmarks",
+    "language_quality_measured": false,
+    "fractal_benefit_measured": false,
+    "gated_delta_conclusion": "unqualified within compile/time budget; not evidence of architecture quality",
+    "compile_overhead_material": true,
+    "step_timing_excludes_warmup": true,
+    "cache_peak_is_sampled": true
+  },
+  "next_stage": {
+    "variants": [
+      "recurrent",
+      "hierarchy_independent",
+      "hierarchy_shared",
+      "transformer_two"
+    ],
+    "initial_seed_block": 241,
+    "context": 1024,
+    "effective_batch_size": 8,
+    "steps_per_training": 6000,
+    "target_seconds": 7200,
+    "max_seconds": 10800,
+    "readiness_note": "retain pinned qualified scientific source; review per-worker cache retention before running full Stage B matrix"
+  }
+}

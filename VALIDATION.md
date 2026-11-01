@@ -1,5 +1,29 @@
 # Validação vigente — 31/10/2026
 
+## Auditoria da campanha 0025 — 31/10/2026
+
+[Relatório](docs/results/CAMPAIGN_0025.md),
+[dados estruturados](docs/results/campaign_0025_audit.json). Sem alteração de código,
+pesos, treinamento ou contratos científicos; somente análise/documentação.
+
+- ZIP75.152bytes,21membros, CRC íntegro; SHA-256 registrado.
+- 123 hashes de fontes/configurações conferem com objetos Git da revisão1c8ce2a;
+  fonte entre campanha/seleção coincide. Seleção recalculada: `mlstm`.
+- Quatro pilotos reais CUDA/Inductor aprovados no Kaggle (RWKV e mLSTM, duas T4):
+  forward/gradientes, finitude, causalidade e streaming registrados. Duas execuções
+  Gated Delta foram encerradas pelo supervisor em600,42s, sem falsa aprovação.
+- 30amostras por piloto aprovado: valores finitos/positivos e medianas conferidas.
+  Logs lidos integralmente; sem timeout absorvido/traceback/codegen error/fallback.
+- Testes CPU registrados no Kaggle:51passed,6deselected,36,53s. Isso não equivale
+  à execução de toda a suíte CUDA de hierarquia, que permanece pendente para B.
+- Cache: pico amostrado927,95MiB,4,696GiB acumulados removidos, limite não excedido.
+  Checkout shallow3,39MiB; política de remoção declarada, sem recibo posterior no ZIP.
+- Tempo registrado55,17min. Nenhum treino científico, NLL ou teste reservado.
+
+Não foram repetidos testes locais de treinamento: não houve alteração de código.
+Nenhuma nova GPU foi usada localmente. A fonte científica qualificada permanece
+fixada e não foi modificada para registrar esta auditoria.
+
 ## Campanha 0024, download e armazenamento — 31/10/2026
 
 Plano prévio: [auditoria/armazenamento](docs/PLAN_CAMPAIGN_0024_STORAGE.md).

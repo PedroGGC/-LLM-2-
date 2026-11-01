@@ -6,10 +6,11 @@ O [plano aprovado](PLAN_RECURRENT_FRACTAL.md) substitui a prioridade do ciclo5.
 Novos backbones: `state_recurrent` e `state_hierarchy`, regras Gated Delta/RWKV-7/
 mLSTM num shell comum; não são modelos completos dos artigos. Hierarquia com
 operações independentes versus núcleo compartilhado testa contribuição fractal.
-Transformer permanece referência externa. A [0024](results/CAMPAIGN_0024.md) executou
-pilotos nas duas T4: mLSTM foi mais rápido, porém todos os casos ultrapassaram a
-guarda de600s, absorvida pelo compilador. Qualificação corrigida pendente; não há
-resultado de qualidade novo. MC/GRM/TTT/ACT permanecem candidatos separados.
+Transformer permanece referência externa. A [0025](results/CAMPAIGN_0025.md)
+qualificou mLSTM e RWKV nas duas T4 com guarda externa; Gated Delta excedeu600s.
+mLSTM selecionado:93,43/89,99ms por passo,746,92MiB de VRAM. Etapa A concluída;
+não há resultado de qualidade novo. Antes de executar B, revisar retenção de cache
+entre seus workers. MC/GRM/TTT/ACT permanecem candidatos separados.
 Ver [operação](RECURRENT_RUN.md) e [fichas/adaptações](RECURRENT_CANDIDATES.md).
 
 ## Evidência histórica e próxima operação anterior

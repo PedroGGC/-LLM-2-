@@ -8,7 +8,11 @@ não componentes obrigatórios. Base sólida não exige vitória do FLRM antigo.
 
 Implementação/limites: [operação](docs/RECURRENT_RUN.md),
 [fichas](docs/RECURRENT_CANDIDATES.md), [validação real](VALIDATION.md).
-Seleção na T4 ainda pendente; CPU não escolhe plataforma. Sem novo treino científico.
+[Etapa A concluída na0025](docs/results/CAMPAIGN_0025.md): mLSTM qualificado nas duas
+T4, RWKV também aprovado; Gated Delta excedeu o orçamento de compilação. Próxima
+etapa científica: quatro controles de hierarquia/sharing com mLSTM, começando por
+um bloco de seed. Revisar retenção de cache entre workers antes do script B.
+Sem novo treino científico de linguagem; não repetir qualificação já aprovada.
 
 ## Registro anterior — supersedido como próxima operação
 

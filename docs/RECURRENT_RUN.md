@@ -1,9 +1,10 @@
 # Executar seleção recorrente e experimento fractal
 
 31/10/2026. [Plano aprovado](PLAN_RECURRENT_FRACTAL.md), [fichas](RECURRENT_CANDIDATES.md).
-Etapas A/B implementadas. A [auditoria da0024](results/CAMPAIGN_0024.md) encontrou
-timeouts absorvidos pelo compilador: mLSTM é candidato, mas a qualificação limpa
-continua pendente. A nova célula requalifica antes de qualquer treino de corpus.
+Etapa A concluída na [0025](results/CAMPAIGN_0025.md): mLSTM qualificado nas duas
+T4. Não repetir a célula03 agora; ela permanece para reprodução. Etapa B é a próxima
+pergunta científica, após revisar descarte de cache entre seus workers, pois o
+limite2GiB pode interromper a acumulação de várias variantes. Sem novo treino de corpus.
 Nenhum treino de produção é iniciado na instalação ou sem `--execute`.
 
 ## A: qualificação de plataforma
@@ -54,6 +55,11 @@ O uso do atributo HTML está documentado no
 [MDN](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/a#download).
 
 ## B: hierarquia e compartilhamento
+
+Prontidão científica: mLSTM selecionado. Prontidão operacional: revisar retenção
+por worker antes de lançar o script B; ver a pendência detalhada na auditoria0025.
+Os comandos abaixo documentam o runner existente; não comprovam que a matriz
+ampla já foi validada na T4 nem que caberá numa única sessão.
 
 Nova sessão, mesmo código/ambiente da seleção, com o `platforms.json` preservado:
 
