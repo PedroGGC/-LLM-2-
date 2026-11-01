@@ -33,7 +33,15 @@ isoladas. Manter hipótese fractal; não promover esta implementação nem adici
 GRM/TTT/ACT automaticamente. Protocolo permanece congelado, seeds restantes pendentes.
 Relógio1h55min38s antes da exportação final; cache máximo amostrado1,124GiB,
 guarda sem violação. GPU/Inductor desta operação exercitados nas duas T4 na0027;
-pytest de preflight CUDA rodou apenas naGPU0. Tensores finais não recebidos.
+pytest de preflight CUDA rodou apenas naGPU0. Tensores finais não acompanhavam
+o ZIP de resultados.
+
+Entrega seguinte: [diagnóstico pós-treino](STATE_DIAGNOSTIC_RUN.md),11leituras de
+quatro pesos da241, sem treino. Nova operação separada usa a fonte científica
+original; inspeção de componentes e intervenções de leitura, sem mudar backbone.
+O backup de checkpoints foi localizado localmente depois da auditoria: quatro
+hashes reais/safetensors e contagens únicas conferidos. Sem avaliação científica
+local desses pesos, pois o ambiente local difere do Kaggle. Diagnóstico T4 pendente.
 
 ## Evidência histórica e próxima operação anterior
 

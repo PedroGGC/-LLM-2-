@@ -42,6 +42,11 @@ restantes continuam pendentes. Hipótese fractal e candidatos futuros permanecem
 Sessão registrada1h55min38s antes da exportação final, cache máximo amostrado1,124GiB;
 nenhuma violação da guarda de armazenamento registrada.
 
+A [próxima operação](docs/STATE_DIAGNOSTIC_RUN.md) avalia os pesos da0027 em11
+condições, sem treino novo. Duas T4, execução eager sem cache de compilação,
+limite de duas horas e um ZIP pequeno. Preserve a pasta0027 ou seu backup de
+checkpoints; `results.zip` sozinho não contém os pesos necessários.
+
 ## Evidência histórica — FLRM com atenção, contexto256
 
 A [campanha 0023](docs/results/CAMPAIGN_0023.md) concluiu e auditou 18 treinos,

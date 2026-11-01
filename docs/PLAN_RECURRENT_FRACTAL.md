@@ -46,6 +46,11 @@ depois controle somente fino e uma alteração isolada, com protocolo próprio d
 antes de treinar. Fractal permanece hipótese explícita; nenhuma nova tecnologia
 entra automaticamente. Geração/retenção não foram medidas; não extrapolar treino.
 
+Próxima entrega: [diagnóstico congelado](STATE_DIAGNOSTIC_RUN.md),11leituras nos
+quatro checkpoints já treinados, antes de uma nova campanha. Não altera a matrizB
+nem implementa gate/compressão aprendida. Ambiente/dados/fontes/pesos originais
+verificados; objetivo é decidir qual controle treinado isolará a limitação.
+
 ## Etapas
 
 A. Fichas dos três operadores recorrentes, referências sequenciais, execução por

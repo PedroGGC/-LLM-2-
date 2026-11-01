@@ -1,5 +1,39 @@
 # Validação vigente — 01/11/2026
 
+## Diagnóstico congelado da0027 — próxima operação
+
+[Escopo/riscos/aceitação prévios](docs/PLAN_STATE_DIAGNOSTIC.md),
+[instruções](docs/STATE_DIAGNOSTIC_RUN.md). Modelo/treino científicos originais
+permanecem1c8ce2a; nova operação é executada como arquivo separado.
+
+- `python -m pytest -q tests/test_state_diagnostic.py tests/test_state_diagnostic_bootstrap.py`:
+  **18passed,35,36s,exit0**, no Python3.12.2/Torch2.14.1+cpu local, `PYTHONPATH=src`.
+- Integração extrai Git archive1c8ce2a para diretório novo, fabrica quatro pesos
+  CPU/T17 e dados por documento, depois executa o novo operador contra esse pacote
+  original em subprocessos. Quatro jobs/11condições, zero optimizer-steps, NLL
+  original reproduzida e um ZIP sem pesos/pickle. Isso é smoke de engenharia, não
+  resultado de linguagem ou equivalência CUDA dos checkpoints reais.
+- Falha de reprodução injetada exporta ZIP parcial/JSON não reproduzido e mantém
+  pesos originais. Testes cobrem causalidade das intervenções, reconstrução da
+  hierarquia, perdas/contagens por posição, RNG/modos/pesos inalterados, hooks
+  removidos em falha, deadline/cobertura, hash/config/fontes/versões e caminhos.
+- Restauração inclui somente safetensors/metadados, sem desserializar pickle.
+  Limpeza retira somente os dois arquivos próprios, sem exclusão recursiva;
+  origem/backup e alvos externos preservados. Links/ancestrais vinculados bloqueados.
+- Bootstrap simulado verifica pesos antes de instalar, mantém `PYTHONPATH` antigo,
+  recusa fontes divergentes e passa o orçamento incluindo setup. Download embutido
+  reutiliza o helper científico já fixado. Não há compilação ou benchmark novo.
+- Backup real localizado:92.880.997bytes,23membros, CRC íntegro, SHA-256
+  `2b4724f97c012876334d0776fb89ee50d564a17566328563603c630f9bebc076`.
+  Os quatro hashes de pesos/metadados reais conferem com a referência. Cabeçalhos
+  safetensors enumeram2.174.232/2.174.232/1.136.652/2.164.992parâmetros únicos.
+  Cópias temporárias dessa conferência foram removidas; ZIP original preservado.
+
+Limitações: nenhuma avaliação científica dos pesos reais localmente, nenhum teste
+CUDA novo, nenhuma velocidade T4 alegada. A execução Kaggle deverá repetir a NLL
+original em5e-5 antes de interpretar intervenções. Suite completa não repetida;
+nenhuma alteração de matemática, treino ou contratos de retomada.
+
 ## Auditoria da campanha 0027
 
 [Relatório](docs/results/CAMPAIGN_0027.md),
