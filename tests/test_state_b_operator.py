@@ -179,4 +179,3 @@ def test_real_stage_b_uses_pinned_scientific_worker(training_config,tmp_path):
     assert not list(tmp_path.glob("*-midway-*.zip"))
     report=json.loads((output/"report/report.json").read_text())
     assert report["operator"]["scientific_revision"]==bootstrap.SCIENTIFIC_REVISION
-

@@ -12,6 +12,7 @@ Python local3.12.2, Torch2.14.1+cpu, Windows, instalação direta, `PYTHONPATH=s
 | Primeiros testes operacionais, sem integração | 9passed,1deselected,5,09s |
 | Operação B + núcleo/protocolo/utilitários, com integração real | **76passed,6skipped,306,46s**,exit0 |
 | Após acrescentar somente campos/print de previsão e seeds restantes | **10passed,1deselected,5,19s**,exit0; integração não repetida após esse acréscimo de metadados |
+| Células B/A/limpeza por revisão e hash, após entrega fixada | **10passed,0,55s**,exit0; validação contra objetos Git e despacho simulado sem conta Kaggle |
 
 A integração extrai o Git archive da revisão científica1c8ce2a e executa o novo
 operador como arquivo em subprocesso com `PYTHONPATH` do worker antigo. Executou

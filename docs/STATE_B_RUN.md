@@ -8,6 +8,8 @@
 
 Use [05_testar_hierarquia_mlstm_kaggle.py](../scripts/05_testar_hierarquia_mlstm_kaggle.py)
 em uma célula com Internet e duas T4. O download é um botão embutido no notebook.
+Revisão operacional desta entrega:`2c834f7494a38376a3112338271fd790eb28974a`;
+SHA-256 do bootstrap:`1466a128261783eb1745fb1b71937472ada9c4ab5f699684ac1ea55783e68572`.
 Não execute a qualificação03 novamente. A limpeza04 é opcional se restarem
 temporários antigos; ela preserva dados, pesos e ZIPs.
 
