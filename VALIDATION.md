@@ -1,4 +1,52 @@
-# Validação vigente — 01/11/2026
+# Validação vigente — 03/11/2026
+
+## Campanha0029 — implementação dos controles de profundidade/leitura
+
+[Plano prévio](docs/PLAN_STATE_READOUT.md), [operação](docs/STATE_READOUT_RUN.md).
+Python local3.12.2/Torch2.14.1+cpu, Windows, `PYTHONPATH=src`. Fonte nova,
+nenhum treino científico iniciado localmente e nenhum checkpoint antigo migrado.
+
+- Modelos novos, primeira rodada CPU:11passed/2deselected,10,32s.
+- Operação/retenção/estimativas/histórico:6passed/1deselected,2,56s.
+- Integração real:1passed/6deselected,116,56s; a captura do teste em Windows
+  emitiu aviso de decodingCP1252. Corrigida a captura paraUTF-8 explícito.
+- Regressões antigas + controles/operador/bootstrap novos:
+  **77passed,8deselected,132,19s,exit0**, sem o aviso de captura. Comando:
+  `python -m pytest -q tests/test_state_recurrent.py tests/test_state_study.py tests/test_state_readout_models.py tests/test_state_readout_operations.py tests/test_state_readout_bootstrap.py -m 'not cuda'`.
+- Retomada também exercitada diretamente no ReadoutTrainer/DocumentBatchStream,
+  dropout ativo e acumulação2: **2passed,11deselected,4,53s**, próxima atualização,
+  pesos/otimizador/scheduler/sampler iguais à execução ininterrupta. Leitura
+  incompatível bloqueada. A nova validação por fase não altera RNG/treino.
+- Preflight portátil: fixture histórica7203bytes conferida contra Git1c8ce2a e
+  referência0027. Não depende de objeto histórico num clone shallow. CPU após
+  essa adaptação: **11passed,2deselected,6,48s**; acesso Git histórico simulado como
+  proibido nos testes de equivalência do default.
+
+Integração executa cinco treinos CPU/T17/4passos, dez pilotos frios/aquecidos,
+piloto concorrente, cinco perfis isolados e exportação real. Verifica20avaliações,
+contagens por fase, inicialização igual nas hierarquias, apenas checkpoint final,
+metadados intermediários preservados, par ZIP com cinco estados completos e uma
+fonte canônica. Segunda execução reutiliza os cinco jobs completos sem treinar.
+É smoke de engenharia, não resultado de linguagem ou velocidade.
+
+Falhas injetadas de worker e falta de espaço exportam par parcial íntegro e
+preservam os dados originais. Testes de admissão mantêm pares/horizontes; fonte,
+dados, configuração ou versões divergentes no histórico são bloqueados. ZIPs
+antigos não são varridos. Recibo de erro de preflight sobrevive à limpeza do
+checkout. Helpers de clone/limpeza conferidos contra bytes Git fixados.
+
+Defaults/forward/contagens de parâmetros conferem com a implementação histórica.
+Novos caminhos testados em causalidade, fronteiras, streaming forward+gradientes,
+finitude, memorização, embedding compartilhado e isolamento. Fonte nova usa versão2
+nos controles novos, sem enfraquecer contratos de checkpoint. Limpeza atua apenas
+em intermediários redundantes da execução nova e caches próprios de lane inativa.
+
+Limitações: nenhum CUDA/BF16/Inductor/A100 novo localmente. Os8deselected acima
+são testes CUDA, não aprovação GPU. A célula executará dois preflights CUDA novos
+naGPU0 e pilotos reais nas duas T4. Não repetir qualificação das três famílias nem
+reescrever relatório0025. Perfis em uma GPU por variante não confirmam eficiência
+nas duas GPUs. Suite completa fora desse conjunto não repetida. Uma seed e LR
+fixa são triagem; confirmação continua exigindo seeds novas/custo igualado.
 
 ## Auditoria da campanha0028
 

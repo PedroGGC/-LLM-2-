@@ -23,7 +23,13 @@ Este checkout contém a pesquisa fractal: **`experiment/fractal-lrm`**.
 A implementação fractal permanece isolada. O identificador `fractal` em uma configuração
 não instala esse código na branch comum. Confira `git branch --show-current` antes de trabalhar.
 
-## Estado atual — 01/11/2026
+## Estado atual — 03/11/2026
+
+Próxima entrega: [controle treinado de profundidade/leitura](docs/STATE_READOUT_RUN.md),
+cinco braços/seed251,6000passos, duas T4 e teto de duas horas. Uma célula fina
+treinada do zero e leitura imediata do grupo fechado, com controles atuais. Dados
+reutilizados, cache limitado e um par de ZIPs finais. A0029 ainda não foi executada
+no Kaggle; preflight CUDA é obrigatório antes do treino.
 
 A [campanha0028](docs/results/CAMPAIGN_0028.md) concluiu11avaliações congeladas,
 sem treino, em109,24s registrados; ZIP410KiB. Reproduziu as quatro perdas da0027

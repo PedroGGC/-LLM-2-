@@ -169,6 +169,7 @@ class ResearchConfig:
     state_execution: str = "chunked"
     state_chunk_size: int = 32
     state_factor: int = 4
+    state_readout: str = "next"
 
     def __post_init__(self):
         _types(self)
@@ -193,6 +194,10 @@ class ResearchConfig:
             raise ValueError("unknown state rule/execution")
         if not 1 <= self.state_chunk_size <= 64 or self.state_factor < 2:
             raise ValueError("state chunk size must be 1..64 and factor >=2")
+        if self.state_readout not in ("next", "immediate"):
+            raise ValueError("state_readout must be next|immediate")
+        if self.state_readout != "next" and self.architecture != "state_hierarchy":
+            raise ValueError("immediate state_readout requires state_hierarchy")
         if self.architecture.startswith("state_") and (
             self.jepa_weight or self.mtp_weight or self.intermediate_weight or self.lm_weight != 1
             or self.latent_steps or self.latent_warmup_steps or self.detach_every

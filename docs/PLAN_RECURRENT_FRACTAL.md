@@ -1,6 +1,6 @@
 # Arquitetura própria inspirada em fractais — plano aprovado
 
-31/10/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
+Atualizado03/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
 históricos. Implementação experimental em `experiment/fractal-lrm`.
 
 ## Objetivo e evidência
@@ -60,6 +60,14 @@ ler o resumo assim que o grupo fecha, mantendo a média e os controles. Nova mat
 deve ser pré-fixada antes de treinar; não alterar os critérios/seeds pendentes daB.
 Não diagnostica sozinho a compressão nem justifica combinar novas tecnologias.
 Compartilhamento permanece hipótese explícita. [Auditoria](results/CAMPAIGN_0028.md).
+
+Entrega0029 autorizada: [cinco controles treinados](STATE_READOUT_RUN.md), seed251,
+6000passos e teto2h. Separar profundidade fina e índice de leitura mantendo os
+controles. Receita inicial reaproveitada, sem nova varredura de taxas. Pares inteiros
+divididos entre sessões se necessário; nenhuma alegação de eficiência nas duas
+GPUs com perfil de cada braço em uma só placa. Estado T4 pendente. Fractal/sharing
+permanece para comparação com a organização escolhida; compressão aprendida é a
+próxima pergunta caso o controle de leitura não traga sinal suficiente.
 
 ## Etapas
 

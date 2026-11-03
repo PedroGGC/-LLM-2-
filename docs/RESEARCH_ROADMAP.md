@@ -2,6 +2,12 @@
 
 ## Roteiro vigente — arquitetura própria inspirada em fractais
 
+03/11/2026: [campanha0029 preparada](STATE_READOUT_RUN.md), cinco controles treinados
+para separar profundidade fina e leitura do resumo no fechamento do grupo. Seed251,
+6000passos e teto2h; CUDA real pendente. Próxima decisão: confirmar organização
+promissora e reavaliar compartilhamento, ou investigar compressão aprendida se o
+controle de leitura não trouxer sinal. Nenhum mecanismo adicional entra nesta rodada.
+
 O [plano aprovado](PLAN_RECURRENT_FRACTAL.md) substitui as prioridades históricas
 abaixo. Transformer é referência externa; o FLRM antigo permanece reproduzível,
 sem novas repetições previstas. Ciclo5 suspenso como próxima operação.

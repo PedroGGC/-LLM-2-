@@ -48,15 +48,17 @@ class StateRecurrentModel(Backbone):
     def __init__(self, config, research):
         super().__init__()
         self.config, self.research = config,research
-        if config.n_layers != 2:
-            raise ValueError("state controls require exactly two temporal levels/layers")
         self.hierarchy = research.architecture == "state_hierarchy"
+        if config.n_layers not in (1,2) or self.hierarchy and config.n_layers != 2:
+            raise ValueError("state recurrent supports one/two cells; hierarchy requires two levels")
         self.shared = self.hierarchy and research.share_scales
         self.factor = research.state_factor
+        self.memory_count = 2 if self.hierarchy else config.n_layers
+        self.architecture_version = 2 if config.n_layers == 1 or research.state_readout == "immediate" else 1
         self.embedding = nn.Embedding(config.vocab_size,config.d_model)
         TransformerLM._init_weights(self.embedding)
         self.cells = nn.ModuleList()
-        for _ in range(1 if self.shared else 2):
+        for _ in range(1 if self.shared else config.n_layers):
             cell=StateCell(config,research);cell.apply(TransformerLM._init_weights)
             nn.init.zeros_(cell.gates.bias)
             with torch.no_grad():
@@ -77,8 +79,8 @@ class StateRecurrentModel(Backbone):
             raise ValueError("state must be a SequenceState belonging to this document")
         if state is not None and self.training and self.config.dropout:
             raise ValueError("streaming with active dropout is unsupported; reset each training window")
-        if state is not None and len(state.memories)!=2:
-            raise ValueError("state requires two independent temporal memories")
+        if state is not None and len(state.memories)!=self.memory_count:
+            raise ValueError("state temporal memory count mismatch")
         if state is not None:
             expected=(input_ids.shape[0],self.config.n_heads,self.config.d_model//self.config.n_heads,
                       self.config.d_model//self.config.n_heads)
@@ -87,12 +89,16 @@ class StateRecurrentModel(Backbone):
                 matrix=memory[0] if isinstance(memory,tuple) else memory
                 if matrix.shape!=expected or matrix.device!=input_ids.device or matrix.dtype!=torch.float32:
                     raise ValueError("state batch/head/shape/device/dtype mismatch")
-        memories = (None,None) if state is None else state.memories
+        memories = (None,)*self.memory_count if state is None else state.memories
         x = self.embedding(input_ids)
         fine, first = self.cells[0](x,memories[0])
         if not self.hierarchy:
-            value, second = self.cells[1](fine,memories[1])
-            next_state = SequenceState((first,second))
+            if self.memory_count == 1:
+                value = fine
+                next_state = SequenceState((first,))
+            else:
+                value, second = self.cells[1](fine,memories[1])
+                next_state = SequenceState((first,second))
         else:
             pending = fine[:, :0] if state is None else state.pending
             previous = torch.zeros_like(fine[:,0]) if state is None else state.last_coarse
@@ -111,7 +117,8 @@ class StateRecurrentModel(Backbone):
                 last = coarse[:,-1].clone()
             else:
                 candidates = previous[:,None]; last = previous
-            indices = (offset+torch.arange(fine.shape[1],device=fine.device))//self.factor
+            advance = int(self.research.state_readout == "immediate")
+            indices = (offset+torch.arange(fine.shape[1],device=fine.device)+advance)//self.factor
             value = fine+candidates[:,indices]
             # Compact cache storage: a short slice must not retain the entire prefix buffer.
             next_state = SequenceState((first,second),all_fine[:,complete*self.factor:].clone(),last)
@@ -132,4 +139,4 @@ class StateRecurrentModel(Backbone):
         extra = c.d_model+c.n_heads if self.research.state_rule == "mlstm" else 0
         # Maximum pending group and last coarse are execution state, not parameters.
         hierarchy = self.factor*c.d_model if self.hierarchy else 0
-        return 4*(2*(matrix+extra)+hierarchy)
+        return 4*(self.memory_count*(matrix+extra)+hierarchy)

@@ -1,4 +1,10 @@
-# Estado científico e técnico — 01/11/2026
+# Estado científico e técnico — 03/11/2026
+
+Próxima operação: [campanha0029](STATE_READOUT_RUN.md), cinco braços/seed251/
+6000passos, teto2h. Sem mecanismos adicionais. State_readout=immediate e controle
+de1célula, com defaults next/2preservados. Testes CPU registrados emVALIDATION.md;
+preflights/pilotos/treinos T4 pendentes. Nenhuma qualidade nova após0028.
+Qualificação0025 não é reescrita para a nova fonte.
 
 ## Direção vigente: arquitetura própria inspirada em fractais
 
