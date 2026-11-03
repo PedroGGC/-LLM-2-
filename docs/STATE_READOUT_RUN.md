@@ -1,9 +1,12 @@
 # Campanha0029 — treino controlado de profundidade e leitura
 
 03/11/2026. [Plano prévio](PLAN_STATE_READOUT.md), [diagnóstico0028](results/CAMPAIGN_0028.md).
-Use `scripts/07_testar_profundidade_e_leitura_kaggle.py` com Internet e duas T4.
+Use [07_testar_profundidade_e_leitura_kaggle.py](../scripts/07_testar_profundidade_e_leitura_kaggle.py) com Internet e duas T4.
 Começa em0029 e avança se o número estiver reservado. Limite7200s desde o início
 da célula, incluindo setup, com300s de reserva para exportação. Pode terminar antes.
+
+Revisão fixada:`77b2058e2129f7fcea6f3bf96b4fca4420dddbf9`.
+SHA-256 do bootstrap:`3990b8e501c5acf2a88cb25ac13bdada78a61ab53054a6bdcc9cfc470cb8e1b0`.
 
 ## Matriz e protocolo
 

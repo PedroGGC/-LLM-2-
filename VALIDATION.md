@@ -21,6 +21,9 @@ nenhum treino científico iniciado localmente e nenhum checkpoint antigo migrado
   referência0027. Não depende de objeto histórico num clone shallow. CPU após
   essa adaptação: **11passed,2deselected,6,48s**; acesso Git histórico simulado como
   proibido nos testes de equivalência do default.
+- Célula07 fixada em77b2058: **4passed,0,13s,exit0**. SHA literal verificado contra
+  Git; payload alterado bloqueado, execução desativada sem rede e despacho/download
+  simulados. Não executa conta Kaggle local.
 
 Integração executa cinco treinos CPU/T17/4passos, dez pilotos frios/aquecidos,
 piloto concorrente, cinco perfis isolados e exportação real. Verifica20avaliações,
