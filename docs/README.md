@@ -1,12 +1,13 @@
 # Documentação
 
-Atualizado em 03/11/2026. Comece pelos documentos vigentes abaixo. A implementação
+Atualizado em 04/11/2026. Comece pelos documentos vigentes abaixo. A implementação
 fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém esse módulo.
 
 | Documento | Finalidade |
 |---|---|
 | [Plano aprovado: recorrência/fractal](PLAN_RECURRENT_FRACTAL.md) | Hipóteses, candidatos, riscos, critérios e etapas condicionais |
-| [Campanha0029: profundidade/leitura](STATE_READOUT_RUN.md) | Próximo treino:cinco braços/seed251/6000passos, teto2h, cache e ZIPs limitados |
+| [Campanha0029: resultados](results/CAMPAIGN_0029.md) | Cinco treinos auditados; leitura imediata ajuda, hierarquia ainda inferior; próxima hipótese de compressão |
+| [Campanha0029: operação preservada](STATE_READOUT_RUN.md) | Reprodução dos cinco braços/seed251/6000passos, teto2h, cache e ZIPs limitados |
 | [Operação vigente: seleção e hierarquia](RECURRENT_RUN.md) | Etapas A/B, duas sessões distintas, meta2h/teto3h |
 | [Etapa B: primeiro bloco mLSTM/fractal](STATE_B_RUN.md) | Quatro braços seed241, ciência qualificada congelada e cache por GPU |
 | [Fichas dos candidatos](RECURRENT_CANDIDATES.md) | Fontes fixadas, equações e adaptações; não reproduções dos modelos completos |

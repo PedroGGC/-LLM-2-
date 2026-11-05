@@ -1,6 +1,6 @@
 # Arquitetura própria inspirada em fractais — plano aprovado
 
-Atualizado03/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
+Atualizado04/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
 históricos. Implementação experimental em `experiment/fractal-lrm`.
 
 ## Objetivo e evidência
@@ -65,9 +65,24 @@ Entrega0029 autorizada: [cinco controles treinados](STATE_READOUT_RUN.md), seed2
 6000passos e teto2h. Separar profundidade fina e índice de leitura mantendo os
 controles. Receita inicial reaproveitada, sem nova varredura de taxas. Pares inteiros
 divididos entre sessões se necessário; nenhuma alegação de eficiência nas duas
-GPUs com perfil de cada braço em uma só placa. Estado T4 pendente. Fractal/sharing
+GPUs com perfil de cada braço em uma só placa. À entrega, T4 pendente. Fractal/sharing
 permanece para comparação com a organização escolhida; compressão aprendida é a
 próxima pergunta caso o controle de leitura não traga sinal suficiente.
+
+Resultado0029: [cinco braços concluídos](results/CAMPAIGN_0029.md), uma seed251.
+Imediata1,427357contra seguinte1,436200NLL; melhora0,008843, mas continua acima do
+simples1,315631eTransformer1,271962. Fino treinado1,474430: ampliar ajuda frente a
+uma célula, sem substituir a segunda célula por byte. A pior posição desloca-se
+da quarta para a terceira, sem eliminar a dependência do grupo. Compartilhamento
+não foi retestado. Não repetir automaticamente a matriz antiga nem confirmar
+longamente um candidato ainda inferior. Próxima proposta: separar compressão
+média, último estado contextualizado e compressão aprendida pequena, mantendo
+leitura imediata/núcleo/fator/ritmo e contabilizando parâmetros/operações reais.
+Não se provou que a média seja a única limitação; frequência/comunicação seguem
+hipóteses concorrentes. Novo protocolo depende de definição própria antes do
+treino. Depois reavaliar sharing na organização candidata. MC/GRM,TTT eACT
+mantêm condições próprias; não serão adicionados em conjunto para tentar resgatar
+esta implementação. Hipótese fractal e plano de comparação externa permanecem.
 
 ## Etapas
 

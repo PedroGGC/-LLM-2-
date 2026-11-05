@@ -1,0 +1,170 @@
+{
+  "archive": "llm2-campaign-0029-results.zip",
+  "archive_sha256": "dd2c0461e5b7106134c0c6daf77e0a51d38e6e7ccfea74296492b7fe22085e29",
+  "archive_bytes": 4303546,
+  "members": 234,
+  "unpacked_bytes": 9733072,
+  "revision": "77b2058e2129f7fcea6f3bf96b4fca4420dddbf9",
+  "protocol_id": "de9ae092f6eb4ba80847573a5d419ddda91284090fb4c21586b8612f59845155",
+  "verified_bootstrap_file_hashes": 325,
+  "verified_source_snapshot_files": 132,
+  "dataset_manifest_sha256": "0f187e0c7a8867d2c0539e72f507bfdf5993f843a23e9cf0a3fa831a768836c0",
+  "dataset_files_declared": {
+    "test.bin": "ba26e93bca72e59dbd2f12a6b1758fdafb97ce3b652310cb44de218ff91536cf",
+    "tokenizer.json": "f88f84a387d00bb8027db376d50fff07c86c4ee137f1678351521fefe0f8d252",
+    "train.bin": "0d4d9109a5acd6820a3a050a20da2f2073a3d5f0da2b25138c9c47a9bd28906c",
+    "val.bin": "b2ce29824a4e56d51d396231f467c22e0ac3cb8916f5a01c69833207f4340b97"
+  },
+  "dataset_payloads_available": false,
+  "checkpoint_tensors_available": false,
+  "local_model_evaluation": false,
+  "status": "complete",
+  "seeds": [
+    251
+  ],
+  "complete_runs": 5,
+  "optimizer_steps": 30000,
+  "training_targets_per_run": 49152000,
+  "full_evaluations": 10,
+  "subset_evaluations": 10,
+  "session_budget": {
+    "elapsed_seconds": 4233.206695929,
+    "export_reserve_seconds": 300.0,
+    "limit_seconds": 7200.0,
+    "scope": "bootstrap/setup + tests + pilot + training + evaluation; export uses reserve",
+    "work_remaining_seconds": 2666.793302448
+  },
+  "storage_budget": {
+    "cache_limit_bytes": 2147483648,
+    "exceeded": null,
+    "peak_cache_bytes": 1016838980,
+    "reserve_bytes": 2147483648,
+    "sampling_seconds": 5.0
+  },
+  "environment": {
+    "cpu": "x86_64",
+    "cublas_workspace_config": ":4096:8",
+    "cuda_devices": [
+      {
+        "logical_index": 0,
+        "name": "Tesla T4",
+        "total_memory_bytes": 15636037632,
+        "uuid": "d9f048c3-a102-7396-bf61-1461642c93ec"
+      },
+      {
+        "logical_index": 1,
+        "name": "Tesla T4",
+        "total_memory_bytes": 15636037632,
+        "uuid": "a43dac6a-c944-2bc0-7097-585f84bb22d7"
+      }
+    ],
+    "cuda_version": "13.0",
+    "cuda_visible_devices": null,
+    "cudnn_version": 92700,
+    "device": "Tesla T4",
+    "packages": {
+      "PyYAML": "6.0.3",
+      "numpy": "2.1.3",
+      "pytest": "8.4.2",
+      "safetensors": "0.8.0",
+      "tensorboard": "2.21.0",
+      "tokenizers": "0.23.3",
+      "torch": "2.11.0+cu130"
+    },
+    "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+    "python": "3.13.16 (main, Oct  1 2026, 15:40:24) [GCC 13.3.0]"
+  },
+  "contrasts": {
+    "hierarchy_immediate-minus-hierarchy_next": -0.008843205780092678,
+    "fine_only-minus-recurrent": 0.15879958840609687,
+    "hierarchy_immediate-minus-fine_only": -0.04707380556248708,
+    "hierarchy_immediate-minus-recurrent": 0.11172578284360979,
+    "hierarchy_immediate-minus-transformer_two": 0.15539465569089939,
+    "recurrent-minus-transformer_two": 0.0436688728472896
+  },
+  "rows": [
+    {
+      "variant": "hierarchy_next",
+      "seed": 251,
+      "validation_loss": 1.4361997939296678,
+      "bits_per_byte": 2.071998320428083,
+      "parameters": 2174232,
+      "median_step_ms": 63.10692450006172,
+      "gpu_slot": "0",
+      "train_peak_vram_mib": 513.2177734375,
+      "state_bytes_per_sequence": 205872,
+      "train_wall_seconds_including_startup": 430.228659416985,
+      "gpu_joules_per_training_target": 0.0005581085205078125,
+      "checkpoint_model_sha256_declared": "d7214f02b434e29dfec3cb24fdc6977fd912e8b6b45eaef338dabb276be3f3d5"
+    },
+    {
+      "variant": "hierarchy_immediate",
+      "seed": 251,
+      "validation_loss": 1.4273565881495751,
+      "bits_per_byte": 2.0592402713035827,
+      "parameters": 2174232,
+      "median_step_ms": 64.81510349976816,
+      "gpu_slot": "1",
+      "train_peak_vram_mib": 513.2177734375,
+      "state_bytes_per_sequence": 205872,
+      "train_wall_seconds_including_startup": 430.05791601900955,
+      "gpu_joules_per_training_target": 0.0005564243942155023,
+      "checkpoint_model_sha256_declared": "7346479f78947b10f0fd8702d9e53bb013898a7ba5d40e2695aed8f481eaa995"
+    },
+    {
+      "variant": "recurrent",
+      "seed": 251,
+      "validation_loss": 1.3156308053059653,
+      "bits_per_byte": 1.8980540384556697,
+      "parameters": 2174232,
+      "median_step_ms": 92.99978250010099,
+      "gpu_slot": "0",
+      "train_peak_vram_mib": 738.38427734375,
+      "state_bytes_per_sequence": 199728,
+      "train_wall_seconds_including_startup": 1158.9706413259978,
+      "gpu_joules_per_training_target": 0.00081073626648152,
+      "checkpoint_model_sha256_declared": "07cfbc2759df1b6ff658af3952beb179a7b857af7360c5f43fcac6eb94e1a7a5"
+    },
+    {
+      "variant": "fine_only",
+      "seed": 251,
+      "validation_loss": 1.4744303937120622,
+      "bits_per_byte": 2.127153417144354,
+      "parameters": 1136652,
+      "median_step_ms": 51.22920849998991,
+      "gpu_slot": "1",
+      "train_peak_vram_mib": 436.55810546875,
+      "state_bytes_per_sequence": 99864,
+      "train_wall_seconds_including_startup": 780.9818372090094,
+      "gpu_joules_per_training_target": 0.00042091423217999077,
+      "checkpoint_model_sha256_declared": "771f5f5c441642581c9a9f95daee5fc5085d3daf4d38472894a1f2f916622faa"
+    },
+    {
+      "variant": "transformer_two",
+      "seed": 251,
+      "validation_loss": 1.2719619324586757,
+      "bits_per_byte": 1.8350531721576742,
+      "parameters": 2164992,
+      "median_step_ms": 63.904685499892366,
+      "gpu_slot": "0",
+      "train_peak_vram_mib": 482.935546875,
+      "state_bytes_per_sequence": null,
+      "train_wall_seconds_including_startup": 403.81558347099326,
+      "gpu_joules_per_training_target": 0.0005619184705946181,
+      "checkpoint_model_sha256_declared": "a903ee099aefe1d08177527680b1aeb408addc3d480d0c5f1ba7e4aa465d1a37"
+    }
+  ],
+  "initialization_paired": true,
+  "test_evaluated": false,
+  "cpu_preflight": "11 passed, 2 deselected, 15.59s",
+  "cuda_preflight": "2 passed, 11 deselected, 84.57s; physical GPU0",
+  "timing_scope": "isolated post-training optimizer clones; one assigned GPU per arm; 30 steps",
+  "limitations": [
+    "fixed LR recipe; new controls not individually tuned",
+    "equal targets, not iso-compute",
+    "isolated profiles on one assigned GPU per arm; no two-GPU efficiency confirmation",
+    "historical campaign timings remain separate; no generation benchmark",
+    "one seed, no confidence interval"
+  ],
+  "log_flags": []
+}

@@ -1,10 +1,15 @@
-# Estado científico e técnico — 03/11/2026
+# Estado científico e técnico — 04/11/2026
 
-Próxima operação: [campanha0029](STATE_READOUT_RUN.md), cinco braços/seed251/
-6000passos, teto2h. Sem mecanismos adicionais. State_readout=immediate e controle
-de1célula, com defaults next/2preservados. Testes CPU registrados emVALIDATION.md;
-preflights/pilotos/treinos T4 pendentes. Nenhuma qualidade nova após0028.
-Qualificação0025 não é reescrita para a nova fonte.
+A [campanha0029](results/CAMPAIGN_0029.md) concluiu cinco braços/seed251/6000passos
+nas duas T4, em1h10min33s antes da exportação. NLL Transformer1,271962, recorrente
+1,315631, hierarquia imediata1,427357, seguinte1,436200, fino1,474430. Leitura
+imediata melhora0,008843; amplo ajuda frente ao fino, sem superar duas células por
+byte. A dependência de posição permanece. Não há vantagem fractal confirmada nem
+novo controle de sharing. CPU11passed eCUDA2passed no preflight da nova fonte.
+Recomendação: encerrar esta triagem e investigar compressão média/último estado/
+aprendida, com leitura imediata fixa. Proposta ainda não implementada. Defaults
+históricos e qualificação0025 preservados; teste reservado intacto. Pesos reais
+da0029não acompanham o ZIP fornecido, apenas seus metadados/hashes declarados.
 
 ## Direção vigente: arquitetura própria inspirada em fractais
 

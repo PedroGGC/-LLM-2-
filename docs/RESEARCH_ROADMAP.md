@@ -2,11 +2,13 @@
 
 ## Roteiro vigente — arquitetura própria inspirada em fractais
 
-03/11/2026: [campanha0029 preparada](STATE_READOUT_RUN.md), cinco controles treinados
-para separar profundidade fina e leitura do resumo no fechamento do grupo. Seed251,
-6000passos e teto2h; CUDA real pendente. Próxima decisão: confirmar organização
-promissora e reavaliar compartilhamento, ou investigar compressão aprendida se o
-controle de leitura não trouxer sinal. Nenhum mecanismo adicional entra nesta rodada.
+04/11/2026: [campanha0029 concluída](results/CAMPAIGN_0029.md), cinco controles,
+seed251/6000passos. Leitura imediata melhora0,008843NLL, mas hierarquia continua
+inferior ao simples/Transformer; fino treinado também perde. Amplo ajuda frente
+ao fino; dependência de posição persiste. Próxima proposta: comparar compressão
+média, último estado e compressão aprendida, com leitura imediata fixa, antes de
+novo sharing ou memórias/adaptação. Não implementado; exige protocolo próprio.
+Não repetir automaticamente as matrizes históricas nem promover uma seed a vitória.
 
 O [plano aprovado](PLAN_RECURRENT_FRACTAL.md) substitui as prioridades históricas
 abaixo. Transformer é referência externa; o FLRM antigo permanece reproduzível,

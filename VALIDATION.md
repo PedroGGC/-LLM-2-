@@ -1,4 +1,27 @@
-# Validação vigente — 03/11/2026
+# Validação vigente — 04/11/2026
+
+## Campanha0029 — evidência recebida do Kaggle
+
+[Auditoria](docs/results/CAMPAIGN_0029.md): ZIP íntegro,234membros/4.303.546bytes.
+Conferidos325hashes do checkout contra Git77b2058,132arquivos do snapshot, protocolo,
+configurações, parâmetros únicos/estados por meta/fórmula, cinco inicializações
+novas e igualdade dos dois hashes iniciais da hierarquia. Cinco treinos completos
+6000passos/seed251, dez avaliações completas e dez de subconjunto; métricas/perdas/
+posições/relatório reconciliados. Bins não fornecidos; hashes declarados iguais ao
+corpus fixado, tokenizer rehashado. Pesos reais não fornecidos: somente metadados,
+hashes e retenção final conferidos, sem carregar pickle ou realizar avaliação local.
+
+Preflights reais registrados no bundle: CPU11passed/2deselected,15,59s; CUDA
+2passed/11deselected,84,57s naGPU0. Ambos os slots T4 exercitaram treinos e pilotos
+FP32/Inductor. Avisos de depreciação, sem traceback/OOM. Teste reservado intacto.
+Perfis finais isolados30amostras/uma GPU por braço; energia NVML de placa em30s,
+host/compilação excluídos. Sem geração, recall, crossover de placas, IC entre seeds
+ou custo igualado. Inferioridade local da hierarquia não prova falha geral fractal.
+
+Auditoria local reexecutável em `artifacts/audits/campaign_0029/audit.py`, sem
+extração de arquivos nem avaliação de modelos. Exit0; gerou JSON/CSV e figura
+inspecionada visualmente. Nenhuma fórmula de treino ou configuração foi alterada
+nesta auditoria; testes de implementação já aprovados não foram repetidos.
 
 ## Campanha0029 — implementação dos controles de profundidade/leitura
 

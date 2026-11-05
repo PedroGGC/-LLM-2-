@@ -23,21 +23,27 @@ Este checkout contém a pesquisa fractal: **`experiment/fractal-lrm`**.
 A implementação fractal permanece isolada. O identificador `fractal` em uma configuração
 não instala esse código na branch comum. Confira `git branch --show-current` antes de trabalhar.
 
-## Estado atual — 03/11/2026
+## Estado atual — 04/11/2026
 
-Próxima entrega: [controle treinado de profundidade/leitura](docs/STATE_READOUT_RUN.md),
-cinco braços/seed251,6000passos, duas T4 e teto de duas horas. Uma célula fina
-treinada do zero e leitura imediata do grupo fechado, com controles atuais. Dados
-reutilizados, cache limitado e um par de ZIPs finais. A0029 ainda não foi executada
-no Kaggle; preflight CUDA é obrigatório antes do treino.
+A [campanha0029](docs/results/CAMPAIGN_0029.md) concluiu cinco treinos de6000passos,
+seed251, nas duas T4, em1h10min33s registrados antes da exportação. NLL final:
+Transformer1,271962; recorrente de duas células1,315631; hierarquia imediata1,427357;
+hierarquia seguinte1,436200; fino de uma célula1,474430. Leitura imediata ajuda
+0,008843, mas a hierarquia ainda não supera os controles. Amplo ajuda frente ao
+fino treinado, com mais parâmetros; a dependência da posição no grupo permanece.
+
+Próxima proposta: investigar compressão média versus último estado contextualizado
+e compressão aprendida pequena, com leitura imediata fixa. Depois reavaliar sharing
+na organização candidata. Não repetir automaticamente a triagem nem combinar
+memória/adaptação sem diagnóstico próprio. Hipótese fractal preservada; nenhuma
+vantagem confirmada. [Operação0029 preservada](docs/STATE_READOUT_RUN.md).
 
 A [campanha0028](docs/results/CAMPAIGN_0028.md) concluiu11avaliações congeladas,
 sem treino, em109,24s registrados; ZIP410KiB. Reproduziu as quatro perdas da0027
 com erro máximo2,61e-9. Reduzir/silenciar o ramo amplo piorou ambas as hierarquias.
 Há sinal descritivo de perda maior na quarta posição dos grupos; o código adia
-para o byte seguinte a leitura do grupo recém-completado. A próxima pergunta
-recomendada é um controle treinado do momento de leitura e de profundidade fina,
-sem acrescentar tecnologias nem concluir causalidade a partir desse padrão.
+para o byte seguinte a leitura do grupo recém-completado. Isso motivou o controle
+treinado de leitura e profundidade fina da0029, sem acrescentar mecanismos.
 
 A [campanha 0027](docs/results/CAMPAIGN_0027.md) concluiu o primeiro bloco da etapa B:
 quatro treinos de6000passos, seed241, T1024/B8, mLSTM e Transformer. NLL final:
