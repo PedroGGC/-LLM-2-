@@ -6,6 +6,7 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 | Documento | Finalidade |
 |---|---|
 | [Plano aprovado: recorrência/fractal](PLAN_RECURRENT_FRACTAL.md) | Hipóteses, candidatos, riscos, critérios e etapas condicionais |
+| [Proposta: primeira vantagem verificável](PROPOSAL_FIRST_MEASURABLE_ADVANTAGE.md) | Competição de recuperação/recursos com memória e Fibonacci; ainda sem implementação ou script executável |
 | [Campanha0029: resultados](results/CAMPAIGN_0029.md) | Cinco treinos auditados; leitura imediata ajuda, hierarquia ainda inferior; próxima hipótese de compressão |
 | [Campanha0029: operação preservada](STATE_READOUT_RUN.md) | Reprodução dos cinco braços/seed251/6000passos, teto2h, cache e ZIPs limitados |
 | [Operação vigente: seleção e hierarquia](RECURRENT_RUN.md) | Etapas A/B, duas sessões distintas, meta2h/teto3h |
