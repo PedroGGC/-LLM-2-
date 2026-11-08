@@ -1,12 +1,14 @@
 # Documentação
 
-Atualizado em 04/11/2026. Comece pelos documentos vigentes abaixo. A implementação
+Atualizado em 08/11/2026. Comece pelos documentos vigentes abaixo. A implementação
 fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém esse módulo.
 
 | Documento | Finalidade |
 |---|---|
 | [Plano aprovado: recorrência/fractal](PLAN_RECURRENT_FRACTAL.md) | Hipóteses, candidatos, riscos, critérios e etapas condicionais |
-| [Proposta: primeira vantagem verificável](PROPOSAL_FIRST_MEASURABLE_ADVANTAGE.md) | Competição de recuperação/recursos com memória e Fibonacci; ainda sem implementação ou script executável |
+| [Memória consultável e Fibonacci](MEMORY_RECALL_RUN.md) | Nova operação autorizada; sete braços, acurácia/custos, até2h, sem corpus externo |
+| [Plano de implementação da memória](PLAN_MEMORY_RECALL_IMPLEMENTATION.md) | Escopo, gerador, controles, orçamento e critérios prévios |
+| [Proposta: primeira vantagem verificável](PROPOSAL_FIRST_MEASURABLE_ADVANTAGE.md) | Proposta original preservada; implementação autorizada em08/11 descrita acima |
 | [Campanha0029: resultados](results/CAMPAIGN_0029.md) | Cinco treinos auditados; leitura imediata ajuda, hierarquia ainda inferior; próxima hipótese de compressão |
 | [Campanha0029: operação preservada](STATE_READOUT_RUN.md) | Reprodução dos cinco braços/seed251/6000passos, teto2h, cache e ZIPs limitados |
 | [Operação vigente: seleção e hierarquia](RECURRENT_RUN.md) | Etapas A/B, duas sessões distintas, meta2h/teto3h |

@@ -9,6 +9,9 @@ def build_backbone(config):
     if research is None or research.architecture == "transformer":
         return TransformerLM(config.model)
     if research.architecture in ("state_recurrent", "state_hierarchy"):
+        if research.memory_pattern != "none":
+            from ..architectures.episodic import EpisodicHierarchy
+            return EpisodicHierarchy(config.model, research)
         from ..architectures.state_recurrent import StateRecurrentModel
         return StateRecurrentModel(config.model, research)
     if getattr(research, "paired_common_init", False):

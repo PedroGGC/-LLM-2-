@@ -170,6 +170,10 @@ class ResearchConfig:
     state_chunk_size: int = 32
     state_factor: int = 4
     state_readout: str = "next"
+    memory_pattern: str = "none"
+    memory_slots: int = 2048
+    memory_reads: int = 16
+    memory_dim: int = 96
 
     def __post_init__(self):
         _types(self)
@@ -198,6 +202,12 @@ class ResearchConfig:
             raise ValueError("state_readout must be next|immediate")
         if self.state_readout != "next" and self.architecture != "state_hierarchy":
             raise ValueError("immediate state_readout requires state_hierarchy")
+        if self.memory_pattern not in ("none", "all", "uniform", "binary", "fibonacci"):
+            raise ValueError("unknown episodic memory pattern")
+        if self.memory_slots < 2 or not 2 <= self.memory_reads <= self.memory_slots or self.memory_dim < 2:
+            raise ValueError("invalid memory capacity/read dimension")
+        if self.memory_pattern != "none" and (self.architecture != "state_hierarchy" or self.state_readout != "immediate"):
+            raise ValueError("episodic memory requires immediate state_hierarchy")
         if self.architecture.startswith("state_") and (
             self.jepa_weight or self.mtp_weight or self.intermediate_weight or self.lm_weight != 1
             or self.latent_steps or self.latent_warmup_steps or self.detach_every

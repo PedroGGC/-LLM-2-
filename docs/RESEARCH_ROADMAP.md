@@ -2,7 +2,13 @@
 
 ## Roteiro vigente — arquitetura própria inspirada em fractais
 
-04/11/2026: [campanha0029 concluída](results/CAMPAIGN_0029.md), cinco controles,
+08/11/2026: [bancada de memória/recuperação](MEMORY_RECALL_RUN.md) autorizada e
+implementada; sete braços, seeds271/272, dois ritmos compartilhados, banco completo
+e acessos uniforme/base2/Fibonacci. Acerto/custo em tarefa procedural antes de
+linguagem e escala; não demonstramos ainda retenção insuficiente. Compressão,
+esforço variável e alternativas do plano permanecem. Teto2h, matriz divisível.
+
+Histórico04/11/2026: [campanha0029 concluída](results/CAMPAIGN_0029.md), cinco controles,
 seed251/6000passos. Leitura imediata melhora0,008843NLL, mas hierarquia continua
 inferior ao simples/Transformer; fino treinado também perde. Amplo ajuda frente
 ao fino; dependência de posição persiste. Próxima proposta: comparar compressão

@@ -1,4 +1,58 @@
-# Validação vigente — 04/11/2026
+# Validação vigente — 08/11/2026
+
+## Memória consultável/Fibonacci — implementação e limites reais
+
+[Plano prévio](docs/PLAN_MEMORY_RECALL_IMPLEMENTATION.md),
+[operação](docs/MEMORY_RECALL_RUN.md). Python3.12.2/Torch2.14.1+cpu, Windows,
+`PYTHONPATH=src`. Nenhum treino científico de recuperação na T4 feito localmente.
+
+- Modelos/gerador/índices/causalidade/gradientes/contagens/finitude/memorização/
+  retomada: primeira rodada corrigida11passed/2deselected,7,71s. Depois incluídos
+  streaming com banco cheio, referência sequencial e contagem de custo de validação.
+- Suíte focada e regressões de estados, controles0029, Trainer e configurações:
+  **85passed,12deselected,74,07s,exit0**, excluindo integração longa e CUDA.
+  Comando:`python -m pytest -q tests/test_recall_models.py tests/test_recall_operations.py tests/test_recall_bootstrap.py tests/test_state_recurrent.py tests/test_state_readout_models.py tests/test_training.py tests/test_research_configs.py -m 'not cuda' -k 'not full_cpu_engineering'`.
+- Integração real CPU:`python -m pytest -q tests/test_recall_operations.py -k full_cpu`:
+  **1passed,6deselected,245,35s,exit0**. Sete treinosT32/4passos,14pilotos frios/
+  aquecidos, piloto concorrente, sete avaliações/perfis posteriores isolados,
+ 14avaliações de comprimento e14sondas de capacidade. ZIPs reais conferidos por
+  hashes/manifestos/cobertura de checkpoints. Só último completo por job, fonte
+  única, sem after-NN/pesos no ZIP de resultados.
+- A integração também executa mais duas campanhas: histórico completo reutilizado
+  sem treinar e avaliação de treino concluído recuperada após interrupção simulada,
+  preservando pesos/contador. Banco completo e três padrões têm mesmos parâmetros
+  iniciais. Guarda de fonte/dados/configuração/ambiente permanece ativa.
+- Falhas injetadas de worker, deadline e espaço insuficiente exportam pares ZIP
+  parciais válidos, preservando arquivos alheios. Admissão mantém pares, horizontes
+  e schedulers. Caminho procedural agora absoluto e roundtrip YAML idêntico, após
+  a integração detectar resolução relativa inconsistente. Manifesto identifica
+  fingerprint procedural para verificar o par de arquivos; não enfraqueceu a
+  verificação existente. Campo de progresso/modelo/GPU também conferido.
+- Retomada compara próxima atualização bit a bit com dropout0,2 e acumulação2,
+  incluindo pesos, otimizador, scheduler e sampler NumPy. Mudança de padrão é
+  incompatível. Testes de distribuição não recebem os rótulos como input.
+- Bootstrap simulado confere relógio desde célula, preservação do Torch, incremento
+  de número reservado, seeds e downloads. Helpers reais conferidos contra Git1c8ce2a.
+  O bootstrap não repete download/preparo/qualificação de WikiText.
+
+Último ajuste apenas de contabilização: validação do Transformer acumula seu
+custo forward estimado, em vez de deixar zero. Teste específico acrescentado;
+não altera forward, loss, otimização ou gerador. Estimativas de backbones de
+estado continuam null. Testes novos focados foram reexecutados após o ajuste;
+o resultado exato dessa execução consta na seção de entrega abaixo.
+
+CUDA/Inductor/energia reais desta arquitetura permanecem **não verificados
+localmente**. Há dois testes CUDA obrigatórios no Kaggle antes dos pilotos;
+marcados como deselected nos comandos CPU, nunca aprovados por suposição.
+Perfis serão de forward batch1/T1024, não geração/KV ou comparação iso-compute.
+Dois seeds e uma tarefa sintética não estabelecem superioridade geral como LLM.
+Nenhum resultado dos smokes de4passos é evidência de qualidade ou velocidade.
+
+Entrega da memória: após a correção da contabilização de validação, suíte nova
+focada reexecutada: **24passed,3deselected,11,22s,exit0**. Comando:
+`python -m pytest -q tests/test_recall_models.py tests/test_recall_operations.py tests/test_recall_bootstrap.py -m 'not cuda' -k 'not full_cpu_engineering'`.
+Os3deselected são os2CUDA e a integração longa já executada separadamente.
+Sintaxe dos módulos novos e links locais conferidos; `git diff --check` limpo.
 
 ## Campanha0029 — evidência recebida do Kaggle
 

@@ -23,7 +23,13 @@ Este checkout contém a pesquisa fractal: **`experiment/fractal-lrm`**.
 A implementação fractal permanece isolada. O identificador `fractal` em uma configuração
 não instala esse código na branch comum. Confira `git branch --show-current` antes de trabalhar.
 
-## Estado atual — 04/11/2026
+## Estado atual — 08/11/2026
+
+Próxima operação autorizada: [memória consultável e Fibonacci](docs/MEMORY_RECALL_RUN.md),
+sete braços/seeds271–272/3000passos, até2h nas duas T4, com admissão por piloto.
+Modelos com banco:1.284.878parâmetros, contra2.164.992do Transformer. Recuperação
+procedural em acerto%, exemplos e custos; não é resultado de linguagem natural.
+Sem vantagem nova medida ainda. Compressão/adaptação e escala permanecem no plano.
 
 A [campanha0029](docs/results/CAMPAIGN_0029.md) concluiu cinco treinos de6000passos,
 seed251, nas duas T4, em1h10min33s registrados antes da exportação. NLL final:
@@ -32,10 +38,9 @@ hierarquia seguinte1,436200; fino de uma célula1,474430. Leitura imediata ajuda
 0,008843, mas a hierarquia ainda não supera os controles. Amplo ajuda frente ao
 fino treinado, com mais parâmetros; a dependência da posição no grupo permanece.
 
-Próxima proposta: investigar compressão média versus último estado contextualizado
-e compressão aprendida pequena, com leitura imediata fixa. Depois reavaliar sharing
-na organização candidata. Não repetir automaticamente a triagem nem combinar
-memória/adaptação sem diagnóstico próprio. Hipótese fractal preservada; nenhuma
+Após0029 propusemos investigar compressão. A autorização de08/11prioriza agora
+memória/recuperação e comparação explícita de padrões de acesso, incluindo Fibonacci.
+Compressão permanece hipótese posterior. Hipótese fractal preservada; nenhuma
 vantagem confirmada. [Operação0029 preservada](docs/STATE_READOUT_RUN.md).
 
 A [campanha0028](docs/results/CAMPAIGN_0028.md) concluiu11avaliações congeladas,

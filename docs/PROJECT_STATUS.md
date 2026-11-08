@@ -1,4 +1,12 @@
-# Estado científico e técnico — 04/11/2026
+# Estado científico e técnico — 08/11/2026
+
+Implementação autorizada: [bancada de recuperação/memória](MEMORY_RECALL_RUN.md),
+sete braços/duas seeds,3000passos fixos, duas T4 e teto2h. Banco completo como
+controle de capacidade, consultas uniforme/base2/Fibonacci com orçamento esparso
+igual. Pesos compartilhados entre níveis e estados separados. Gerador procedural
+sem corpus; nenhum resultado de linguagem novo. Triagem poderá ocupar mais de
+uma sessão; piloto admite pares inteiros. Controle de latência é forward completo,
+sem alegação de geração/KV. Execução científica T4 ainda pendente.
 
 A [campanha0029](results/CAMPAIGN_0029.md) concluiu cinco braços/seed251/6000passos
 nas duas T4, em1h10min33s antes da exportação. NLL Transformer1,271962, recorrente
@@ -6,8 +14,8 @@ nas duas T4, em1h10min33s antes da exportação. NLL Transformer1,271962, recorr
 imediata melhora0,008843; amplo ajuda frente ao fino, sem superar duas células por
 byte. A dependência de posição permanece. Não há vantagem fractal confirmada nem
 novo controle de sharing. CPU11passed eCUDA2passed no preflight da nova fonte.
-Recomendação: encerrar esta triagem e investigar compressão média/último estado/
-aprendida, com leitura imediata fixa. Proposta ainda não implementada. Defaults
+Após essa auditoria propusemos compressão média/último estado/aprendida; em08/11
+a prioridade autorizada passou à bancada funcional de memória. Defaults
 históricos e qualificação0025 preservados; teste reservado intacto. Pesos reais
 da0029não acompanham o ZIP fornecido, apenas seus metadados/hashes declarados.
 

@@ -1,6 +1,7 @@
 # Proposta — primeira vantagem verificável sobre o Transformer
 
-07/11/2026. Proposta de experimento; **não implementado e não executável ainda**.
+07/11/2026. Proposta original preservada. Em08/11a implementação foi autorizada;
+ver [operação vigente](MEMORY_RECALL_RUN.md), que acrescenta o controle de banco completo.
 Não altera retroativamente protocolos/resultados. Depende de implementação,
 validação e piloto antes de fixar configurações e horizonte de treino.
 

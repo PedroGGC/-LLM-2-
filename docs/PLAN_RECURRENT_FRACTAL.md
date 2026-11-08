@@ -1,6 +1,6 @@
 # Arquitetura própria inspirada em fractais — plano aprovado
 
-Atualizado04/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
+Atualizado08/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
 históricos. Implementação experimental em `experiment/fractal-lrm`.
 
 ## Objetivo e evidência
@@ -85,6 +85,17 @@ mantêm condições próprias; não serão adicionados em conjunto para tentar r
 esta implementação. Hipótese fractal e plano de comparação externa permanecem.
 
 ## Etapas
+
+Atualização autorizada08/11: [memória consultável e Fibonacci](MEMORY_RECALL_RUN.md)
+passam à próxima operação exploratória da etapaC. Não exigir uma vitória da antiga
+hierarquia para explorar outra hipótese. Medir recuperação antes de concluir que
+retenção limita o modelo. Banco vetorial completo e três acessos esparsos, mantendo
+o núcleo compartilhado; referênciaTransformer e recorrente simples. Fibonacci é
+hipótese de espaçamento reescalado, não obrigação física;phi/lattices permanecem
+condicionais. Metas funcionais95%/margem1p.p./2× não substituem critérios de NLL.
+Próximas sessões limitadas a2h por piloto; a meta2h/teto3h do plano original abaixo
+fica como histórico, sem ampliar esta operação. Comparação futura de linguagem e
+modelos maiores permanece condicionada a um sinal real; nenhuma garantia de1.000.000×.
 
 A. Fichas dos três operadores recorrentes, referências sequenciais, execução por
 chunks e microbenchmarks de forward/backward na T4. Somente casos com correção,
