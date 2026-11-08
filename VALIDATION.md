@@ -53,6 +53,9 @@ focada reexecutada: **24passed,3deselected,11,22s,exit0**. Comando:
 `python -m pytest -q tests/test_recall_models.py tests/test_recall_operations.py tests/test_recall_bootstrap.py -m 'not cuda' -k 'not full_cpu_engineering'`.
 Os3deselected são os2CUDA e a integração longa já executada separadamente.
 Sintaxe dos módulos novos e links locais conferidos; `git diff --check` limpo.
+Célula08 fixada emdc2888a: **4passed,0,15s,exit0**. Hash literal conferido contra
+Git, execução desativada sem rede, bootstrap alterado bloqueado e despacho/relógio/
+callback de download simulados. Nenhuma execução na conta Kaggle foi feita localmente.
 
 ## Campanha0029 — evidência recebida do Kaggle
 

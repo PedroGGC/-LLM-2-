@@ -4,6 +4,11 @@ Entrega08/11/2026. A nova bancada foi autorizada depois da0029; não repete sua
 matriz e não baixa WikiText. [Plano de implementação](PLAN_MEMORY_RECALL_IMPLEMENTATION.md).
 O objetivo é procurar vantagem verificável numa capacidade antes de escalar.
 
+Célula curta: [08_testar_memoria_e_fibonacci_kaggle.py](../scripts/08_testar_memoria_e_fibonacci_kaggle.py).
+Revisão fixada:`dc2888a876aa0f3718a27114ea1d3c637fadb25f`.
+SHA-256 do bootstrap:`c50fb24dfff81b00b41dcc6074c5bca102f83cb110f79785349e1902e27de21c`.
+Ativar Internet e GPU T4x2 antes de rodar. O número avança se0030estiver reservado.
+
 ## O que será comparado
 
 | Braço | Parâmetros únicos | Implementação |
