@@ -1,5 +1,11 @@
 # Memória, fractal e Fibonacci — campanha a partir da0030
 
+Atualização09/11/2026: [execução0030 auditada](results/CAMPAIGN_0030.md), quatro de
+14treinos concluídos. Bancos completo/Fibonacci e recorrente ficaram no acaso;
+Transformer também não resolveu a tarefa. Recomenda-se qualificar escrita/leitura
+e rever pilotos/recompilação antes de repetir os dez treinos pendentes. A célula
+abaixo permanece para reprodução; não é recomendação de nova execução idêntica.
+
 Entrega08/11/2026. A nova bancada foi autorizada depois da0029; não repete sua
 matriz e não baixa WikiText. [Plano de implementação](PLAN_MEMORY_RECALL_IMPLEMENTATION.md).
 O objetivo é procurar vantagem verificável numa capacidade antes de escalar.

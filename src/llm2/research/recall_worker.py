@@ -24,12 +24,13 @@ def sync(device):
 
 def state_storage_bytes(value,seen=None):
     if value is None:return None
+    if isinstance(value,(int,float,bool,str)):return 0
     seen=set() if seen is None else seen
     if isinstance(value,torch.Tensor):
         storage=value.untyped_storage();key=(str(value.device),storage.data_ptr())
         if key in seen:return 0
         seen.add(key);return storage.nbytes()
-    items=(getattr(value,f.name) for f in fields(value)) if is_dataclass(value) else value
+    items=(getattr(value,f.name) for f in fields(value)) if is_dataclass(value) else value.values() if isinstance(value,dict) else value
     return sum(state_storage_bytes(item,seen) or 0 for item in items)
 
 

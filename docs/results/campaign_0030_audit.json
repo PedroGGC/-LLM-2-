@@ -1,0 +1,583 @@
+{
+  "audit_date": "2026-11-09",
+  "input": "llm2-campaign-0030-results.zip",
+  "zip_bytes": 1076272,
+  "zip_sha256": "78e769b1ec65f472583a1f3418678ad22598c127c84b2cad7304b4ae3e1912c2",
+  "members": 196,
+  "uncompressed_bytes": 2630154,
+  "crc_ok": true,
+  "revision": "dc2888a876aa0f3718a27114ea1d3c637fadb25f",
+  "bootstrap_files_verified": 345,
+  "snapshot_files_verified": 138,
+  "source_files_verified": 95,
+  "config_files_verified": 43,
+  "worker_records_verified": 24,
+  "protocol_id": "33ccde9232211445cc35defcc5307eb790505572f5852fa6bf47b031765f5592",
+  "task_id": "e23df62ea9ca5709cd9165e24996364b1582154cf034a3bc9d9de89b513ea1d0",
+  "status": "partial_planned",
+  "completed_ids": [
+    "transformer-seed-271",
+    "memory_all-seed-271",
+    "recurrent-seed-271",
+    "memory_fibonacci-seed-271"
+  ],
+  "pending_ids": [
+    "memory_uniform-seed-271",
+    "memory_binary-seed-271",
+    "hierarchy-seed-271",
+    "transformer-seed-272",
+    "memory_all-seed-272",
+    "recurrent-seed-272",
+    "memory_fibonacci-seed-272",
+    "memory_uniform-seed-272",
+    "memory_binary-seed-272",
+    "hierarchy-seed-272"
+  ],
+  "training_queries_per_job": 384000,
+  "input_bytes_per_job_with_repetition": 24576000,
+  "full_query_evaluations": 40,
+  "gradient_metric_records": 80,
+  "chance_accuracy_percent": 1.5625,
+  "chance_nll_64_values": 4.1588830833596715,
+  "rows": [
+    {
+      "accuracy_percent": 6.884765625,
+      "correct": 141,
+      "error": null,
+      "gpu_joules_per_query": 0.02456501057082452,
+      "length": 1024,
+      "median_forward_ms": 2.718386999958966,
+      "parameters": 2164992,
+      "peak_forward_vram_bytes": 59016192,
+      "physical_gpu_slot": "0",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 3.491002118214965,
+      "seed": 271,
+      "state_bytes_per_sequence": null,
+      "variant": "transformer"
+    },
+    {
+      "accuracy_percent": 8.0078125,
+      "correct": 164,
+      "error": null,
+      "gpu_joules_per_query": 0.02456501057082452,
+      "length": 2048,
+      "median_forward_ms": 2.718386999958966,
+      "parameters": 2164992,
+      "peak_forward_vram_bytes": 59016192,
+      "physical_gpu_slot": "0",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 3.4924718718975782,
+      "seed": 271,
+      "state_bytes_per_sequence": null,
+      "variant": "transformer"
+    },
+    {
+      "accuracy_percent": 4.296875,
+      "correct": 88,
+      "error": null,
+      "gpu_joules_per_query": 0.02456501057082452,
+      "length": 4096,
+      "median_forward_ms": 2.718386999958966,
+      "parameters": 2164992,
+      "peak_forward_vram_bytes": 59016192,
+      "physical_gpu_slot": "0",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.010341634973884,
+      "seed": 271,
+      "state_bytes_per_sequence": null,
+      "variant": "transformer"
+    },
+    {
+      "accuracy_percent": 1.416015625,
+      "correct": 29,
+      "error": null,
+      "gpu_joules_per_query": 0.02456501057082452,
+      "length": 8192,
+      "median_forward_ms": 2.718386999958966,
+      "parameters": 2164992,
+      "peak_forward_vram_bytes": 59016192,
+      "physical_gpu_slot": "0",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.174865318462253,
+      "seed": 271,
+      "state_bytes_per_sequence": null,
+      "variant": "transformer"
+    },
+    {
+      "accuracy_percent": 1.416015625,
+      "correct": 29,
+      "error": null,
+      "gpu_joules_per_query": 0.12105671296296297,
+      "length": 1024,
+      "median_forward_ms": 52.65596300000652,
+      "parameters": 1284878,
+      "peak_forward_vram_bytes": 57220096,
+      "physical_gpu_slot": "1",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.161439664661884,
+      "seed": 271,
+      "state_bytes_per_sequence": 3351600,
+      "variant": "memory_all"
+    },
+    {
+      "accuracy_percent": 1.7578125,
+      "correct": 36,
+      "error": null,
+      "gpu_joules_per_query": 0.12105671296296297,
+      "length": 2048,
+      "median_forward_ms": 52.65596300000652,
+      "parameters": 1284878,
+      "peak_forward_vram_bytes": 57220096,
+      "physical_gpu_slot": "1",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.160180892795324,
+      "seed": 271,
+      "state_bytes_per_sequence": 3351600,
+      "variant": "memory_all"
+    },
+    {
+      "accuracy_percent": 1.7578125,
+      "correct": 36,
+      "error": null,
+      "gpu_joules_per_query": 0.12105671296296297,
+      "length": 4096,
+      "median_forward_ms": 52.65596300000652,
+      "parameters": 1284878,
+      "peak_forward_vram_bytes": 57220096,
+      "physical_gpu_slot": "1",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.1609309911727905,
+      "seed": 271,
+      "state_bytes_per_sequence": 3351600,
+      "variant": "memory_all"
+    },
+    {
+      "accuracy_percent": 2.001953125,
+      "correct": 41,
+      "error": null,
+      "gpu_joules_per_query": 0.12105671296296297,
+      "length": 8192,
+      "median_forward_ms": 52.65596300000652,
+      "parameters": 1284878,
+      "peak_forward_vram_bytes": 57220096,
+      "physical_gpu_slot": "1",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.158042427152395,
+      "seed": 271,
+      "state_bytes_per_sequence": 3351600,
+      "variant": "memory_all"
+    },
+    {
+      "accuracy_percent": 1.318359375,
+      "correct": 27,
+      "error": null,
+      "gpu_joules_per_query": 0.18063928571428572,
+      "length": 1024,
+      "median_forward_ms": 83.06732150049356,
+      "parameters": 2174232,
+      "peak_forward_vram_bytes": 62449664,
+      "physical_gpu_slot": "0",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.160679046064615,
+      "seed": 271,
+      "state_bytes_per_sequence": 199728,
+      "variant": "recurrent"
+    },
+    {
+      "accuracy_percent": 1.46484375,
+      "correct": 30,
+      "error": null,
+      "gpu_joules_per_query": 0.18063928571428572,
+      "length": 2048,
+      "median_forward_ms": 83.06732150049356,
+      "parameters": 2174232,
+      "peak_forward_vram_bytes": 62449664,
+      "physical_gpu_slot": "0",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.159126181155443,
+      "seed": 271,
+      "state_bytes_per_sequence": 199728,
+      "variant": "recurrent"
+    },
+    {
+      "accuracy_percent": 1.318359375,
+      "correct": 27,
+      "error": null,
+      "gpu_joules_per_query": 0.18063928571428572,
+      "length": 4096,
+      "median_forward_ms": 83.06732150049356,
+      "parameters": 2174232,
+      "peak_forward_vram_bytes": 62449664,
+      "physical_gpu_slot": "0",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.161053344607353,
+      "seed": 271,
+      "state_bytes_per_sequence": 199728,
+      "variant": "recurrent"
+    },
+    {
+      "accuracy_percent": 1.904296875,
+      "correct": 39,
+      "error": null,
+      "gpu_joules_per_query": 0.18063928571428572,
+      "length": 8192,
+      "median_forward_ms": 83.06732150049356,
+      "parameters": 2174232,
+      "peak_forward_vram_bytes": 62449664,
+      "physical_gpu_slot": "0",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.158297337591648,
+      "seed": 271,
+      "state_bytes_per_sequence": 199728,
+      "variant": "recurrent"
+    },
+    {
+      "accuracy_percent": 1.5625,
+      "correct": 32,
+      "error": null,
+      "gpu_joules_per_query": 0.10936538461538461,
+      "length": 1024,
+      "median_forward_ms": 53.70002350036884,
+      "parameters": 1284878,
+      "peak_forward_vram_bytes": 66814464,
+      "physical_gpu_slot": "1",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.160466752946377,
+      "seed": 271,
+      "state_bytes_per_sequence": 3351600,
+      "variant": "memory_fibonacci"
+    },
+    {
+      "accuracy_percent": 2.05078125,
+      "correct": 42,
+      "error": null,
+      "gpu_joules_per_query": 0.10936538461538461,
+      "length": 2048,
+      "median_forward_ms": 53.70002350036884,
+      "parameters": 1284878,
+      "peak_forward_vram_bytes": 66814464,
+      "physical_gpu_slot": "1",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.158896990120411,
+      "seed": 271,
+      "state_bytes_per_sequence": 3351600,
+      "variant": "memory_fibonacci"
+    },
+    {
+      "accuracy_percent": 1.46484375,
+      "correct": 30,
+      "error": null,
+      "gpu_joules_per_query": 0.10936538461538461,
+      "length": 4096,
+      "median_forward_ms": 53.70002350036884,
+      "parameters": 1284878,
+      "peak_forward_vram_bytes": 66814464,
+      "physical_gpu_slot": "1",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.160854883491993,
+      "seed": 271,
+      "state_bytes_per_sequence": 3351600,
+      "variant": "memory_fibonacci"
+    },
+    {
+      "accuracy_percent": 1.7578125,
+      "correct": 36,
+      "error": null,
+      "gpu_joules_per_query": 0.10936538461538461,
+      "length": 8192,
+      "median_forward_ms": 53.70002350036884,
+      "parameters": 1284878,
+      "peak_forward_vram_bytes": 66814464,
+      "physical_gpu_slot": "1",
+      "profile_length": 1024,
+      "queries": 2048,
+      "query_nll": 4.158401932567358,
+      "seed": 271,
+      "state_bytes_per_sequence": 3351600,
+      "variant": "memory_fibonacci"
+    }
+  ],
+  "curves": [
+    {
+      "variant": "transformer",
+      "seed": 271,
+      "step": 750,
+      "accuracy_percent": 5.078125,
+      "query_nll": 3.9808187633752823
+    },
+    {
+      "variant": "transformer",
+      "seed": 271,
+      "step": 1500,
+      "accuracy_percent": 7.6171875,
+      "query_nll": 3.6710564754903316
+    },
+    {
+      "variant": "transformer",
+      "seed": 271,
+      "step": 2250,
+      "accuracy_percent": 7.03125,
+      "query_nll": 3.5203676521778107
+    },
+    {
+      "variant": "transformer",
+      "seed": 271,
+      "step": 3000,
+      "accuracy_percent": 7.51953125,
+      "query_nll": 3.4359051138162613
+    },
+    {
+      "variant": "memory_all",
+      "seed": 271,
+      "step": 750,
+      "accuracy_percent": 1.66015625,
+      "query_nll": 4.183356858789921
+    },
+    {
+      "variant": "memory_all",
+      "seed": 271,
+      "step": 1500,
+      "accuracy_percent": 1.85546875,
+      "query_nll": 4.1688031405210495
+    },
+    {
+      "variant": "memory_all",
+      "seed": 271,
+      "step": 2250,
+      "accuracy_percent": 1.7578125,
+      "query_nll": 4.158096797764301
+    },
+    {
+      "variant": "memory_all",
+      "seed": 271,
+      "step": 3000,
+      "accuracy_percent": 1.26953125,
+      "query_nll": 4.162123218178749
+    },
+    {
+      "variant": "recurrent",
+      "seed": 271,
+      "step": 750,
+      "accuracy_percent": 0.9765625,
+      "query_nll": 4.1922130063176155
+    },
+    {
+      "variant": "recurrent",
+      "seed": 271,
+      "step": 1500,
+      "accuracy_percent": 1.07421875,
+      "query_nll": 4.171217918395996
+    },
+    {
+      "variant": "recurrent",
+      "seed": 271,
+      "step": 2250,
+      "accuracy_percent": 1.46484375,
+      "query_nll": 4.156250759959221
+    },
+    {
+      "variant": "recurrent",
+      "seed": 271,
+      "step": 3000,
+      "accuracy_percent": 0.9765625,
+      "query_nll": 4.160327345132828
+    },
+    {
+      "variant": "memory_fibonacci",
+      "seed": 271,
+      "step": 750,
+      "accuracy_percent": 0.68359375,
+      "query_nll": 4.191603787243366
+    },
+    {
+      "variant": "memory_fibonacci",
+      "seed": 271,
+      "step": 1500,
+      "accuracy_percent": 1.46484375,
+      "query_nll": 4.172441862523556
+    },
+    {
+      "variant": "memory_fibonacci",
+      "seed": 271,
+      "step": 2250,
+      "accuracy_percent": 1.7578125,
+      "query_nll": 4.156781859695911
+    },
+    {
+      "variant": "memory_fibonacci",
+      "seed": 271,
+      "step": 3000,
+      "accuracy_percent": 1.46484375,
+      "query_nll": 4.160906612873077
+    }
+  ],
+  "task_controls": [
+    {
+      "length": 1024,
+      "queries": 2048,
+      "symbolic_oracle_accuracy_percent": 100.0,
+      "key_blind_value_frequency_accuracy_percent": 7.177734375,
+      "scope": "symbolic parsers with task grammar; diagnostic only; no learned-model comparison"
+    },
+    {
+      "length": 2048,
+      "queries": 2048,
+      "symbolic_oracle_accuracy_percent": 100.0,
+      "key_blind_value_frequency_accuracy_percent": 8.251953125,
+      "scope": "symbolic parsers with task grammar; diagnostic only; no learned-model comparison"
+    },
+    {
+      "length": 4096,
+      "queries": 2048,
+      "symbolic_oracle_accuracy_percent": 100.0,
+      "key_blind_value_frequency_accuracy_percent": 7.2265625,
+      "scope": "symbolic parsers with task grammar; diagnostic only; no learned-model comparison"
+    },
+    {
+      "length": 8192,
+      "queries": 2048,
+      "symbolic_oracle_accuracy_percent": 100.0,
+      "key_blind_value_frequency_accuracy_percent": 8.544921875,
+      "scope": "symbolic parsers with task grammar; diagnostic only; no learned-model comparison"
+    }
+  ],
+  "direct_slot_coverage": [
+    {
+      "pattern": "uniform",
+      "length": 1024,
+      "target_group_directly_selected": 156,
+      "queries": 2048,
+      "percent": 7.6171875,
+      "scope": "structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+    },
+    {
+      "pattern": "binary",
+      "length": 1024,
+      "target_group_directly_selected": 56,
+      "queries": 2048,
+      "percent": 2.734375,
+      "scope": "structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+    },
+    {
+      "pattern": "fibonacci",
+      "length": 1024,
+      "target_group_directly_selected": 77,
+      "queries": 2048,
+      "percent": 3.759765625,
+      "scope": "structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+    },
+    {
+      "pattern": "uniform",
+      "length": 2048,
+      "target_group_directly_selected": 90,
+      "queries": 2048,
+      "percent": 4.39453125,
+      "scope": "structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+    },
+    {
+      "pattern": "binary",
+      "length": 2048,
+      "target_group_directly_selected": 23,
+      "queries": 2048,
+      "percent": 1.123046875,
+      "scope": "structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+    },
+    {
+      "pattern": "fibonacci",
+      "length": 2048,
+      "target_group_directly_selected": 28,
+      "queries": 2048,
+      "percent": 1.3671875,
+      "scope": "structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+    },
+    {
+      "pattern": "uniform",
+      "length": 4096,
+      "target_group_directly_selected": 54,
+      "queries": 2048,
+      "percent": 2.63671875,
+      "scope": "structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+    },
+    {
+      "pattern": "binary",
+      "length": 4096,
+      "target_group_directly_selected": 11,
+      "queries": 2048,
+      "percent": 0.537109375,
+      "scope": "structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+    },
+    {
+      "pattern": "fibonacci",
+      "length": 4096,
+      "target_group_directly_selected": 16,
+      "queries": 2048,
+      "percent": 0.78125,
+      "scope": "structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+    },
+    {
+      "pattern": "uniform",
+      "length": 8192,
+      "target_group_directly_selected": 17,
+      "queries": 2048,
+      "percent": 0.830078125,
+      "scope": "structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+    },
+    {
+      "pattern": "binary",
+      "length": 8192,
+      "target_group_directly_selected": 3,
+      "queries": 2048,
+      "percent": 0.146484375,
+      "scope": "structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+    },
+    {
+      "pattern": "fibonacci",
+      "length": 8192,
+      "target_group_directly_selected": 13,
+      "queries": 2048,
+      "percent": 0.634765625,
+      "scope": "structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+    }
+  ],
+  "session_seconds_before_export": 4276.334476211001,
+  "remaining_work_seconds_at_end": 2623.6655214849998,
+  "isolated_pilot_command_seconds": 2095.8073286539993,
+  "concurrent_pilot_max_command_seconds": 353.84769835199995,
+  "peak_compiler_cache_bytes_sampled": 1139490243,
+  "no_weight_tensors_supplied": true,
+  "initial_gate_bias_from_frozen_source": {
+    "input": 2.0,
+    "forget": 0.0,
+    "note": "not measured final gates; sigmoid(0)=0.5 only for zero feature contribution"
+  },
+  "limits": [
+    "one completed training seed, not two",
+    "10 pending runs",
+    "equal inputs/targets, not compute",
+    "no independent/shared hierarchy contrast completed",
+    "no uniform/binary training completed",
+    "metadata hashes checked, actual weights/training state absent",
+    "no training or model inference in this audit",
+    "full-forward eager profile at T1024, not decoding or T8192 latency",
+    "no per-module gates/gradient norms or reader attention entropy captured",
+    "synthetic query NLL is not natural-language NLL",
+    "symbolic controls do not measure neural generalization"
+  ],
+  "decision": "do not repeat full matrix yet; qualify learned key/value binding and fix compilation scheduling before more sparse patterns"
+}

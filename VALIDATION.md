@@ -1,4 +1,74 @@
-# Validação vigente — 08/11/2026
+# Validação vigente — 09/11/2026
+
+## Família associativa de transições — entrega posterior à0030
+
+[Plano prévio](docs/PLAN_ASSOCIATIVE_TRANSITION_IMPLEMENTATION.md),
+[operação](docs/ASSOCIATIVE_BINDING_RUN.md). Python3.12.2/Torch2.14.1+cpu, Windows,
+`PYTHONPATH=src`. Nova arquitetura separada; modelos/protocolos antigos preservados.
+
+- Kernel aditivo vetorizado versus referência sequencial, forward e gradientes;
+  causalidade em fronteiras1/3/4/5/7/8/31/32; streaming e gradientes em chunks;
+  contagens por fórmula e enumeração; estado real sem buffers de prefixo presos;
+  embedding ligado; mesmo forward inicial entre os controles correspondentes.
+- Generalização aprendida para novos mapas e chaves trocadas, nos três braços
+  neurais novos. Teste de memorização de batch fixo não é a única qualificação.
+- Retomada exata com dropout0,2/acumulação2 e próxima atualização bit a bit;
+  sampler preserva fases4/8/16/32. Benchmark restaura pesos/otimizador/scheduler/
+  RNG/sampler/contadores, sem alterar o horizonte ou guardar updates de piloto.
+- Primeira rodada encontrou telemetria que não aceitava o inteiro da fase e
+  benchmark que atingia o limite do Trainer. Corrigidos: metadados escalares
+  excluídos dos bytes de tensores; updates explícitos de medição e restauração,
+  sem ampliar max_steps. Rodada focada9passed/3deselected,5,36s.
+- Suíte ampliada final: **85passed,12deselected,97,86s,exit0**. Comando:
+  `python -m pytest -q tests/test_binding_models.py tests/test_binding_operations.py tests/test_recall_models.py tests/test_recall_bootstrap.py tests/test_state_recurrent.py tests/test_training.py tests/test_research_configs.py -m 'not cuda' -k 'not full_cpu'`.
+  Inclui regressões de modelos/Trainer/configurações; CUDA não executado localmente.
+- Integração real de quatro workers CPU, treino4passos, checkpoint/aposentadoria,
+  curvas, contrafactuais, barreira de perfis, ZIPs e reuso nativo sem novo treino:
+  primeira execução **1passed/4deselected,22,26s**. Após ajustes finais de telemetria
+  e sondas, operações+bootstrap: **8passed,17,89s,exit0**, incluindo essa integração,
+  falha de worker, espaço insuficiente, deadline/exportação parcial, rotação de
+  GPUs, dispatch/relógio/Torch e botões. Nenhum arquivo alheio removido.
+
+Última execução conjunta da nova família/operação/bootstrap, incluindo equivalência
+do update medido com o Trainer: **21passed,2deselected,74,29s,exit0**.
+Comando:`python -m pytest -q tests/test_binding_models.py tests/test_binding_operations.py tests/test_binding_bootstrap.py -m 'not cuda'`.
+Os dois deselected são CUDA. O único warning vem do wrapper de optimizer.step
+usado no teste de equivalência, não de mudança da ordem de updates na operação.
+
+Qualificação de desenvolvimento adicional: seed816/1000passos reais no núcleo
+86.785parâmetros, CPU/FP32/dropout0,05/contexto256/B16/LR0,001. Avaliações novas de
+32sequências/512consultas por condição: original e par contrafactual100%em
+256/1024/4096/8192com32associações,1024com64e1027com prefixo3. Registro e limites:
+[qualificação](docs/results/transition_development_qualification.json). Medição
+explícita apenas dos pesos com a versão equivalente de prefixo exclusivo;
+fontes de treino/medição separadas, sem carregar pickle ou alegar retomada entre
+fontes. Não houve controle Transformer nem medição GPU/energia/linguagem local.
+
+Dois testes novos CUDA/Inductor serão obrigatórios no Kaggle. Não foram aprovados
+por suposição. A qualificação CPU não sustenta ganho de velocidade nem capacidade
+geral de uma LLM. Histórico0030 e documentação abaixo permanecem como evidência
+anterior, não resultado dessa nova campanha.
+
+## Campanha0030 — auditoria da execução parcial T4
+
+[Relatório](docs/results/CAMPAIGN_0030.md): ZIP1.076.272bytes/196membros, CRC íntegro,
+sem caminhos externos/duplicatas/pesos/pickle. Conferidos345hashes do bootstrap e
+138arquivos de snapshot contra Gitdc2888a,95fontes e43configs,24registros de worker,
+identidade do protocolo/gerador, configs, contagens meta/fórmula, embedding ligado,
+hash inicial igual nos dois bancos concluídos,40avaliações e80registros de gradiente.
+Quatro treinos/seed271/3000passos completos; dez pendentes. Metadados reconciliados;
+tensores finais ausentes, sem rehash de pesos/estado nem forward/treino científico
+local. Testes Kaggle: **CPU14passed/2deselected,15,88s; CUDA2passed/14deselected,
+78,10s**, GPU0. Duas T4 utilizadas nos treinos. Não é aprovação de qualidade.
+
+Auditoria local reproduzível em `artifacts/audits/campaign_0030/audit.py`:
+regeneração dos exemplos/labels/distâncias, oráculo simbólico100% nos quatro
+comprimentos, preditor de frequência sem chave e alcance dos padrões calculados.
+Esses controles não são modelos aprendidos nem novos resultados de linguagem.
+Finitude/gradientes presentes não demonstram associação; o teste histórico de
+memorização de batch fixo não qualificava generalização para novos pares.
+Recomendações de rever mistura local/inicialização e reduzir recompilação não
+foram implementadas nesta auditoria. Código de treino e célula fixada preservados.
 
 ## Memória consultável/Fibonacci — implementação e limites reais
 

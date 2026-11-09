@@ -174,6 +174,7 @@ class ResearchConfig:
     memory_slots: int = 2048
     memory_reads: int = 16
     memory_dim: int = 96
+    associative_levels: int = 1
 
     def __post_init__(self):
         _types(self)
@@ -192,8 +193,12 @@ class ResearchConfig:
             raise ValueError("context_normalization requires a recurrent architecture")
         if not self.cross_scale_exchange and self.architecture != "fractal":
             raise ValueError("cross_scale_exchange=False requires fractal architecture")
-        if self.architecture not in ("transformer", "recursive", "untied", "fractal", "state_recurrent", "state_hierarchy"):
+        if self.architecture not in ("transformer", "recursive", "untied", "fractal", "state_recurrent", "state_hierarchy", "transition_memory"):
             raise ValueError("unknown research architecture")
+        if self.associative_levels not in (1, 2):
+            raise ValueError("associative_levels must be 1 or 2")
+        if self.associative_levels != 1 and self.architecture != "transition_memory":
+            raise ValueError("associative_levels requires transition_memory")
         if self.state_rule not in ("gated_delta", "rwkv7", "mlstm") or self.state_execution not in ("sequential", "chunked"):
             raise ValueError("unknown state rule/execution")
         if not 1 <= self.state_chunk_size <= 64 or self.state_factor < 2:
@@ -208,7 +213,7 @@ class ResearchConfig:
             raise ValueError("invalid memory capacity/read dimension")
         if self.memory_pattern != "none" and (self.architecture != "state_hierarchy" or self.state_readout != "immediate"):
             raise ValueError("episodic memory requires immediate state_hierarchy")
-        if self.architecture.startswith("state_") and (
+        if (self.architecture.startswith("state_") or self.architecture == "transition_memory") and (
             self.jepa_weight or self.mtp_weight or self.intermediate_weight or self.lm_weight != 1
             or self.latent_steps or self.latent_warmup_steps or self.detach_every
             or self.gradient_checkpointing or self.record_states or self.curriculum != "off"

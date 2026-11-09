@@ -23,13 +23,32 @@ Este checkout contém a pesquisa fractal: **`experiment/fractal-lrm`**.
 A implementação fractal permanece isolada. O identificador `fractal` em uma configuração
 não instala esse código na branch comum. Confira `git branch --show-current` antes de trabalhar.
 
-## Estado atual — 08/11/2026
+## Estado atual — 09/11/2026
 
-Próxima operação autorizada: [memória consultável e Fibonacci](docs/MEMORY_RECALL_RUN.md),
-sete braços/seeds271–272/3000passos, até2h nas duas T4, com admissão por piloto.
-Modelos com banco:1.284.878parâmetros, contra2.164.992do Transformer. Recuperação
-procedural em acerto%, exemplos e custos; não é resultado de linguagem natural.
-Sem vantagem nova medida ainda. Compressão/adaptação e escala permanecem no plano.
+Nova operação autorizada e implementada: [memória de transições e pirâmide](docs/ASSOCIATIVE_BINDING_RUN.md).
+Núcleo associativo de86.785pesos, pirâmide compartilhada86.979 e independente111.652,
+contra2.164.992do Transformer externo. Não usa o núcleo mLSTM nem DecoderBlock.
+Consulta/escrita com endereço aprendido, conteúdo separado e atualização linear.
+Fractal é testado pela reutilização do mesmo operador entre ritmos de memória.
+
+Qualificação CPU: núcleo único, seed816/1000passos,100%em novos mapas de32pares
+até8K,64pares em1K e fronteira deslocada, incluindo perguntas com chaves trocadas.
+Isso é capacidade sintética sobre alfabeto finito; não é comparação com Transformer,
+eficiência naT4 ou resultado de linguagem. A campanha nova comparará os quatro
+braços/seeds311–312/3000passos nas duas T4, teto2h, com workers persistentes.
+
+A [campanha0030](docs/results/CAMPAIGN_0030.md) concluiu 4/14 treinos, seed271,
+em1h11min16s registrados antes da exportação. T1024: Transformer6,88% de acerto,
+recorrente1,32%, banco completo1,42%, Fibonacci1,56%; acaso entre64valores1,56%.
+Nenhum resolveu recuperação associativa. Banco completo também falha; não atribuir
+o resultado somente ao acesso Fibonacci. Modelos com banco têm40,65% menos pesos,
+mas forward eager cerca de19–20× mais lento neste perfil, sem vantagem de eficiência.
+
+Após0030, mudamos de família: em vez do cache de resumos médios, a nova operação
+qualifica escrita/leitura de associações e sua organização em ritmos. O mLSTM
+histórico continua preservado, sem alterar sua inicialização retroativamente.
+Workers persistentes substituem os pilotos repetidos. Hipótese fractal e demais
+frentes preservadas. [Operação0030 para reprodução](docs/MEMORY_RECALL_RUN.md).
 
 A [campanha0029](docs/results/CAMPAIGN_0029.md) concluiu cinco treinos de6000passos,
 seed251, nas duas T4, em1h10min33s registrados antes da exportação. NLL final:

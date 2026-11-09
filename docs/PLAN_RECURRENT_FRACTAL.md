@@ -1,7 +1,33 @@
 # Arquitetura própria inspirada em fractais — plano aprovado
 
-Atualizado08/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
+Atualizado09/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
 históricos. Implementação experimental em `experiment/fractal-lrm`.
+
+Autorização posterior em09/11: implementar mudanças amplas para buscar vantagem
+funcional. [Nova operação associativa](ASSOCIATIVE_BINDING_RUN.md), família de
+pesos rápidos/transições independente de mLSTM. Quatro braços: Transformer,
+memória única e pirâmide compartilhada/independente. A inspiração fractal permanece
+explícita no mesmo operador entre ritmos de memória; não obriga reutilizar a
+implementação FLRM ou a plataforma mLSTM selecionada historicamente.
+
+Qualificação CPU em mapas novos passou:100%nos testes até8K/64pares/deslocamento,
+núcleo86.785pesos/seed816/1000passos. Não é resultado de linguagem, eficiência
+ou comparação com Transformer. Próxima evidência: mesma tarefa/receita para os
+quatro braços naT4, duas seeds,3000passos, teto2h. O novo protocolo mede acerto e
+contrafactuais; não reescreve os limiares NLL dos experimentos de linguagem.
+Metas95%/90%pareado e fatores de recurso são critérios, não garantias. Se passar,
+o marco seguinte será confirmação em linguagem, não declarar a ambição cumprida.
+
+Atualização0030: [quatro de14treinos concluídos](results/CAMPAIGN_0030.md), uma
+seed271. Bancos completo/Fibonacci e recorrente simples ficaram perto do acaso
+na recuperação; Transformer6,88% emT1024 também não resolveu associações. Fractal
+permanece hipótese, sem novo contraste de compartilhamento concluído. Recomenda-se
+qualificar formação local de pares e escrita/leitura em exemplos novos, revisando
+inicialização de esquecimento e mistura local da adaptação mLSTM, antes de outra
+grade longa ou de concluir os dez treinos. O controle de banco completo falhou;
+Fibonacci/binário/uniforme não devem ser promovidos como solução dessa falha.
+Agrupar compilação por grafo/GPU; pilotos isolados consumiram34min56s da sessão.
+Recomendações da auditoria0030, atendidas pela implementação posterior acima.
 
 ## Objetivo e evidência
 

@@ -1,0 +1,5 @@
+length,queries,symbolic_oracle_accuracy_percent,key_blind_value_frequency_accuracy_percent,scope
+1024,2048,100.0,7.177734375,symbolic parsers with task grammar; diagnostic only; no learned-model comparison
+2048,2048,100.0,8.251953125,symbolic parsers with task grammar; diagnostic only; no learned-model comparison
+4096,2048,100.0,7.2265625,symbolic parsers with task grammar; diagnostic only; no learned-model comparison
+8192,2048,100.0,8.544921875,symbolic parsers with task grammar; diagnostic only; no learned-model comparison

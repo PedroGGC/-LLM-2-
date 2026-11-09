@@ -1,4 +1,37 @@
-# Estado científico e técnico — 08/11/2026
+# Estado científico e técnico — 09/11/2026
+
+Entrega nova: [associação de transições e pirâmide](ASSOCIATIVE_BINDING_RUN.md),
+autorizada após auditoria0030. Família independente de mLSTM: endereço aprendido
+da posição anterior, conteúdo/porta aprendidos, estado matricial aditivo e
+convolução causal local. Controles único/compartilhado/independente e Transformer
+externo;86.785/86.979/111.652/2.164.992pesos. Compartilhamento inicial e causalidade
+verificados; nenhum parser da tarefa no backbone. Operação T4 ainda não executada.
+
+Qualificação CPU do núcleo único:1000passos/seed816, contexto256, currículo fixo,
+100%original e pareado em seis condições novas:32associações em256/1K/4K/8K,
+64em1K e prefixo deslocado3bytes. Registro contém hashes/fontes e distingue
+medição de pesos de retomada. Não comparar esse resultado com a0030: tarefa,
+receita e arquitetura mudaram. Sem benchmark Transformer/GPU/linguagem nessa
+qualificação. Campanha a partir da0031: quatro braços, seeds311/312, teto2h.
+Workers persistentes restauram exatamente as atualizações dos pilotos; barreira
+isola perfis finais. Uma fonte/um parZIPfinal; sem corpus baixado.
+
+A [campanha0030](results/CAMPAIGN_0030.md) foi recebida: 4/14 treinos completos,
+seed271/3000passos, `partial_planned`, sem erro/deadline. AcertoT1024: Transformer
+6,88%, recorrente1,32%, banco completo1,42%, Fibonacci1,56%, acaso1,56%. Nenhuma
+vantagem nova; as sondas até8K não resgatam os bancos. O controle de leitura completa
+também falha. Hierarquia sem banco, uniforme, binário e segunda seed não treinados.
+345hashes de bootstrap/138arquivos de snapshot verificados contra Gitdc2888a;
+40avaliações reconciliadas. Pesos reais não acompanham o ZIP.
+
+Recomenda-se suspender repetição automática dos dez treinos e qualificar associação
+em exemplos novos, mistura local e escalas de esquecimento. Nossa adaptação não
+inclui convolução causal de xLSTM e tem viés0 no forget gate, +2 no input gate;
+isso não prova causa única. Curvas dos bancos ficam no acaso. Oráculo do gerador
+100%; preditor simbólico sem usar chave7,18% emT1024 mostra que nem6,88% demonstra
+associação correta. Pilotos isolados34min56s e recompilações posteriores exigem
+reorganização. A nova família/qualificação acima atende a essa revisão. Fractal continua
+hipótese; compartilhamento versus independência não foi avaliado nesta campanha.
 
 Implementação autorizada: [bancada de recuperação/memória](MEMORY_RECALL_RUN.md),
 sete braços/duas seeds,3000passos fixos, duas T4 e teto2h. Banco completo como
@@ -6,7 +39,7 @@ controle de capacidade, consultas uniforme/base2/Fibonacci com orçamento espars
 igual. Pesos compartilhados entre níveis e estados separados. Gerador procedural
 sem corpus; nenhum resultado de linguagem novo. Triagem poderá ocupar mais de
 uma sessão; piloto admite pares inteiros. Controle de latência é forward completo,
-sem alegação de geração/KV. Execução científica T4 ainda pendente.
+sem alegação de geração/KV. Execução parcial T4 auditada acima; dez treinos pendentes.
 
 A [campanha0029](results/CAMPAIGN_0029.md) concluiu cinco braços/seed251/6000passos
 nas duas T4, em1h10min33s antes da exportação. NLL Transformer1,271962, recorrente

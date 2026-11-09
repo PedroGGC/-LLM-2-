@@ -8,6 +8,9 @@ def build_backbone(config):
     research = config.research
     if research is None or research.architecture == "transformer":
         return TransformerLM(config.model)
+    if research.architecture == "transition_memory":
+        from ..architectures.transition_memory import TransitionMemory
+        return TransitionMemory(config.model, research)
     if research.architecture in ("state_recurrent", "state_hierarchy"):
         if research.memory_pattern != "none":
             from ..architectures.episodic import EpisodicHierarchy

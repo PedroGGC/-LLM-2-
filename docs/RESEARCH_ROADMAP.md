@@ -2,6 +2,23 @@
 
 ## Roteiro vigente — arquitetura própria inspirada em fractais
 
+Entrega posterior09/11: [nova família de transições/pirâmide](ASSOCIATIVE_BINDING_RUN.md),
+não dependente do mLSTM. Memória associativa linear com endereço/conteúdo separados,
+convolução causal e operadores compartilhados/independentes entre ritmos. Testes
+locais de novos mapas/contrafactuais passam; CPU único86.785pesos/1000passos resolveu
+as seis sondas de desenvolvimento. Comparação T4 com Transformer, linguagem e
+eficiência continuam pendentes. Campanha nova: quatro braços/duas seeds, teto2h;
+pesos rápidos são agora uma frente ativa, sem alegar implementar TTT/GRM completos.
+
+09/11/2026: [campanha0030 parcial](results/CAMPAIGN_0030.md),4/14treinos/seed271.
+Não houve recuperação funcional no banco completo ou Fibonacci; a referência
+Transformer também está longe de resolver a tarefa. Recomenda-se rever formação
+local de associações, escrita/leitura e gates da adaptação mLSTM, qualificando
+generalização em tarefa curta antes de repetir a matriz. Banco funcional precede
+ranking de espaçamentos. Reduzir recompilações/pilotos antes de nova sessão. Nada
+disso era implementado na auditoria; a entrega posterior acima implementa a nova
+família e operação. Preservar protocolos e hipótese fractal.
+
 08/11/2026: [bancada de memória/recuperação](MEMORY_RECALL_RUN.md) autorizada e
 implementada; sete braços, seeds271/272, dois ritmos compartilhados, banco completo
 e acessos uniforme/base2/Fibonacci. Acerto/custo em tarefa procedural antes de

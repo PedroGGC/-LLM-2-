@@ -1,0 +1,13 @@
+pattern,length,target_group_directly_selected,queries,percent,scope
+uniform,1024,156,2048,7.6171875,"structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+binary,1024,56,2048,2.734375,"structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+fibonacci,1024,77,2048,3.759765625,"structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+uniform,2048,90,2048,4.39453125,"structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+binary,2048,23,2048,1.123046875,"structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+fibonacci,2048,28,2048,1.3671875,"structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+uniform,4096,54,2048,2.63671875,"structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+binary,4096,11,2048,0.537109375,"structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+fibonacci,4096,16,2048,0.78125,"structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+uniform,8192,17,2048,0.830078125,"structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+binary,8192,3,2048,0.146484375,"structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
+fibonacci,8192,13,2048,0.634765625,"structural reach, not a learned result or accuracy ceiling; contextual states may carry other groups"
