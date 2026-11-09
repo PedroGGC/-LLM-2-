@@ -36,8 +36,9 @@ Os dois deselected são CUDA. O único warning vem do wrapper de optimizer.step
 usado no teste de equivalência, não de mudança da ordem de updates na operação.
 Entrega da célula09: **4passed,0,11s,exit0**; SHA literal contra Gitbcd7780,
 execução desativada sem rede, payload alterado bloqueado antes deexec e despacho/
-relógio/seeds/callback de download simulados. Bootstrap remoto será conferido
-após publicação; nenhuma execução na conta Kaggle foi feita por esta entrega.
+relógio/seeds/callback de download simulados. Após publicação, downloadHTTP real
+conferiu4370bytes e SHA-256 exato da célula09. Links locais e diff conferidos;
+nenhuma execução na conta Kaggle foi feita por esta entrega.
 
 Qualificação de desenvolvimento adicional: seed816/1000passos reais no núcleo
 86.785parâmetros, CPU/FP32/dropout0,05/contexto256/B16/LR0,001. Avaliações novas de
