@@ -36,6 +36,7 @@ até8K,64pares em1K e fronteira deslocada, incluindo perguntas com chaves trocad
 Isso é capacidade sintética sobre alfabeto finito; não é comparação com Transformer,
 eficiência naT4 ou resultado de linguagem. A campanha nova comparará os quatro
 braços/seeds311–312/3000passos nas duas T4, teto2h, com workers persistentes.
+[Célula curta para Kaggle](scripts/09_testar_associacao_e_piramide_kaggle.py).
 
 A [campanha0030](docs/results/CAMPAIGN_0030.md) concluiu 4/14 treinos, seed271,
 em1h11min16s registrados antes da exportação. T1024: Transformer6,88% de acerto,

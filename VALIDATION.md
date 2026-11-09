@@ -34,6 +34,10 @@ do update medido com o Trainer: **21passed,2deselected,74,29s,exit0**.
 Comando:`python -m pytest -q tests/test_binding_models.py tests/test_binding_operations.py tests/test_binding_bootstrap.py -m 'not cuda'`.
 Os dois deselected são CUDA. O único warning vem do wrapper de optimizer.step
 usado no teste de equivalência, não de mudança da ordem de updates na operação.
+Entrega da célula09: **4passed,0,11s,exit0**; SHA literal contra Gitbcd7780,
+execução desativada sem rede, payload alterado bloqueado antes deexec e despacho/
+relógio/seeds/callback de download simulados. Bootstrap remoto será conferido
+após publicação; nenhuma execução na conta Kaggle foi feita por esta entrega.
 
 Qualificação de desenvolvimento adicional: seed816/1000passos reais no núcleo
 86.785parâmetros, CPU/FP32/dropout0,05/contexto256/B16/LR0,001. Avaliações novas de

@@ -88,7 +88,10 @@ não símbolos inéditos, textos livres ou tarefas de raciocínio.
 
 ## Operação e medições
 
-Célula curta: `scripts/09_testar_associacao_e_piramide_kaggle.py`. Ativar Internet
+Célula curta: [09_testar_associacao_e_piramide_kaggle.py](../scripts/09_testar_associacao_e_piramide_kaggle.py).
+Revisão fixada:`bcd7780e8d929ce938c69a8eaf8167241518e744`.
+SHA-256 do bootstrap:`0bee532c03cb07974a7649be32ddbe6a9715c64f73db289880590de5f736f2f9`.
+Ativar Internet
 e GPU T4x2. Número mínimo0031, incremento automático se já reservado. Teto7200s
 desde a célula, com300s reservados para exportação, incluindo setup/testes.
 
