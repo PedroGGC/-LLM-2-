@@ -1,5 +1,15 @@
 # Estado científico e técnico — 10/11/2026
 
+Entrega seguinte autorizada: [primeira comparação TinyStories](TINYSTORIES_RUN.md),
+oito treinos fixos/duas seeds com memória simples, pirâmide compartilhada e dois
+Transformers (86.400 e 2.164.992 pesos). Calibração train-only de duas taxas;
+desenvolvimento completo e textos fixos, teste reservado sem avaliação. Prefixos
+fixados limitam o download a 34 MiB e preservam documentos/deduplicação. Execução
+bloqueada da memória passa em equivalência CPU; ganho GPU ainda não medido.
+CPU de desenvolvimento mostrou perda decrescente, não vantagem científica.
+T4 x2, teto 2h, caches próprios limitados e somente um par de ZIPs finais.
+Campanha principal ainda não executada; não confundir com evidência da 0031.
+
 A [campanha0031](results/CAMPAIGN_0031.md) concluiu oito treinos novos/3000passos,
 seeds311/312, em662,54s antes da exportação. Candidatos:100%original e pareado
 até8K,64associações e deslocamento de fronteira nas duas seeds. Transformer

@@ -175,6 +175,8 @@ class ResearchConfig:
     memory_reads: int = 16
     memory_dim: int = 96
     associative_levels: int = 1
+    associative_execution: str = "reference"
+    associative_block_size: int = 32
 
     def __post_init__(self):
         _types(self)
@@ -199,6 +201,14 @@ class ResearchConfig:
             raise ValueError("associative_levels must be 1 or 2")
         if self.associative_levels != 1 and self.architecture != "transition_memory":
             raise ValueError("associative_levels requires transition_memory")
+        if self.associative_execution not in ("reference", "blocked"):
+            raise ValueError("unknown associative_execution")
+        if self.associative_execution != "reference" and self.architecture != "transition_memory":
+            raise ValueError("blocked execution requires transition_memory")
+        if not 4 <= self.associative_block_size <= 128:
+            raise ValueError("associative_block_size must be 4..128")
+        if self.associative_execution == "blocked" and (self.state_factor < 2 or self.associative_block_size % self.state_factor):
+            raise ValueError("associative block size must be a multiple of state_factor")
         if self.state_rule not in ("gated_delta", "rwkv7", "mlstm") or self.state_execution not in ("sequential", "chunked"):
             raise ValueError("unknown state rule/execution")
         if not 1 <= self.state_chunk_size <= 64 or self.state_factor < 2:

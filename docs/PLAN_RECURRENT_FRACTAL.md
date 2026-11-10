@@ -3,6 +3,16 @@
 Atualizado10/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
 históricos. Implementação experimental em `experiment/fractal-lrm`.
 
+Próxima operação autorizada e implementada: [TinyStories com dois controles
+Transformer](TINYSTORIES_RUN.md). Memória simples/pirâmide compartilhada versus
+Transformer próximo em parâmetros e referência maior; seeds 331/332, 6.000 passos.
+Perguntas: o núcleo aprende linguagem, a pirâmide ajuda e qual é a qualidade por
+custo frente aos controles? Não repetiremos associação saturada nem adicionaremos
+uma tecnologia para melhorar 100%. Textos fixos complementam NLL/bits por byte;
+calibração é train-only, teste reservado não avaliado. CPU local qualifica a
+implementação; linguagem e eficiência T4 seguem pendentes desta campanha.
+O catálogo e as condições das tecnologias abaixo permanecem vigentes.
+
 Atualização0031: [oito treinos concluídos](results/CAMPAIGN_0031.md), duas seeds.
 Memória única/compartilhada/independente resolveram recuperação de um byte:
 100%original/contrafactual até8K,64pares e deslocamento. Compartilhamento economiza
@@ -16,7 +26,8 @@ Transformer, preservando dados/validação/custo comparáveis; qualificar a refe
 de recuperação e usar chaves/associações mais discriminativas. Não repetir uma
 campanha inteira já saturada nem acrescentar mecanismos para melhorar100%.
 Fractal continua explícito; distinguir viabilidade do sharing de necessidade da
-hierarquia. Essas são recomendações pós-auditoria, sem nova campanha implementada.
+hierarquia. A operação TinyStories acima implementa o marco de linguagem;
+qualificar recuperação discriminativa continua uma pergunta independente.
 
 Autorização posterior em09/11: implementar mudanças amplas para buscar vantagem
 funcional. [Nova operação associativa](ASSOCIATIVE_BINDING_RUN.md), família de

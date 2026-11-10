@@ -65,16 +65,49 @@ class TransitionOperator(nn.Module):
         return q, k*gate, self.value(local).float()
 
 
+def blocked_associative_reads(q,k,v,total,partial,phase,group=4,block=32):
+    """Same logical group partition; matrix prefixes only per larger compute block."""
+    b,t,width=q.shape
+    pad=(-(phase+t))%block
+    def pack(value):return F.pad(value.float(),(0,0,phase,pad)).reshape(b,-1,block,value.shape[-1])
+    qc,kc,vc=map(pack,(q,k,v))
+    first=(torch.arange(qc.shape[1],device=q.device)==0).to(q.dtype)
+    delta=kc.transpose(-2,-1)@vc+first[None,:,None,None]*partial[:,None]
+    inclusive=delta.cumsum(1)
+    exclusive=torch.cat((torch.zeros_like(inclusive[:,:1]),inclusive[:,:-1]),1)
+    prefix=total[:,None]-partial[:,None]+exclusive
+    index=torch.arange(block,device=q.device);groups=index//group
+    similarity=qc@kc.transpose(-2,-1)
+    fine_mask=(groups[:,None]==groups[None,:])&(index[:,None]>=index[None,:])
+    coarse_mask=groups[:,None]>groups[None,:]
+    previous_read=qc@partial[:,None]
+    first_fine=first[None,:,None,None]*(groups==0)[None,None,:,None]
+    first_coarse=first[None,:,None,None]*(groups>0)[None,None,:,None]
+    fine=similarity.masked_fill(~fine_mask,0)@vc+first_fine*previous_read
+    coarse=qc@prefix+similarity.masked_fill(~coarse_mask,0)@vc+first_coarse*previous_read
+    def unpack(value):return value.reshape(b,-1,value.shape[-1])[:,phase:phase+t]
+    remainder=(phase+t)%group
+    if remainder:
+        start=phase+t-remainder
+        flat_k=kc.reshape(b,-1,k.shape[-1]);flat_v=vc.reshape(b,-1,v.shape[-1])
+        next_partial=flat_k[:,start:start+remainder].transpose(-2,-1)@flat_v[:,start:start+remainder]
+        if start==0:next_partial=next_partial+partial
+    else:next_partial=torch.zeros_like(partial)
+    return unpack(fine),unpack(coarse),total-partial+inclusive[:,-1],next_partial
+
+
 class TransitionMemory(Backbone):
     architecture_version = 1
     supports_hidden_only = True
 
     def __init__(self, config, research):
         super().__init__()
+        if config.n_layers != 1:raise ValueError('transition_memory has one core; use associative_levels for its hierarchy')
         self.config, self.research = config, research
         self.levels, self.key_dim = research.associative_levels, research.memory_dim
         self.shared = research.share_scales or self.levels == 1
         self.group = research.state_factor
+        self.architecture_version = 2 if research.associative_execution == "blocked" else 1
         d = config.d_model
         self.embedding = nn.Embedding(config.vocab_size, d)
         self.embedding.apply(TransformerLM._init_weights)
@@ -129,7 +162,10 @@ class TransitionMemory(Backbone):
             total = zero if state is None else state.totals[index]
             partial = zero if state is None else state.partials[index]
             q, k, v = op.encode(x, previous, local)
-            fine, coarse, total, partial = associative_reads(q, k, v, total, partial, phase, self.group)
+            if self.research.associative_execution == "blocked":
+                fine,coarse,total,partial=blocked_associative_reads(q,k,v,total,partial,phase,self.group,self.research.associative_block_size)
+            else:
+                fine, coarse, total, partial = associative_reads(q, k, v, total, partial, phase, self.group)
             reads.append((fine, coarse)); totals.append(total); partials.append(partial)
         if self.levels == 1:
             memory = self.operators[0].readout(reads[0][0] + reads[0][1])

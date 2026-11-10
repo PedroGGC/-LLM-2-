@@ -25,6 +25,16 @@ não instala esse código na branch comum. Confira `git branch --show-current` a
 
 ## Estado atual — 10/11/2026
 
+Próxima operação implementada: [linguagem em TinyStories](docs/TINYSTORIES_RUN.md).
+Memória simples 86.785 pesos, pirâmide compartilhada 86.979 e Transformers de
+86.400/2.164.992 pesos; seeds 331/332, 6.000 passos e contexto 256. Calibração de
+duas taxas exclusivamente em divisão do treino, reinicializando os treinos finais.
+NLL/bits por byte, curvas e todos os textos dos prompts fixos serão exportados.
+O fractal permanece na pirâmide; não há resultado linguístico T4 desta entrega.
+Execução bloqueada preserva o operador e será perfilada contra a referência.
+Dados por prefixos verificados (34 MiB baixados); T4 x2/teto 2h, um par de ZIPs
+finais. Ver [validação real e limitações](VALIDATION.md).
+
 A [campanha0031](docs/results/CAMPAIGN_0031.md) terminou: oito treinos de3000passos,
 seeds311/312, nas duasT4, em~11min03s antes da exportação. Memória única e duas
 pirâmides atingiram100%original/contrafactual até8K,64pares e fronteiras deslocadas.

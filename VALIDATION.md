@@ -1,5 +1,52 @@
 # Validação vigente — 10/11/2026
 
+## TinyStories — implementação, ainda sem campanha principal T4
+
+[Plano prévio](docs/PLAN_TINYSTORIES_IMPLEMENTATION.md),
+[protocolo e limitações](docs/TINYSTORIES_RUN.md). Windows, Python 3.12.2,
+PyTorch 2.14.1+cpu, `PYTHONPATH=src`. Sem CUDA local; os dois testes CUDA novos
+serão executados no preflight do Kaggle, não estão aprovados nesta entrega.
+
+Execução bloqueada versus referência: forward/backward e estados, streaming,
+causalidade em fronteiras e fases 0/1/3, pesos ligados e contagens. Preparação:
+prefixos limitados e SHA fixados, registros completos, deduplicação entre divisões,
+manifesto portátil, documentos isolados e caudas/padding/BOS contabilizados.
+Teste reservado bloqueado no avaliador. Treinamento: finitude/memorização,
+retomada exata com dropout 0,2 e acumulação 2, restauração dos pilotos e próxima
+atualização, duas taxas train-only e inicialização principal nova.
+
+Suíte ampliada final: **48 passed, 6 deselected, 81,24 s, exit 0**:
+`python -m pytest -q tests/test_stories_models.py tests/test_stories_data.py tests/test_stories_training.py tests/test_stories_operations.py tests/test_stories_bootstrap.py tests/test_binding_models.py tests/test_training.py tests/test_research_configs.py -m 'not cuda' -k 'not full_cpu'`.
+Inclui contagens/configs, rotação física, helpers fixados, relógio/Torch/dispatch,
+falha/deadline/disco com exportação parcial e preservação de arquivo alheio.
+O warning do wrapper de optimizer.step é do teste legado de equivalência do
+benchmark; não altera a ordem real dos updates. Deselected inclui CUDA e a
+integração completa exercitada separadamente abaixo.
+
+Integração final de quatro workers CPU reais: **1 passed, 5 deselected, 22,80 s,
+exit 0**, `python -m pytest -q tests/test_stories_operations.py -k full_cpu`.
+Inclui calibração das duas taxas, novos treinos principais, checkpoints finais,
+gerações, barreira/perfis, curvas PNG, verificação dos dois ZIPs e segunda
+campanha que reutiliza os quatro jobs completos sem novo treino. As configurações
+resolvidas correspondem à taxa realmente selecionada. Checkpoints intermediários
+e estados descartáveis de calibração não permanecem como pesos duplicados.
+
+Dados reais: download HTTP parcial total de 34 MiB na revisão fixada; seleção
+produziu manifesto `d61615e79496f14ef473cc10ad11e5deac6d2bda89be7046d738498ff16ba849`,
+16.777.421 bytes de treino/18.876 histórias e divisões distintas de calibração,
+desenvolvimento e teste reservado. Uma segunda preparação em diretório novo,
+partindo dos dois prefixos brutos locais, reproduziu exatamente esse SHA.
+Contagens de três bytes: NLL 1,699787, bpb
+2,452275 sobre todos os 524.508 bytes de desenvolvimento; 68.959.268 bytes de
+estado. É referência estatística com orçamento próprio, não rede equivalente.
+
+Smoke adicional em dados reais: 200 passos CPU, seed 11001, B8/T256, taxa 0,0003,
+sem compilação e apenas treino/subdivisão de calibração. Memória simples:
+NLL 5,59619 para 2,73839; Transformer pequeno: 5,54350 para 3,18167. Serve para
+detectar falha de aprendizado/finitude e preparo, não ranking da campanha,
+confirmação, custo GPU ou resultado do teste reservado. Esses pesos não serão
+continuados nos oito treinos principais. Não houve treino de 6.000 passos local.
+
 ## Campanha0031 — qualificação real T4 e auditoria
 
 [Relatório](docs/results/CAMPAIGN_0031.md): oito treinos novos/3000passos, duas

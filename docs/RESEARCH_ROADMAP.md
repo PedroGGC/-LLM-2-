@@ -2,6 +2,14 @@
 
 ## Roteiro vigente — arquitetura própria inspirada em fractais
 
+Entrega posterior à auditoria 0031: [linguagem TinyStories](TINYSTORIES_RUN.md),
+memória simples e pirâmide compartilhada frente a Transformers de 86k/2,16M.
+Dois seeds, taxa calibrada só no treino, 6.000 passos fixos, curvas/textos e teto
+de duas horas. Compartilhamento continua explícito; controle independente volta
+se houver ganho linguístico da hierarquia. Otimização bloqueada será medida na
+T4, sem presumir ganho. Profundidade variável, compressão, GRM/TTT e demais frentes
+continuam condicionais; a mudança do corpus não declara base já superior.
+
 10/11/2026: [0031concluída](results/CAMPAIGN_0031.md), oito treinos/duas seeds.
 Três candidatos100%na recuperação/contrafactuais até8K e64pares. Referência
 Transformer não qualificou. Sharing economiza sem perda observada frente à
