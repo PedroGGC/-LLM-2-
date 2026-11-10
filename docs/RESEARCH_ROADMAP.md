@@ -2,13 +2,19 @@
 
 ## Roteiro vigente — arquitetura própria inspirada em fractais
 
-Entrega posterior à auditoria 0031: [linguagem TinyStories](TINYSTORIES_RUN.md),
-memória simples e pirâmide compartilhada frente a Transformers de 86k/2,16M.
-Dois seeds, taxa calibrada só no treino, 6.000 passos fixos, curvas/textos e teto
-de duas horas. Compartilhamento continua explícito; controle independente volta
-se houver ganho linguístico da hierarquia. Otimização bloqueada será medida na
-T4, sem presumir ganho. Profundidade variável, compressão, GRM/TTT e demais frentes
-continuam condicionais; a mudança do corpus não declara base já superior.
+[0032 concluída](results/CAMPAIGN_0032.md): oito treinos TinyStories em ~21min12s;
+Transformer próximo em parâmetros vence memória simples e pirâmide. A pirâmide
+ganha só 0,004520 NLL frente à simples, com mais custo. Otimização bloqueada passa
+na T4 e reduz ~72% de VRAM incremental no forward 8K da mesma memória. Ganho de
+engenharia sem vantagem linguística; 48 textos repetitivos, teste reservado intacto.
+
+Próxima proposta: contextualizar consultas/escritas causais antes de nova expansão
+da matriz atual. A memória acumulativa de transições locais perde ordem distante;
+um probe estrutural ilustra colisão, sem carregar pesos treinados. Não repetir
+esta receita para apenas preencher tempo. Fractal permanece em compartilhamento
+entre níveis/passagens, com controle simples e independente antes de atribuir ganho.
+Profundidade variável, compressão, GRM/TTT e demais frentes mantêm condições próprias.
+Novo núcleo não implementado; [operação 0032 preservada](TINYSTORIES_RUN.md).
 
 10/11/2026: [0031concluída](results/CAMPAIGN_0031.md), oito treinos/duas seeds.
 Três candidatos100%na recuperação/contrafactuais até8K e64pares. Referência

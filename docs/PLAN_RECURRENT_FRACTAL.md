@@ -3,15 +3,26 @@
 Atualizado10/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
 históricos. Implementação experimental em `experiment/fractal-lrm`.
 
-Próxima operação autorizada e implementada: [TinyStories com dois controles
-Transformer](TINYSTORIES_RUN.md). Memória simples/pirâmide compartilhada versus
-Transformer próximo em parâmetros e referência maior; seeds 331/332, 6.000 passos.
-Perguntas: o núcleo aprende linguagem, a pirâmide ajuda e qual é a qualidade por
-custo frente aos controles? Não repetiremos associação saturada nem adicionaremos
-uma tecnologia para melhorar 100%. Textos fixos complementam NLL/bits por byte;
-calibração é train-only, teste reservado não avaliado. CPU local qualifica a
-implementação; linguagem e eficiência T4 seguem pendentes desta campanha.
-O catálogo e as condições das tecnologias abaixo permanecem vigentes.
+Atualização 0032: [TinyStories concluído](results/CAMPAIGN_0032.md), oito treinos,
+seeds 331/332 e 6.000 passos. Memória simples/pirâmide aprendem linguagem, mas perdem
+para ambos os Transformers, inclusive o controle próximo em parâmetros. NLL média:
+maior 0,802563, pequeno 1,128058, simples 1,334464, pirâmide 1,329944. Benefício da
+pirâmide 0,004520, abaixo do limiar e com mais custo. Textos de todos os modelos
+ainda repetem; nenhuma vantagem linguística confirmada. Teste reservado intacto.
+
+A otimização bloqueada reduziu ~72% de VRAM incremental e acelerou 1,53–1,66x a
+mesma memória no forward 8K. Preservar esse ganho de engenharia. O núcleo atual
+agrega transições locais sem contextualizar a formação das próximas chaves;
+ordens distintas podem colapsar no mesmo estado. Isso motiva revisar representação,
+sem tratar o diagnóstico como causa única demonstrada da perda.
+
+Próxima proposta: consulta/escrita sobre representações causais contextualizadas,
+comparando primeiro com o núcleo simples e os dois Transformers. Compartilhamento
+entre níveis/passagens continua hipótese fractal; controles independentes voltarão
+quando houver hierarquia útil. Esquecimento, profundidade variável, compressão e
+memórias posteriores serão ablações distintas. Suspender repetições da receita
+linguística 0032; novo núcleo ainda não implementado. O catálogo e as condições das
+tecnologias abaixo permanecem vigentes. [Protocolo histórico](TINYSTORIES_RUN.md).
 
 Atualização0031: [oito treinos concluídos](results/CAMPAIGN_0031.md), duas seeds.
 Memória única/compartilhada/independente resolveram recuperação de um byte:

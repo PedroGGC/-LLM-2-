@@ -1,0 +1,159 @@
+{
+  "date": "2026-11-10",
+  "input": "llm2-campaign-0032-results.zip",
+  "zip_sha256": "ff8644a10e406b0955c07b09c92455a99bc6ef2a53c965f9b11d5456194b79cc",
+  "zip_bytes": 2527514,
+  "members": 212,
+  "unpacked_bytes": 8143031,
+  "crc_ok": true,
+  "revision": "6f469fa6b80f2109b92c8b7be4a052c8c2ffaddd",
+  "bootstrap_hashes_verified": 388,
+  "snapshot_files_verified": 150,
+  "source_files_verified": 107,
+  "config_files_verified": 43,
+  "protocol_id": "c0a0f044b56dd8b6097b550370ae2c86cfca629d626c049d37b2f182182425cc",
+  "dataset_sha256": "d61615e79496f14ef473cc10ad11e5deac6d2bda89be7046d738498ff16ba849",
+  "status": "complete",
+  "fresh_runs": 8,
+  "optimizer_steps": 48000,
+  "main_training_bytes_with_repetition": 393216000,
+  "main_evaluations": 32,
+  "initial_evaluations": 8,
+  "calibration_trials": 8,
+  "calibration_optimizer_steps": 3200,
+  "metric_records_verified": 160,
+  "generations_verified": 48,
+  "test_evaluated": false,
+  "main_checkpoints_metadata_verified": 8,
+  "no_final_tensor_files_supplied": true,
+  "session_before_export_seconds": 1271.6092078610002,
+  "storage_budget": {
+    "cache_limit_bytes": 2147483648,
+    "exceeded": null,
+    "peak_cache_bytes": 167970718,
+    "reserve_bytes": 2147483648,
+    "sampling_seconds": 5.0
+  },
+  "cpu_preflight": {
+    "passed": 13,
+    "deselected": 2,
+    "seconds": 18.57
+  },
+  "cuda_preflight": {
+    "passed": 2,
+    "deselected": 5,
+    "seconds": 32.4,
+    "gpu": 0
+  },
+  "aggregates": [
+    {
+      "variant": "transformer",
+      "parameters": 2164992,
+      "nll": 0.8025634499611198,
+      "bits_per_byte": 1.1578543092576454,
+      "train_step_ms": 48.526166250042024,
+      "train_wall_seconds": 296.00408732200015,
+      "training_vram_mib": 486.435546875
+    },
+    {
+      "variant": "transition",
+      "parameters": 86785,
+      "nll": 1.3344637838285958,
+      "bits_per_byte": 1.925224283175437,
+      "train_step_ms": 11.439215000024205,
+      "train_wall_seconds": 75.7166869874988,
+      "training_vram_mib": 155.98291015625
+    },
+    {
+      "variant": "pyramid_shared",
+      "parameters": 86979,
+      "nll": 1.329943828874698,
+      "bits_per_byte": 1.918703366578407,
+      "train_step_ms": 13.229642749962522,
+      "train_wall_seconds": 85.11010354699721,
+      "training_vram_mib": 167.05419921875
+    },
+    {
+      "variant": "transformer_matched",
+      "parameters": 86400,
+      "nll": 1.1280575322233202,
+      "bits_per_byte": 1.627443007576026,
+      "train_step_ms": 15.759525000049734,
+      "train_wall_seconds": 79.15888447750814,
+      "training_vram_mib": 156.65087890625
+    }
+  ],
+  "optimization": [
+    {
+      "variant": "transition",
+      "seed": 331,
+      "logit_error": 9.965896606445312e-05,
+      "reference_ms": 6.164265999984764,
+      "blocked_ms": 3.7976890000663843,
+      "speed_factor": 1.6231624021548396,
+      "reference_incremental_mib": 226.9697265625,
+      "blocked_incremental_mib": 63.02783203125,
+      "incremental_vram_reduction_percent": 72.23073183114832
+    },
+    {
+      "variant": "pyramid_shared",
+      "seed": 331,
+      "logit_error": 4.7326087951660156e-05,
+      "reference_ms": 6.793131499989613,
+      "blocked_ms": 4.173006999963036,
+      "speed_factor": 1.6278744560097278,
+      "reference_incremental_mib": 227.970703125,
+      "blocked_incremental_mib": 64.02880859375,
+      "incremental_vram_reduction_percent": 71.91358024691358
+    },
+    {
+      "variant": "transition",
+      "seed": 332,
+      "logit_error": 6.67572021484375e-05,
+      "reference_ms": 6.358936000083304,
+      "blocked_ms": 3.8341215000627926,
+      "speed_factor": 1.6585118650984747,
+      "reference_incremental_mib": 226.9697265625,
+      "blocked_incremental_mib": 63.02783203125,
+      "incremental_vram_reduction_percent": 72.23073183114832
+    },
+    {
+      "variant": "pyramid_shared",
+      "seed": 332,
+      "logit_error": 0.00013065338134765625,
+      "reference_ms": 6.754782000029991,
+      "blocked_ms": 4.422417000114365,
+      "speed_factor": 1.5273959917970898,
+      "reference_incremental_mib": 227.970703125,
+      "blocked_incremental_mib": 64.02880859375,
+      "incremental_vram_reduction_percent": 71.91358024691358
+    }
+  ],
+  "structural_order_probe": {
+    "scope": "untrained CPU model, not trained-weight quality evaluation",
+    "seed": 10032,
+    "prefixes": [
+      "xxcatxxxxdogxx",
+      "xxdogxxxxcatxx"
+    ],
+    "common_suffix": "xxxxxxxx",
+    "same_trigram_multiset": true,
+    "rows": [
+      {
+        "variant": "transition",
+        "max_abs_final_logit_difference": 1.4901161193847656e-07
+      },
+      {
+        "variant": "pyramid_shared",
+        "max_abs_final_logit_difference": 1.4901161193847656e-07
+      }
+    ]
+  },
+  "limitations": [
+    "two seeds and reduced deterministic corpus; development, no reserved test",
+    "equal targets, not compute",
+    "forward8K measured on random bytes, not language quality8K or cached generation",
+    "weights and optimizer state absent; metadata verified, tensors not rehashed",
+    "no main training or trained-weight inference in this audit"
+  ]
+}

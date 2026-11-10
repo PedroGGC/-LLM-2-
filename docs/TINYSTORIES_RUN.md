@@ -1,5 +1,10 @@
 # Linguagem após a campanha 0031
 
+Operação executada na [campanha 0032](results/CAMPAIGN_0032.md): oito treinos
+concluídos, Transformer de 86k vence; a execução bloqueada economiza VRAM.
+Protocolo abaixo preservado para reprodução, sem recomendação de repeti-lo como
+próxima campanha. A proposta seguinte revisa a representação de contexto.
+
 Implementação de 10/11/2026, branch `experiment/fractal-lrm`. A próxima campanha
 começa na numeração 0032. A 0031 resolveu associação sintética nos candidatos,
 mas sua referência Transformer não qualificou; isso não demonstra superioridade

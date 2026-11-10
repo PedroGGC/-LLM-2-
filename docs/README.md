@@ -5,7 +5,8 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 
 | Documento | Finalidade |
 |---|---|
-| [Próxima operação: linguagem TinyStories](TINYSTORIES_RUN.md) | Memória/pirâmide e dois Transformers; dados limitados, textos, duas T4/teto 2h |
+| [Campanha 0032: linguagem](results/CAMPAIGN_0032.md) | Oito treinos; Transformer de 86k vence; blocos economizam VRAM; revisar representação causal |
+| [Operação TinyStories preservada](TINYSTORIES_RUN.md) | Memória/pirâmide e dois Transformers; dados limitados, textos, duas T4/teto 2h |
 | [Plano prévio TinyStories](PLAN_TINYSTORIES_IMPLEMENTATION.md) | Dados, calibração train-only, execução bloqueada e critérios antes de implementar |
 | [Plano aprovado: recorrência/fractal](PLAN_RECURRENT_FRACTAL.md) | Hipóteses, candidatos, riscos, critérios e etapas condicionais |
 | [Campanha0031: resultados](results/CAMPAIGN_0031.md) | Oito treinos; memória resolve associação; sharing econômico; linguagem/referência ainda pendentes |

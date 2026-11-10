@@ -25,16 +25,20 @@ não instala esse código na branch comum. Confira `git branch --show-current` a
 
 ## Estado atual — 10/11/2026
 
-Próxima operação implementada: [linguagem em TinyStories](docs/TINYSTORIES_RUN.md).
-Memória simples 86.785 pesos, pirâmide compartilhada 86.979 e Transformers de
-86.400/2.164.992 pesos; seeds 331/332, 6.000 passos e contexto 256. Calibração de
-duas taxas exclusivamente em divisão do treino, reinicializando os treinos finais.
-NLL/bits por byte, curvas e todos os textos dos prompts fixos serão exportados.
-O fractal permanece na pirâmide; não há resultado linguístico T4 desta entrega.
-Execução bloqueada preserva o operador e será perfilada contra a referência.
-Dados por prefixos verificados (34 MiB baixados); T4 x2/teto 2h, um par de ZIPs
-finais. Ver [validação real e limitações](VALIDATION.md).
-[Célula curta TinyStories para Kaggle](scripts/10_testar_linguagem_tinystories_kaggle.py).
+A [campanha 0032](docs/results/CAMPAIGN_0032.md) concluiu os oito treinos TinyStories
+de 6.000 passos/seeds 331–332 em ~21min12s antes da exportação. NLL média: Transformer
+maior 0,802563, Transformer de 86.400 pesos 1,128058, memória de 86.785 pesos 1,334464,
+pirâmide de 86.979 pesos 1,329944. A referência próxima em parâmetros também vence.
+Pirâmide melhora 0,004520 NLL sobre a memória e custa 15,65% mais por update.
+48 textos exportados mostram repetição/erros; não há vantagem linguística confirmada.
+
+Execução em blocos validada nas T4: ~72% menos VRAM incremental e 1,53–1,66x mais
+rápida que a mesma memória em modo anterior no forward 8K. Ganho de engenharia,
+sem qualidade linguística 8K ou geração com cache demonstradas. Teste reservado
+intacto; um par de ZIPs finais/cache limitado. Próxima proposta: contextualizar
+consultas/escritas e preservar o controle fractal, suspendendo novas repetições
+da receita atual. Nenhum novo núcleo implementado após a auditoria.
+[Protocolo/célula preservados](docs/TINYSTORIES_RUN.md), [validação](VALIDATION.md).
 
 A [campanha0031](docs/results/CAMPAIGN_0031.md) terminou: oito treinos de3000passos,
 seeds311/312, nas duasT4, em~11min03s antes da exportação. Memória única e duas

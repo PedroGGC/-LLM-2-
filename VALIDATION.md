@@ -1,11 +1,42 @@
 # Validação vigente — 10/11/2026
 
-## TinyStories — implementação, ainda sem campanha principal T4
+## Campanha 0032 — T4 e auditoria dos resultados
+
+[Relatório](docs/results/CAMPAIGN_0032.md): status complete, oito treinos novos,
+seeds331/332, 6.000 passos; 1.271,61s antes de exportar. ZIP2.527.514bytes/212membros,
+CRC válido e caminhos seguros, sem pesos/pickle/corpus binário. 388 hashes do
+bootstrap contra Git6f469fa; snapshot150arquivos (107fontes/dependências e43configs).
+Configurações resolvidas, protocolo/manifesto portátil, parâmetros por meta/fórmula,
+embedding ligado, workers, metadados de checkpoints, resumos, 160registros finitos,
+32avaliações completas e48gerações por bytes originais reconciliados. Dados locais
+verificados têm o mesmo manifesto; nenhum teste reservado avaliado.
+
+Preflight no Kaggle: **CPU13passed/2deselected,18,57s; CUDA2passed/5deselected,
+32,40s**, GPU0. Todos os braços treinados/perfilados nas duas T4 com alternância
+porseed; Python3.13.16/Torch2.11.0+cu130. Forward/gradientes do caminho bloqueado
+qualificados nas formas desses testes; não todos os backends/precisões.
+Sem traceback/OOM ou fallback registrado. Cache máximo amostrado167.970.718bytes,
+sem violação da guarda, removido ao final. Metadados finais apenas: tensores da
+campanha não fornecidos, não rehashados nem carregados localmente.
+
+NLL média maior/pequeno/simples/pirâmide0,802563/1,128058/1,334464/1,329944.
+Nenhuma comparação com as referências qualifica ganho linguístico. Blocos versus
+referência dos mesmos pesos em8K: -71,91–72,23%VRAM incremental,1,53–1,66xmais
+rápido, erro máximo de logits4,73e-5–1,31e-4. Isso é forward eager, não linguagem
+8K, geração com cache ou custo para qualidade igual.
+
+Auditoria executada por leitura/asserções sem treino ou inferência dos pesos finais.
+Probe adicional CPU com pesos aleatórios/seed10032/dropout0: dois prefixos com
+mesma contagem de triplas e sufixo comum dão diferença1,49e-7 nos logits finais
+de ambos os candidatos. Ilustra a perda de ordem do agregado local; não é prova
+de causa única da perda treinada. Nenhum código de treino foi alterado nesta auditoria.
+
+## TinyStories — validação local anterior à campanha 0032
 
 [Plano prévio](docs/PLAN_TINYSTORIES_IMPLEMENTATION.md),
 [protocolo e limitações](docs/TINYSTORIES_RUN.md). Windows, Python 3.12.2,
 PyTorch 2.14.1+cpu, `PYTHONPATH=src`. Sem CUDA local; os dois testes CUDA novos
-serão executados no preflight do Kaggle, não estão aprovados nesta entrega.
+não estavam aprovados nessa entrega. A qualificação real posterior está acima.
 
 Execução bloqueada versus referência: forward/backward e estados, streaming,
 causalidade em fronteiras e fases 0/1/3, pesos ligados e contagens. Preparação:

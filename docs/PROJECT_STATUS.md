@@ -1,14 +1,18 @@
 # Estado científico e técnico — 10/11/2026
 
-Entrega seguinte autorizada: [primeira comparação TinyStories](TINYSTORIES_RUN.md),
-oito treinos fixos/duas seeds com memória simples, pirâmide compartilhada e dois
-Transformers (86.400 e 2.164.992 pesos). Calibração train-only de duas taxas;
-desenvolvimento completo e textos fixos, teste reservado sem avaliação. Prefixos
-fixados limitam o download a 34 MiB e preservam documentos/deduplicação. Execução
-bloqueada da memória passa em equivalência CPU; ganho GPU ainda não medido.
-CPU de desenvolvimento mostrou perda decrescente, não vantagem científica.
-T4 x2, teto 2h, caches próprios limitados e somente um par de ZIPs finais.
-Campanha principal ainda não executada; não confundir com evidência da 0031.
+[Campanha 0032 concluída](results/CAMPAIGN_0032.md): oito treinos/duas seeds/6.000
+passos, ~21min12s antes da exportação. NLL média maior/pequeno/simples/pirâmide:
+0,802563/1,128058/1,334464/1,329944. O Transformer de 86.400 pesos também vence os
+candidatos de ~87k. A pirâmide melhora pouco e custa mais; 48 textos preservados
+exibem repetição/erros. Nenhuma comparação qualifica vantagem em linguagem.
+Execução em blocos validada nas duas T4: ~72% menos VRAM incremental e 1,53–1,66x
+mais rápida que a referência da mesma memória no forward 8K. Não é qualidade
+8K ou geração com cache. Teste reservado não consultado, ZIPs finais sem after-NN.
+388 hashes Git/150 arquivos do snapshot, configurações, 160 métricas e 48 exemplos
+conferidos; pesos reais ausentes. CPU13/CUDA2 passed no preflight do Kaggle.
+Próxima proposta: representação contextualizada nas consultas/escritas; preservar
+fractal e otimização, suspender repetição da receita atual. Novo núcleo pendente,
+sem treino adicional nesta auditoria. [Protocolo preservado](TINYSTORIES_RUN.md).
 
 A [campanha0031](results/CAMPAIGN_0031.md) concluiu oito treinos novos/3000passos,
 seeds311/312, em662,54s antes da exportação. Candidatos:100%original e pareado
