@@ -34,6 +34,7 @@ O fractal permanece na pirâmide; não há resultado linguístico T4 desta entre
 Execução bloqueada preserva o operador e será perfilada contra a referência.
 Dados por prefixos verificados (34 MiB baixados); T4 x2/teto 2h, um par de ZIPs
 finais. Ver [validação real e limitações](VALIDATION.md).
+[Célula curta TinyStories para Kaggle](scripts/10_testar_linguagem_tinystories_kaggle.py).
 
 A [campanha0031](docs/results/CAMPAIGN_0031.md) terminou: oito treinos de3000passos,
 seeds311/312, nas duasT4, em~11min03s antes da exportação. Memória única e duas

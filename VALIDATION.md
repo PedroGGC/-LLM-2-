@@ -31,6 +31,12 @@ campanha que reutiliza os quatro jobs completos sem novo treino. As configuraç�
 resolvidas correspondem à taxa realmente selecionada. Checkpoints intermediários
 e estados descartáveis de calibração não permanecem como pesos duplicados.
 
+Entrega da célula 10: **4 passed, 0,11 s, exit 0**,
+`python -m pytest -q tests/test_stories_delivery.py`. SHA literal conferido contra
+o bootstrap do Git `6f469fa6b80f2109b92c8b7be4a052c8c2ffaddd`; célula desativada
+sem rede, payload alterado bloqueado, dispatch/seeds/relógio e callback de download
+verificados por simulação. Nenhum treino foi iniciado na conta Kaggle nesta entrega.
+
 Dados reais: download HTTP parcial total de 34 MiB na revisão fixada; seleção
 produziu manifesto `d61615e79496f14ef473cc10ad11e5deac6d2bda89be7046d738498ff16ba849`,
 16.777.421 bytes de treino/18.876 histórias e divisões distintas de calibração,

@@ -92,6 +92,8 @@ Não prometemos economia de VRAM ou aceleração antes dessa medição.
 ## Kaggle, duração e arquivos
 
 Ativar Internet e GPU T4 x2. Executar a célula curta por revisão Git e SHA.
+[Arquivo da célula](../scripts/10_testar_linguagem_tinystories_kaggle.py), revisão
+de ciência/operação `6f469fa6b80f2109b92c8b7be4a052c8c2ffaddd`.
 O teto de duas horas inclui bootstrap, dados, testes, calibração, compilação,
 treinos, perfis e reserva de cinco minutos para exportação. Cada job mede um
 piloto restaurado e exige previsão com margem de 35% para iniciar o horizonte
