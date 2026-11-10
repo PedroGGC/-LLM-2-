@@ -36,6 +36,8 @@ Entrega da célula 10: **4 passed, 0,11 s, exit 0**,
 o bootstrap do Git `6f469fa6b80f2109b92c8b7be4a052c8c2ffaddd`; célula desativada
 sem rede, payload alterado bloqueado, dispatch/seeds/relógio e callback de download
 verificados por simulação. Nenhum treino foi iniciado na conta Kaggle nesta entrega.
+Após publicação, download HTTP real do bootstrap fixado retornou 4.391 bytes com
+SHA-256 exatamente igual ao da célula; links locais da entrega e diff conferidos.
 
 Dados reais: download HTTP parcial total de 34 MiB na revisão fixada; seleção
 produziu manifesto `d61615e79496f14ef473cc10ad11e5deac6d2bda89be7046d738498ff16ba849`,
