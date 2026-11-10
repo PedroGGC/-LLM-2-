@@ -1,5 +1,12 @@
 # Memória de transições e pirâmide — campanha a partir da0031
 
+Atualização10/11/2026: [campanha0031concluída](results/CAMPAIGN_0031.md), oito
+treinos/duas seeds,100%nos três candidatos em toda a recuperação final. Transformer
+não qualificou. Sharing foi econômico frente à pirâmide independente; hierarquia
+não acrescentou acerto ao núcleo único. Próxima recomendação é linguagem e
+referência qualificada. Preservar esta célula para reprodução, sem repetir a
+matriz saturada como próxima prioridade.
+
 Entrega09/11/2026. [Plano prévio](PLAN_ASSOCIATIVE_TRANSITION_IMPLEMENTATION.md).
 A autorização de mudanças amplas levou a uma família nova, independente da
 adaptação mLSTM. Os backbones e protocolos antigos continuam reproduzíveis por

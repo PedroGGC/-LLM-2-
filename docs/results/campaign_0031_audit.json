@@ -1,0 +1,502 @@
+{
+  "audit_date": "2026-11-10",
+  "input": "llm2-campaign-0031-results.zip",
+  "zip_bytes": 954594,
+  "zip_sha256": "08f3cbf1505ceefccef3f08f961eaa0a7e1c393d9edd8bc7b65046794a4db3ff",
+  "members": 129,
+  "unpacked_bytes": 3776540,
+  "crc_ok": true,
+  "revision": "bcd7780e8d929ce938c69a8eaf8167241518e744",
+  "bootstrap_hashes_verified": 366,
+  "snapshot_files_verified": 144,
+  "source_files_verified": 101,
+  "config_files_verified": 43,
+  "status": "complete",
+  "fresh_training_runs": 8,
+  "optimizer_steps": 24000,
+  "training_queries": 6144000,
+  "training_input_bytes_with_repetition": 98304000,
+  "development_evaluations": 32,
+  "initial_evaluations": 16,
+  "final_length_evaluations": 32,
+  "capacity_evaluations": 8,
+  "alignment_evaluations": 8,
+  "metric_records_verified": 160,
+  "regenerated_oracle_queries": 8192,
+  "session_before_export_seconds": 662.5370668850001,
+  "peak_compiler_cache_bytes_sampled": 155209556,
+  "no_weight_tensors_supplied": true,
+  "aggregates": [
+    {
+      "variant": "transformer",
+      "length": 256,
+      "accuracy_percent": 3.662109375,
+      "paired_percent": 0.0,
+      "parameters": 2164992,
+      "forward_ms": 2.7675639999955592,
+      "forward_vram_mib": 95.7822265625,
+      "gpu_mj_per_query": 16.66534687817638,
+      "train_step_ms": 25.928411249978467,
+      "training_vram_mib": 291.169921875
+    },
+    {
+      "variant": "transformer",
+      "length": 1024,
+      "accuracy_percent": 2.63671875,
+      "paired_percent": 0.0,
+      "parameters": 2164992,
+      "forward_ms": 2.9416982500123368,
+      "forward_vram_mib": 105.6748046875,
+      "gpu_mj_per_query": 20.51986002966259,
+      "train_step_ms": 25.928411249978467,
+      "training_vram_mib": 291.169921875
+    },
+    {
+      "variant": "transformer",
+      "length": 4096,
+      "accuracy_percent": 2.05078125,
+      "paired_percent": 0.09765625,
+      "parameters": 2164992,
+      "forward_ms": 17.116828749990987,
+      "forward_vram_mib": 141.7451171875,
+      "gpu_mj_per_query": 82.53485963642214,
+      "train_step_ms": 25.928411249978467,
+      "training_vram_mib": 291.169921875
+    },
+    {
+      "variant": "transformer",
+      "length": 8192,
+      "accuracy_percent": 1.26953125,
+      "paired_percent": 0.0,
+      "parameters": 2164992,
+      "forward_ms": 54.865781999993146,
+      "forward_vram_mib": 189.7138671875,
+      "gpu_mj_per_query": 240.16479166666667,
+      "train_step_ms": 25.928411249978467,
+      "training_vram_mib": 291.169921875
+    },
+    {
+      "variant": "transition",
+      "length": 256,
+      "accuracy_percent": 100.0,
+      "paired_percent": 100.0,
+      "parameters": 86785,
+      "forward_ms": 2.930589750008039,
+      "forward_vram_mib": 72.029296875,
+      "gpu_mj_per_query": 11.498298728214502,
+      "train_step_ms": 11.43045650000829,
+      "training_vram_mib": 172.47412109375
+    },
+    {
+      "variant": "transition",
+      "length": 1024,
+      "accuracy_percent": 100.0,
+      "paired_percent": 100.0,
+      "parameters": 86785,
+      "forward_ms": 2.9089744999737377,
+      "forward_vram_mib": 93.04736328125,
+      "gpu_mj_per_query": 12.094424256570994,
+      "train_step_ms": 11.43045650000829,
+      "training_vram_mib": 172.47412109375
+    },
+    {
+      "variant": "transition",
+      "length": 4096,
+      "accuracy_percent": 100.0,
+      "paired_percent": 100.0,
+      "parameters": 86785,
+      "forward_ms": 3.847150999973792,
+      "forward_vram_mib": 177.12158203125,
+      "gpu_mj_per_query": 17.234777050166606,
+      "train_step_ms": 11.43045650000829,
+      "training_vram_mib": 172.47412109375
+    },
+    {
+      "variant": "transition",
+      "length": 8192,
+      "accuracy_percent": 100.0,
+      "paired_percent": 100.0,
+      "parameters": 86785,
+      "forward_ms": 5.7536789999801385,
+      "forward_vram_mib": 290.21923828125,
+      "gpu_mj_per_query": 33.197120279146134,
+      "train_step_ms": 11.43045650000829,
+      "training_vram_mib": 172.47412109375
+    },
+    {
+      "variant": "pyramid_shared",
+      "length": 256,
+      "accuracy_percent": 100.0,
+      "paired_percent": 100.0,
+      "parameters": 86979,
+      "forward_ms": 3.224348750052286,
+      "forward_vram_mib": 73.03369140625,
+      "gpu_mj_per_query": 14.246628945756953,
+      "train_step_ms": 12.281799749985112,
+      "training_vram_mib": 177.033203125
+    },
+    {
+      "variant": "pyramid_shared",
+      "length": 1024,
+      "accuracy_percent": 100.0,
+      "paired_percent": 100.0,
+      "parameters": 86979,
+      "forward_ms": 3.2648090000009233,
+      "forward_vram_mib": 94.0517578125,
+      "gpu_mj_per_query": 14.966796875,
+      "train_step_ms": 12.281799749985112,
+      "training_vram_mib": 177.033203125
+    },
+    {
+      "variant": "pyramid_shared",
+      "length": 4096,
+      "accuracy_percent": 100.0,
+      "paired_percent": 100.0,
+      "parameters": 86979,
+      "forward_ms": 4.000089750007874,
+      "forward_vram_mib": 178.1259765625,
+      "gpu_mj_per_query": 19.74808121403455,
+      "train_step_ms": 12.281799749985112,
+      "training_vram_mib": 177.033203125
+    },
+    {
+      "variant": "pyramid_shared",
+      "length": 8192,
+      "accuracy_percent": 100.0,
+      "paired_percent": 100.0,
+      "parameters": 86979,
+      "forward_ms": 5.8317179999960445,
+      "forward_vram_mib": 291.2236328125,
+      "gpu_mj_per_query": 38.20037462569152,
+      "train_step_ms": 12.281799749985112,
+      "training_vram_mib": 177.033203125
+    },
+    {
+      "variant": "pyramid_independent",
+      "length": 256,
+      "accuracy_percent": 100.0,
+      "paired_percent": 100.0,
+      "parameters": 111652,
+      "forward_ms": 4.772275249990798,
+      "forward_vram_mib": 73.55224609375,
+      "gpu_mj_per_query": 17.70973135964912,
+      "train_step_ms": 14.572209249962498,
+      "training_vram_mib": 207.7158203125
+    },
+    {
+      "variant": "pyramid_independent",
+      "length": 1024,
+      "accuracy_percent": 100.0,
+      "paired_percent": 100.0,
+      "parameters": 111652,
+      "forward_ms": 4.825302000028842,
+      "forward_vram_mib": 95.1328125,
+      "gpu_mj_per_query": 18.373658668253128,
+      "train_step_ms": 14.572209249962498,
+      "training_vram_mib": 207.7158203125
+    },
+    {
+      "variant": "pyramid_independent",
+      "length": 4096,
+      "accuracy_percent": 100.0,
+      "paired_percent": 100.0,
+      "parameters": 111652,
+      "forward_ms": 6.688997500020832,
+      "forward_vram_mib": 181.45703125,
+      "gpu_mj_per_query": 34.841950829663055,
+      "train_step_ms": 14.572209249962498,
+      "training_vram_mib": 207.7158203125
+    },
+    {
+      "variant": "pyramid_independent",
+      "length": 8192,
+      "accuracy_percent": 100.0,
+      "paired_percent": 100.0,
+      "parameters": 111652,
+      "forward_ms": 9.40183425004193,
+      "forward_vram_mib": 300.5546875,
+      "gpu_mj_per_query": 58.198352443858795,
+      "train_step_ms": 14.572209249962498,
+      "training_vram_mib": 207.7158203125
+    }
+  ],
+  "contrasts": [
+    {
+      "seed": 311,
+      "length": 256,
+      "transformer_over_transition_forward": 0.9296596615136117,
+      "transformer_over_transition_gpu_energy": 1.3014836281567224,
+      "transformer_over_transition_train_step": 2.1608516816517316,
+      "shared_vs_independent_parameters_reduction": 0.22098126321069034,
+      "shared_vs_independent_forward_reduction": 0.331835226762895,
+      "shared_vs_single_forward_overhead": 0.0900329417696939
+    },
+    {
+      "seed": 311,
+      "length": 1024,
+      "transformer_over_transition_forward": 1.0384589692755835,
+      "transformer_over_transition_gpu_energy": 1.6768564418321912,
+      "transformer_over_transition_train_step": 2.1608516816517316,
+      "shared_vs_independent_parameters_reduction": 0.22098126321069034,
+      "shared_vs_independent_forward_reduction": 0.3220371072034146,
+      "shared_vs_single_forward_overhead": 0.13809334777751725
+    },
+    {
+      "seed": 311,
+      "length": 4096,
+      "transformer_over_transition_forward": 4.366233889833727,
+      "transformer_over_transition_gpu_energy": 4.65015363569376,
+      "transformer_over_transition_train_step": 2.1608516816517316,
+      "shared_vs_independent_parameters_reduction": 0.22098126321069034,
+      "shared_vs_independent_forward_reduction": 0.40370087283368694,
+      "shared_vs_single_forward_overhead": 0.04338009114090946
+    },
+    {
+      "seed": 311,
+      "length": 8192,
+      "transformer_over_transition_forward": 9.013004192633904,
+      "transformer_over_transition_gpu_energy": 7.002277904328019,
+      "transformer_over_transition_train_step": 2.1608516816517316,
+      "shared_vs_independent_parameters_reduction": 0.22098126321069034,
+      "shared_vs_independent_forward_reduction": 0.3915325163934874,
+      "shared_vs_single_forward_overhead": 0.0003213479566055444
+    },
+    {
+      "seed": 312,
+      "length": 256,
+      "transformer_over_transition_forward": 0.9588319168441407,
+      "transformer_over_transition_gpu_energy": 1.5999414816263562,
+      "transformer_over_transition_train_step": 2.3765786539434712,
+      "shared_vs_independent_parameters_reduction": 0.22098126321069034,
+      "shared_vs_independent_forward_reduction": 0.31698197911397563,
+      "shared_vs_single_forward_overhead": 0.11027105318588903
+    },
+    {
+      "seed": 312,
+      "length": 1024,
+      "transformer_over_transition_forward": 0.9846808315594964,
+      "transformer_over_transition_gpu_energy": 1.7158936887262692,
+      "transformer_over_transition_train_step": 2.3765786539434712,
+      "shared_vs_independent_parameters_reduction": 0.22098126321069034,
+      "shared_vs_independent_forward_reduction": 0.3247587428266505,
+      "shared_vs_single_forward_overhead": 0.10692436131064476
+    },
+    {
+      "seed": 312,
+      "length": 4096,
+      "transformer_over_transition_forward": 4.531241339101538,
+      "transformer_over_transition_gpu_energy": 4.933233476252788,
+      "transformer_over_transition_train_step": 2.3765786539434712,
+      "shared_vs_independent_parameters_reduction": 0.22098126321069034,
+      "shared_vs_independent_forward_reduction": 0.400276850240612,
+      "shared_vs_single_forward_overhead": 0.036169775411246885
+    },
+    {
+      "seed": 312,
+      "length": 8192,
+      "transformer_over_transition_forward": 10.061416776973912,
+      "transformer_over_transition_gpu_energy": 7.470011159142373,
+      "transformer_over_transition_train_step": 2.3765786539434712,
+      "shared_vs_independent_parameters_reduction": 0.22098126321069034,
+      "shared_vs_independent_forward_reduction": 0.36770780013251236,
+      "shared_vs_single_forward_overhead": 0.026878074621248915
+    }
+  ],
+  "jobs": [
+    {
+      "variant": "transformer",
+      "seed": 311,
+      "capacity_accuracy": 0.009765625,
+      "alignment_accuracy": 0.041015625,
+      "initial_scores": [
+        [
+          4,
+          0.0
+        ],
+        [
+          32,
+          0.0
+        ]
+      ],
+      "gates": []
+    },
+    {
+      "variant": "transition",
+      "seed": 311,
+      "capacity_accuracy": 1.0,
+      "alignment_accuracy": 1.0,
+      "initial_scores": [
+        [
+          4,
+          0.00390625
+        ],
+        [
+          32,
+          0.0
+        ]
+      ],
+      "gates": [
+        {
+          "distractors": 0.00012156539014540613,
+          "keys": 0.0017525504808872938,
+          "values": 0.2943609356880188
+        }
+      ]
+    },
+    {
+      "variant": "pyramid_shared",
+      "seed": 311,
+      "capacity_accuracy": 1.0,
+      "alignment_accuracy": 1.0,
+      "initial_scores": [
+        [
+          4,
+          0.00390625
+        ],
+        [
+          32,
+          0.0
+        ]
+      ],
+      "gates": [
+        {
+          "distractors": 0.0001470560091547668,
+          "keys": 0.001677582855336368,
+          "values": 0.2352626621723175
+        }
+      ]
+    },
+    {
+      "variant": "pyramid_independent",
+      "seed": 311,
+      "capacity_accuracy": 1.0,
+      "alignment_accuracy": 1.0,
+      "initial_scores": [
+        [
+          4,
+          0.00390625
+        ],
+        [
+          32,
+          0.0
+        ]
+      ],
+      "gates": [
+        {
+          "distractors": 0.018740355968475342,
+          "keys": 0.03286018595099449,
+          "values": 0.1400507092475891
+        },
+        {
+          "distractors": 0.00014827588165644556,
+          "keys": 0.0016338685527443886,
+          "values": 0.230845645070076
+        }
+      ]
+    },
+    {
+      "variant": "transformer",
+      "seed": 312,
+      "capacity_accuracy": 0.0126953125,
+      "alignment_accuracy": 0.0283203125,
+      "initial_scores": [
+        [
+          4,
+          0.0
+        ],
+        [
+          32,
+          0.0
+        ]
+      ],
+      "gates": []
+    },
+    {
+      "variant": "transition",
+      "seed": 312,
+      "capacity_accuracy": 1.0,
+      "alignment_accuracy": 1.0,
+      "initial_scores": [
+        [
+          4,
+          0.01953125
+        ],
+        [
+          32,
+          0.0078125
+        ]
+      ],
+      "gates": [
+        {
+          "distractors": 0.00010354046389693394,
+          "keys": 0.0015613485593348742,
+          "values": 0.30544036626815796
+        }
+      ]
+    },
+    {
+      "variant": "pyramid_shared",
+      "seed": 312,
+      "capacity_accuracy": 1.0,
+      "alignment_accuracy": 1.0,
+      "initial_scores": [
+        [
+          4,
+          0.01953125
+        ],
+        [
+          32,
+          0.0078125
+        ]
+      ],
+      "gates": [
+        {
+          "distractors": 0.0001231180503964424,
+          "keys": 0.0015077178832143545,
+          "values": 0.2463812530040741
+        }
+      ]
+    },
+    {
+      "variant": "pyramid_independent",
+      "seed": 312,
+      "capacity_accuracy": 1.0,
+      "alignment_accuracy": 1.0,
+      "initial_scores": [
+        [
+          4,
+          0.01953125
+        ],
+        [
+          32,
+          0.0078125
+        ]
+      ],
+      "gates": [
+        {
+          "distractors": 0.009474022313952446,
+          "keys": 0.02227718196809292,
+          "values": 0.1500965803861618
+        },
+        {
+          "distractors": 0.00012491049710661173,
+          "keys": 0.0015060144942253828,
+          "values": 0.24425306916236877
+        }
+      ]
+    }
+  ],
+  "decision": "strong task-specific association result; single memory simplest candidate; sharing saves versus independent pyramid; hierarchy adds no accuracy; qualify Transformer and move to language",
+  "limits": [
+    "two training seeds, same procedural evaluation examples",
+    "adjacent bindings and fixed 64-key/64-value alphabets",
+    "Transformer did not qualify; no matched-quality efficiency acceptance",
+    "same recipe, not matched compute or per-family tuning",
+    "prefix partition is inspired by hierarchy/sharing, not proof of fractal necessity",
+    "full-forward eager profiles, not decoding/KV",
+    "GPU board energy, not total system energy",
+    "higher 8K forward peak VRAM despite smaller weights",
+    "actual final tensors/optimizer absent; metadata hashes only",
+    "no model inference/training in this audit; no natural-language result"
+  ]
+}

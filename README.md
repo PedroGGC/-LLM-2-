@@ -23,9 +23,22 @@ Este checkout contém a pesquisa fractal: **`experiment/fractal-lrm`**.
 A implementação fractal permanece isolada. O identificador `fractal` em uma configuração
 não instala esse código na branch comum. Confira `git branch --show-current` antes de trabalhar.
 
-## Estado atual — 09/11/2026
+## Estado atual — 10/11/2026
 
-Nova operação autorizada e implementada: [memória de transições e pirâmide](docs/ASSOCIATIVE_BINDING_RUN.md).
+A [campanha0031](docs/results/CAMPAIGN_0031.md) terminou: oito treinos de3000passos,
+seeds311/312, nas duasT4, em~11min03s antes da exportação. Memória única e duas
+pirâmides atingiram100%original/contrafactual até8K,64pares e fronteiras deslocadas.
+Transformer desta receita ficou em3,42–3,91%no contexto de treino e não qualificou.
+Há resultado favorável de recuperação, não vitória geral comoLLM.
+
+Memória única:86.785pesos,24,95×menos que o Transformer testado; forward8K9,54×
+mais rápido e7,23×menos energia de placa porconsulta em média. PicoVRAM8K é maior:
+290MiB contra190MiB. São medições neste regime, sem eficiência confirmada a
+qualidade igual. Compartilhar reduz22,10%dos pesos frente à pirâmide independente,
+mas a hierarquia não melhora o acerto frente à memória única. Próximo marco
+recomendado: linguagem e referência qualificada, preservando o controle fractal.
+
+Operação preservada: [memória de transições e pirâmide](docs/ASSOCIATIVE_BINDING_RUN.md).
 Núcleo associativo de86.785pesos, pirâmide compartilhada86.979 e independente111.652,
 contra2.164.992do Transformer externo. Não usa o núcleo mLSTM nem DecoderBlock.
 Consulta/escrita com endereço aprendido, conteúdo separado e atualização linear.
@@ -34,7 +47,7 @@ Fractal é testado pela reutilização do mesmo operador entre ritmos de memóri
 Qualificação CPU: núcleo único, seed816/1000passos,100%em novos mapas de32pares
 até8K,64pares em1K e fronteira deslocada, incluindo perguntas com chaves trocadas.
 Isso é capacidade sintética sobre alfabeto finito; não é comparação com Transformer,
-eficiência naT4 ou resultado de linguagem. A campanha nova comparará os quatro
+eficiência naT4 ou resultado de linguagem. A campanha0031comparou os quatro
 braços/seeds311–312/3000passos nas duas T4, teto2h, com workers persistentes.
 [Célula curta para Kaggle](scripts/09_testar_associacao_e_piramide_kaggle.py).
 

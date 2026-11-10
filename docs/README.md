@@ -1,11 +1,12 @@
 # Documentação
 
-Atualizado em 09/11/2026. Comece pelos documentos vigentes abaixo. A implementação
+Atualizado em 10/11/2026. Comece pelos documentos vigentes abaixo. A implementação
 fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém esse módulo.
 
 | Documento | Finalidade |
 |---|---|
 | [Plano aprovado: recorrência/fractal](PLAN_RECURRENT_FRACTAL.md) | Hipóteses, candidatos, riscos, critérios e etapas condicionais |
+| [Campanha0031: resultados](results/CAMPAIGN_0031.md) | Oito treinos; memória resolve associação; sharing econômico; linguagem/referência ainda pendentes |
 | [Nova operação: associação e pirâmide](ASSOCIATIVE_BINDING_RUN.md) | Núcleo87k, controle de compartilhamento, perguntas contrafactuais; T4x2/teto2h |
 | [Plano prévio da nova família](PLAN_ASSOCIATIVE_TRANSITION_IMPLEMENTATION.md) | Arquitetura, riscos, validação e critérios registrados antes da implementação |
 | [Campanha0030: auditoria](results/CAMPAIGN_0030.md) | 4/14 treinos; bancos no acaso; rever escrita/leitura e compilação antes de repetir |

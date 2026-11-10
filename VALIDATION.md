@@ -1,4 +1,26 @@
-# Validação vigente — 09/11/2026
+# Validação vigente — 10/11/2026
+
+## Campanha0031 — qualificação real T4 e auditoria
+
+[Relatório](docs/results/CAMPAIGN_0031.md): oito treinos novos/3000passos, duas
+seeds311/312, statuscomplete. ZIP954.594bytes/129membros, CRC íntegro, sem caminhos
+externos/duplicatas/pesos/pickle.366hashes de bootstrap e144arquivos de snapshot
+conferidos contra Gitbcd7780 (101fontes/43configs); protocolo/gerador/configs,
+parâmetros meta/fórmula, embedding ligado, workers/metadados/relatórios/CSV,
+96avaliações e160registros de gradiente reconciliados. Regeneradas8192consultas
+originais/alteradas para conferir labels; nenhum treino/inferência neural local.
+Pesos reais ausentes: hashes declarados conferidos, não os tensores finais.
+
+Preflight Kaggle **CPU13passed/2deselected,33,40s; CUDA2passed/13deselected,33,22s**,
+GPU0. Os oito treinos/perfis usaram ambas asT4com atribuição alternada porseed.
+Nova família qualificada emCUDA/Inductor nesse ambiente e formas testadas;
+isso não aprova todos os backends/precisões/formas. Py3.13.16/Torch2.11.0+cu130.
+Sem traceback/OOM; cache amostrado máximo155.209.556bytes, guarda sem violação.
+
+Candidatos100%nas duas seeds, incluindo contrafactuais/capacidade/alinhamento.
+Baseline não qualificou; o relatório corretamente mantémfalseas aceitações de
+eficiência/compactação a referência qualificada. Sem confirmação de linguagem,
+cinco seeds ou custo igualado. Código/treino não foram alterados nesta auditoria.
 
 ## Família associativa de transições — entrega posterior à0030
 
@@ -49,8 +71,8 @@ explícita apenas dos pesos com a versão equivalente de prefixo exclusivo;
 fontes de treino/medição separadas, sem carregar pickle ou alegar retomada entre
 fontes. Não houve controle Transformer nem medição GPU/energia/linguagem local.
 
-Dois testes novos CUDA/Inductor serão obrigatórios no Kaggle. Não foram aprovados
-por suposição. A qualificação CPU não sustenta ganho de velocidade nem capacidade
+Os dois testes novos CUDA/Inductor eram obrigatórios no Kaggle e foram aprovados
+na0031acima. A qualificação CPU isolada não sustenta ganho de velocidade nem capacidade
 geral de uma LLM. Histórico0030 e documentação abaixo permanecem como evidência
 anterior, não resultado dessa nova campanha.
 

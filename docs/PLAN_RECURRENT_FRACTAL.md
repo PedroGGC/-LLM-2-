@@ -1,7 +1,22 @@
 # Arquitetura própria inspirada em fractais — plano aprovado
 
-Atualizado09/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
+Atualizado10/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
 históricos. Implementação experimental em `experiment/fractal-lrm`.
+
+Atualização0031: [oito treinos concluídos](results/CAMPAIGN_0031.md), duas seeds.
+Memória única/compartilhada/independente resolveram recuperação de um byte:
+100%original/contrafactual até8K,64pares e deslocamento. Compartilhamento economiza
+22,10%dos pesos da pirâmide independente; a hierarquia não melhora sobre a memória
+única. O Transformer desta receita não qualificou, impedindo aceitar eficiência
+a qualidade igual. Razões observadas de24,95×pesos/9,54×forward8K/7,23×energia
+de placa não representam capacidade geral deLLM nem vitória em todos os recursos.
+
+Próximo marco recomendado: linguagem com memória única, pirâmide compartilhada e
+Transformer, preservando dados/validação/custo comparáveis; qualificar a referência
+de recuperação e usar chaves/associações mais discriminativas. Não repetir uma
+campanha inteira já saturada nem acrescentar mecanismos para melhorar100%.
+Fractal continua explícito; distinguir viabilidade do sharing de necessidade da
+hierarquia. Essas são recomendações pós-auditoria, sem nova campanha implementada.
 
 Autorização posterior em09/11: implementar mudanças amplas para buscar vantagem
 funcional. [Nova operação associativa](ASSOCIATIVE_BINDING_RUN.md), família de
@@ -12,8 +27,8 @@ implementação FLRM ou a plataforma mLSTM selecionada historicamente.
 
 Qualificação CPU em mapas novos passou:100%nos testes até8K/64pares/deslocamento,
 núcleo86.785pesos/seed816/1000passos. Não é resultado de linguagem, eficiência
-ou comparação com Transformer. Próxima evidência: mesma tarefa/receita para os
-quatro braços naT4, duas seeds,3000passos, teto2h. O novo protocolo mede acerto e
+ou comparação com Transformer. A evidência seguinte foi a mesma tarefa/receita para os
+quatro braços naT4, duas seeds,3000passos, teto2h, concluída na0031. O protocolo mede acerto e
 contrafactuais; não reescreve os limiares NLL dos experimentos de linguagem.
 Metas95%/90%pareado e fatores de recurso são critérios, não garantias. Se passar,
 o marco seguinte será confirmação em linguagem, não declarar a ambição cumprida.

@@ -1,11 +1,25 @@
-# Estado científico e técnico — 09/11/2026
+# Estado científico e técnico — 10/11/2026
+
+A [campanha0031](results/CAMPAIGN_0031.md) concluiu oito treinos novos/3000passos,
+seeds311/312, em662,54s antes da exportação. Candidatos:100%original e pareado
+até8K,64associações e deslocamento de fronteira nas duas seeds. Transformer
+3,42–3,91%emT256 não qualificou.366hashes Git/144arquivos de snapshot,96avaliações
+e160registros reconciliados; CPU13passed eCUDA2passed no Kaggle. ZIP954.594bytes,
+pesos reais ausentes. Sem novo treino ou inferência nesta auditoria.
+
+Núcleo único87k:24,95×menos pesos,9,54×menos tempo e7,23×menos energia de placa
+no forward8K observado. PicoVRAM8K maior:290vs190MiB. Não é eficiência confirmada
+a qualidade igual, pois a referência falhou. Sharing preserva acerto e economiza
+22,10%dos parâmetros da pirâmide independente. Hierarquia não melhora sobre o
+único, que segue candidato mais simples. Não repetir o teste saturado; avançar
+para linguagem e qualificação da referência. Fractal permanece como controle.
 
 Entrega nova: [associação de transições e pirâmide](ASSOCIATIVE_BINDING_RUN.md),
 autorizada após auditoria0030. Família independente de mLSTM: endereço aprendido
 da posição anterior, conteúdo/porta aprendidos, estado matricial aditivo e
 convolução causal local. Controles único/compartilhado/independente e Transformer
 externo;86.785/86.979/111.652/2.164.992pesos. Compartilhamento inicial e causalidade
-verificados; nenhum parser da tarefa no backbone. Operação T4 ainda não executada.
+verificados; nenhum parser da tarefa no backbone. Operação T4 concluída na0031acima.
 
 Qualificação CPU do núcleo único:1000passos/seed816, contexto256, currículo fixo,
 100%original e pareado em seis condições novas:32associações em256/1K/4K/8K,

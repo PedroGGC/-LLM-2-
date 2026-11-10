@@ -2,6 +2,15 @@
 
 ## Roteiro vigente — arquitetura própria inspirada em fractais
 
+10/11/2026: [0031concluída](results/CAMPAIGN_0031.md), oito treinos/duas seeds.
+Três candidatos100%na recuperação/contrafactuais até8K e64pares. Referência
+Transformer não qualificou. Sharing economiza sem perda observada frente à
+pirâmide independente; memória única já resolve tudo. Priorizar agora linguagem
+e referência bem qualificada, mantendo pirâmide compartilhada como controle.
+Ganhos observados de tempo/energia em8K têm escopo de forward, eVRAM8K é maior
+na implementação nova. Nenhuma vitória geral ou confirmação iso-qualidade.
+Não adicionar nova tecnologia à tarefa saturada antes desse marco.
+
 Entrega posterior09/11: [nova família de transições/pirâmide](ASSOCIATIVE_BINDING_RUN.md),
 não dependente do mLSTM. Memória associativa linear com endereço/conteúdo separados,
 convolução causal e operadores compartilhados/independentes entre ritmos. Testes
