@@ -64,6 +64,8 @@ Células 10 e 11 e seus perfis de bootstrap verificados com
 `dc53834fb3b7c6f10f81914abc8e33105e34a008274e55232b75ec415326d815`.
 Testes cobrem o payload alterado, a revisão exata, relógio, seeds, teto de 2h,
 dispatch e callback dos botões de download.
+Após publicar em `experiment/fractal-lrm`, a URL fixada do bootstrap retornou
+HTTP 200 e 4.687 bytes com o SHA-256 exato da célula.
 
 
 ## Campanha 0032 — T4 e auditoria dos resultados
