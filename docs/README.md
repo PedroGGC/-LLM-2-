@@ -5,6 +5,7 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 
 | Documento | Finalidade |
 |---|---|
+| [Campanha 0035](results/CAMPAIGN_0035.md) | Geração incremental em T4, estado/cache, paridade e controle local em histórias completas |
 | [Geração com estado e KV cache](CACHED_DECODE_RUN.md) | Diagnóstico com os quatro pesos da 0033, T4 x2 e teto de 30 min |
 | [Campanha 0033](results/CAMPAIGN_0033.md) | Memória contextual melhora NLL frente aos controles próximos e acelera forward de 8K |
 | [Memória contextual e hierarquia](CONTEXT_MEMORY_RUN.md) | Nova família, oito braços/duas seeds, referências próximas em pesos, T4x2/teto2h |

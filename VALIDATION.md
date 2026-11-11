@@ -1,5 +1,22 @@
 # Validação vigente — 11/11/2026
 
+## Campanha 0035 — geração na T4 e controle em CPU
+
+Quatro reconstruções de 6.000 passos nas duas T4, com 8 min 03 s antes da
+exportação. 12 perfis de geração com 257 posições conferidas por perfil.
+Paridade top-1 completa e diferença máxima de logits 8,20e-5.
+Ambos os ZIPs passaram em CRC, hashes e equivalência dos manifestos.
+Verificados os quatro pesos, os quatro estados como bytes, a proveniência
+Git, 80 métricas de treino e as medianas dos perfis.
+
+O diagnóstico CPU carregou os safetensors verificados e percorreu os
+524.508 alvos de desenvolvimento em cada condição. O forward completo
+reproduziu as perdas da T4 dentro de 3e-7. A máscara local de 256 posições
+por camada preservou os logits das primeiras 256 posições em todos os
+documentos e reduziu a NLL do Transformer de 2,024229 para 1,006197.
+O recorrente obteve 0,978279. O desempenho do cache local será medido
+em outra rodada. [Auditoria da 0035](docs/results/CAMPAIGN_0035.md).
+
 ## Reconstrução e geração — antes da 0035
 
 A tentativa 0034 terminou na busca pelos checkpoints. A célula exportou

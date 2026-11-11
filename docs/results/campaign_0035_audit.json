@@ -1,0 +1,634 @@
+{
+  "archives": {
+    "results": {
+      "sha256": "d78a7024d260daf76e140c93b20da8278e6991a56ca018a75ac667ea5aad4f87",
+      "bytes": 4166930,
+      "members": 59
+    },
+    "checkpoints": {
+      "sha256": "1b8c8143176e46b5bac61f8cc303f33080a9573c23375c0b65d0379a34a7f84c",
+      "bytes": 7690870,
+      "members": 22
+    }
+  },
+  "scientific_revision": "db507b5258615e94cab7620dc5816fb31c36d8c7",
+  "operator": {
+    "download_mode": "notebook_embedded_base64",
+    "operator_revision": "94b5aa83d2aff64dd068e74e7f6fbeedc6baa5f0",
+    "operator_sha256": {
+      "docs/results/campaign_0033_decode_reference.json": "b925c11098b2d3a7e9802afa9be3145b55f9a1c2131e01c23987e963bd865639",
+      "src/llm2/research/decode_benchmark.py": "ac2b68744ea39ab1a1b883cc964faa705fa9800c3dc3572f0bfb6db623ca5de0",
+      "src/llm2/research/decode_bootstrap.py": "a23b26f4c4d9be1b7480c7109be58473d441834a588e981085731a8110e721e0",
+      "src/llm2/research/decode_cache.py": "d880c42c742cfff72a91aec2f03b2ffda15eea2a9f91f799904ac6d32470ae1f"
+    },
+    "scientific_revision": "db507b5258615e94cab7620dc5816fb31c36d8c7",
+    "torch_preserved": "2.11.0+cu130"
+  },
+  "dataset_sha256": "d61615e79496f14ef473cc10ad11e5deac6d2bda89be7046d738498ff16ba849",
+  "training": [
+    {
+      "job": "context_untied2-seed-341",
+      "weight_sha256": "1661e6e37cd059991dffbca2c1aa913f0def223a0e6d0af592452645c0ead237",
+      "original_weight_sha256": "80e1af8866ab1ba1f94c9c18e874244dc7c5b354bd3dca898fbd5617d66368b8",
+      "nll_t256": 1.000543776430275,
+      "original_nll_t256": 0.9932534963460047,
+      "train_wall_seconds": 157.51663151900289
+    },
+    {
+      "job": "context_untied2-seed-342",
+      "weight_sha256": "0b735f4ec369a1d3c75f9796417418fc3fe327c986864e3b66a740cab46bca8f",
+      "original_weight_sha256": "da61c7e506854bcaf4f419ab198d6b43902d6e2abf7754cdf521b80f44613733",
+      "nll_t256": 0.9833562490026926,
+      "original_nll_t256": 0.9812035535770937,
+      "train_wall_seconds": 154.43328082599908
+    },
+    {
+      "job": "transformer_medium-seed-341",
+      "weight_sha256": "e86b9c4f6161bc86d414ab7da9aa9f4adff7a60904e8ece9eb456168794af229",
+      "original_weight_sha256": "ef407e48fa91160c812cc9bb5478912ceec9e43ee17e21a11c511ae20559f2bd",
+      "nll_t256": 1.0209633236656797,
+      "original_nll_t256": 1.0209626561874785,
+      "train_wall_seconds": 106.62003685700194
+    },
+    {
+      "job": "transformer_medium-seed-342",
+      "weight_sha256": "bbc0c21974121639a5bb5a7e574cb07cd90de8d1c8ead93c497ab9b2260e29c6",
+      "original_weight_sha256": "db77cee079330ba790639646ac74246d3515a46c5be8b798a1b06bb77a6ce6c8",
+      "nll_t256": 1.022963293219085,
+      "original_nll_t256": 1.0229628865472853,
+      "train_wall_seconds": 103.9051389139994
+    }
+  ],
+  "training_records": 80,
+  "checkpoint_payloads_verified": 8,
+  "optimizer_steps": 24000,
+  "session_budget": {
+    "elapsed_seconds": 483.429220062,
+    "export_reserve_seconds": 300,
+    "limit_seconds": 3600.0,
+    "scope": "bootstrap/setup + tests + pilot + training + evaluation; export uses reserve",
+    "work_remaining_seconds": 2816.5707786539997
+  },
+  "storage_budget": {
+    "cache_limit_bytes": 2147483648,
+    "exceeded": null,
+    "peak_cache_bytes": 196958128,
+    "reserve_bytes": 2147483648,
+    "sampling_seconds": 5.0
+  },
+  "comparison": {
+    "pairs": [
+      {
+        "seed": 341,
+        "prefix_bytes": 256,
+        "first_byte_speedup": 0.41194932110250304,
+        "decode_speedup": 0.5965154450137679,
+        "total_speedup": 0.595487240518974
+      },
+      {
+        "seed": 341,
+        "prefix_bytes": 1024,
+        "first_byte_speedup": 0.38826160639509266,
+        "decode_speedup": 0.5966277545513549,
+        "total_speedup": 0.595706088593094
+      },
+      {
+        "seed": 341,
+        "prefix_bytes": 7936,
+        "first_byte_speedup": 1.8455455736070252,
+        "decode_speedup": 0.5943920553362739,
+        "total_speedup": 0.6036650139886275
+      },
+      {
+        "seed": 342,
+        "prefix_bytes": 256,
+        "first_byte_speedup": 0.37748697116117264,
+        "decode_speedup": 0.557619828713327,
+        "total_speedup": 0.5562149025073163
+      },
+      {
+        "seed": 342,
+        "prefix_bytes": 1024,
+        "first_byte_speedup": 0.3999774195187438,
+        "decode_speedup": 0.5915551998067111,
+        "total_speedup": 0.590230390562063
+      },
+      {
+        "seed": 342,
+        "prefix_bytes": 7936,
+        "first_byte_speedup": 1.8253341725574486,
+        "decode_speedup": 0.576551003906823,
+        "total_speedup": 0.5858590796662785
+      }
+    ],
+    "twofold_long_generation": false,
+    "scope": "FP32 eager greedy on synthetic prefixes. Long-context language quality is separate."
+  },
+  "profiles": [
+    {
+      "variant": "context_untied2",
+      "seed": 341,
+      "prefix_bytes": 256,
+      "state_bytes": 12480,
+      "total_ms": 1097.218014999953,
+      "first_byte_ms": 6.790913000031651,
+      "decode_bytes_per_second": 233.80831547635978,
+      "peak_vram_mib": 34.94140625,
+      "joules_per_generated_byte": 0.12892745535714287,
+      "max_abs_logit_error": 5.0067901611328125e-05
+    },
+    {
+      "variant": "context_untied2",
+      "seed": 341,
+      "prefix_bytes": 1024,
+      "state_bytes": 12480,
+      "total_ms": 1090.1001340000676,
+      "first_byte_ms": 7.243767999966622,
+      "decode_bytes_per_second": 235.44125784241336,
+      "peak_vram_mib": 38.978515625,
+      "joules_per_generated_byte": 0.12785546875,
+      "max_abs_logit_error": 8.20159912109375e-05
+    },
+    {
+      "variant": "context_untied2",
+      "seed": 341,
+      "prefix_bytes": 7936,
+      "state_bytes": 12480,
+      "total_ms": 1086.3554170000498,
+      "first_byte_ms": 8.051553000086642,
+      "decode_bytes_per_second": 236.48250601094824,
+      "peak_vram_mib": 76.18212890625,
+      "joules_per_generated_byte": 0.12722433035714284,
+      "max_abs_logit_error": 3.528594970703125e-05
+    },
+    {
+      "variant": "context_untied2",
+      "seed": 342,
+      "prefix_bytes": 256,
+      "state_bytes": 12480,
+      "total_ms": 1146.683764000045,
+      "first_byte_ms": 7.282502999942153,
+      "decode_bytes_per_second": 223.8589540403589,
+      "peak_vram_mib": 34.94140625,
+      "joules_per_generated_byte": 0.13441908482142856,
+      "max_abs_logit_error": 4.220008850097656e-05
+    },
+    {
+      "variant": "context_untied2",
+      "seed": 342,
+      "prefix_bytes": 1024,
+      "state_bytes": 12480,
+      "total_ms": 1141.8474680000372,
+      "first_byte_ms": 7.52862499996354,
+      "decode_bytes_per_second": 224.82810971861613,
+      "peak_vram_mib": 38.978515625,
+      "joules_per_generated_byte": 0.134671875,
+      "max_abs_logit_error": 4.291534423828125e-05
+    },
+    {
+      "variant": "context_untied2",
+      "seed": 342,
+      "prefix_bytes": 7936,
+      "state_bytes": 12480,
+      "total_ms": 1095.895616000007,
+      "first_byte_ms": 8.064845999911086,
+      "decode_bytes_per_second": 234.44363854674478,
+      "peak_vram_mib": 76.18212890625,
+      "joules_per_generated_byte": 0.12880301339285713,
+      "max_abs_logit_error": 3.62396240234375e-05
+    },
+    {
+      "variant": "transformer_medium",
+      "seed": 341,
+      "prefix_bytes": 256,
+      "state_bytes": 654080,
+      "total_ms": 653.3793280000282,
+      "first_byte_ms": 2.797512000029201,
+      "decode_bytes_per_second": 391.9568511272384,
+      "peak_vram_mib": 35.619140625,
+      "joules_per_generated_byte": 0.08028850446428572,
+      "max_abs_logit_error": 2.288818359375e-05
+    },
+    {
+      "variant": "transformer_medium",
+      "seed": 341,
+      "prefix_bytes": 1024,
+      "state_bytes": 1637120,
+      "total_ms": 649.3792869999879,
+      "first_byte_ms": 2.812477000020408,
+      "decode_bytes_per_second": 394.62002236127574,
+      "peak_vram_mib": 40.078125,
+      "joules_per_generated_byte": 0.07789006696428571,
+      "max_abs_logit_error": 1.71661376953125e-05
+    },
+    {
+      "variant": "transformer_medium",
+      "seed": 341,
+      "prefix_bytes": 7936,
+      "state_bytes": 10484480,
+      "total_ms": 655.7947579999563,
+      "first_byte_ms": 14.859507999972266,
+      "decode_bytes_per_second": 397.856101688909,
+      "peak_vram_mib": 80.67822265625,
+      "joules_per_generated_byte": 0.12909542410714286,
+      "max_abs_logit_error": 2.47955322265625e-05
+    },
+    {
+      "variant": "transformer_medium",
+      "seed": 342,
+      "prefix_bytes": 256,
+      "state_bytes": 654080,
+      "total_ms": 637.8025980000075,
+      "first_byte_ms": 2.7490499999203166,
+      "decode_bytes_per_second": 401.4544363619556,
+      "peak_vram_mib": 35.619140625,
+      "joules_per_generated_byte": 0.07810267857142858,
+      "max_abs_logit_error": 2.6464462280273438e-05
+    },
+    {
+      "variant": "transformer_medium",
+      "seed": 342,
+      "prefix_bytes": 1024,
+      "state_bytes": 1637120,
+      "total_ms": 673.9530769999647,
+      "first_byte_ms": 3.0112800000097195,
+      "decode_bytes_per_second": 380.062773164834,
+      "peak_vram_mib": 40.078125,
+      "joules_per_generated_byte": 0.08235267857142857,
+      "max_abs_logit_error": 4.0531158447265625e-05
+    },
+    {
+      "variant": "transformer_medium",
+      "seed": 342,
+      "prefix_bytes": 7936,
+      "state_bytes": 10484480,
+      "total_ms": 642.0403970000734,
+      "first_byte_ms": 14.72103900005095,
+      "decode_bytes_per_second": 406.63122075602774,
+      "peak_vram_mib": 80.67822265625,
+      "joules_per_generated_byte": 0.12647042410714285,
+      "max_abs_logit_error": 3.337860107421875e-05
+    }
+  ],
+  "validation": [
+    {
+      "variant": "context_untied2",
+      "seed": 341,
+      "scores": [
+        {
+          "batches": 75,
+          "bits_per_byte": 1.4434795444482733,
+          "byte_perplexity": 2.7197603680092524,
+          "bytes": 524508,
+          "context": 256,
+          "documents": 630,
+          "nll": 1.000543776430275,
+          "scope": "every selected document byte once, tails included, BOS/padding excluded, reset per window",
+          "split": "val",
+          "wall_seconds": 1.0625358280000228,
+          "windows": 2369
+        },
+        {
+          "batches": 158,
+          "bits_per_byte": 1.4247224849282762,
+          "byte_perplexity": 2.684628543992103,
+          "bytes": 524508,
+          "context": 3219,
+          "documents": 630,
+          "nll": 0.9875423735083938,
+          "scope": "every selected document byte once, tails included, BOS/padding excluded, reset per window",
+          "split": "val",
+          "wall_seconds": 1.5246934709999778,
+          "windows": 630
+        }
+      ]
+    },
+    {
+      "variant": "context_untied2",
+      "seed": 342,
+      "scores": [
+        {
+          "batches": 75,
+          "bits_per_byte": 1.4186831838633573,
+          "byte_perplexity": 2.673413844097277,
+          "bytes": 524508,
+          "context": 256,
+          "documents": 630,
+          "nll": 0.9833562490026926,
+          "scope": "every selected document byte once, tails included, BOS/padding excluded, reset per window",
+          "split": "val",
+          "wall_seconds": 1.1163751299999376,
+          "windows": 2369
+        },
+        {
+          "batches": 158,
+          "bits_per_byte": 1.3979938253996753,
+          "byte_perplexity": 2.635348624397629,
+          "bytes": 524508,
+          "context": 3219,
+          "documents": 630,
+          "nll": 0.9690154785159973,
+          "scope": "every selected document byte once, tails included, BOS/padding excluded, reset per window",
+          "split": "val",
+          "wall_seconds": 1.4531280219999871,
+          "windows": 630
+        }
+      ]
+    },
+    {
+      "variant": "transformer_medium",
+      "seed": 341,
+      "scores": [
+        {
+          "batches": 75,
+          "bits_per_byte": 1.4729387239819898,
+          "byte_perplexity": 2.7758675352751996,
+          "bytes": 524508,
+          "context": 256,
+          "documents": 630,
+          "nll": 1.0209633236656797,
+          "scope": "every selected document byte once, tails included, BOS/padding excluded, reset per window",
+          "split": "val",
+          "wall_seconds": 0.5838711200000262,
+          "windows": 2369
+        },
+        {
+          "batches": 158,
+          "bits_per_byte": 3.2135214334576063,
+          "byte_perplexity": 9.276119678581313,
+          "bytes": 524508,
+          "context": 3219,
+          "documents": 630,
+          "nll": 2.2274433212700937,
+          "scope": "every selected document byte once, tails included, BOS/padding excluded, reset per window",
+          "split": "val",
+          "wall_seconds": 2.3423887640000203,
+          "windows": 630
+        }
+      ]
+    },
+    {
+      "variant": "transformer_medium",
+      "seed": 342,
+      "scores": [
+        {
+          "batches": 75,
+          "bits_per_byte": 1.4758240701386167,
+          "byte_perplexity": 2.7814247410989155,
+          "bytes": 524508,
+          "context": 256,
+          "documents": 630,
+          "nll": 1.022963293219085,
+          "scope": "every selected document byte once, tails included, BOS/padding excluded, reset per window",
+          "split": "val",
+          "wall_seconds": 0.6530536660000053,
+          "windows": 2369
+        },
+        {
+          "batches": 158,
+          "bits_per_byte": 2.6271695205422705,
+          "byte_perplexity": 6.178126968598394,
+          "bytes": 524508,
+          "context": 3219,
+          "documents": 630,
+          "nll": 1.8210151460168982,
+          "scope": "every selected document byte once, tails included, BOS/padding excluded, reset per window",
+          "split": "val",
+          "wall_seconds": 2.303185721000091,
+          "windows": 630
+        }
+      ]
+    }
+  ],
+  "cpu_validation_diagnostic": [
+    {
+      "seed": 341,
+      "variant": "transformer_full",
+      "bytes": 524508,
+      "nll": 2.227443525054667,
+      "positions": [
+        {
+          "start": 0,
+          "end": 256,
+          "bytes": 161278,
+          "nll": 0.9454597539551582
+        },
+        {
+          "start": 256,
+          "end": 512,
+          "bytes": 159595,
+          "nll": 2.0150740738473467
+        },
+        {
+          "start": 512,
+          "end": 1024,
+          "bytes": 169391,
+          "nll": 3.303462222826817
+        },
+        {
+          "start": 1024,
+          "end": 2048,
+          "bytes": 29606,
+          "nll": 3.8629198700004266
+        },
+        {
+          "start": 2048,
+          "end": 8192,
+          "bytes": 4638,
+          "nll": 4.375154887286742
+        }
+      ]
+    },
+    {
+      "seed": 341,
+      "variant": "transformer_local256",
+      "bytes": 524508,
+      "nll": 1.0058123995324106,
+      "positions": [
+        {
+          "start": 0,
+          "end": 256,
+          "bytes": 161278,
+          "nll": 0.9454597539551582
+        },
+        {
+          "start": 256,
+          "end": 512,
+          "bytes": 159595,
+          "nll": 1.02749570594326
+        },
+        {
+          "start": 512,
+          "end": 1024,
+          "bytes": 169391,
+          "nll": 1.0474576063138954
+        },
+        {
+          "start": 1024,
+          "end": 2048,
+          "bytes": 29606,
+          "nll": 0.9770486533010913
+        },
+        {
+          "start": 2048,
+          "end": 8192,
+          "bytes": 4638,
+          "nll": 1.020961803536412
+        }
+      ]
+    },
+    {
+      "seed": 341,
+      "variant": "context_full",
+      "bytes": 524508,
+      "nll": 0.9875423476469243,
+      "positions": [
+        {
+          "start": 0,
+          "end": 256,
+          "bytes": 161278,
+          "nll": 0.9144810529626856
+        },
+        {
+          "start": 256,
+          "end": 512,
+          "bytes": 159595,
+          "nll": 1.0135391365283106
+        },
+        {
+          "start": 512,
+          "end": 1024,
+          "bytes": 169391,
+          "nll": 1.033085026752384
+        },
+        {
+          "start": 1024,
+          "end": 2048,
+          "bytes": 29606,
+          "nll": 0.9792933654337931
+        },
+        {
+          "start": 2048,
+          "end": 8192,
+          "bytes": 4638,
+          "nll": 1.0228854639920861
+        }
+      ]
+    },
+    {
+      "seed": 342,
+      "variant": "transformer_full",
+      "bytes": 524508,
+      "nll": 1.821015148547221,
+      "positions": [
+        {
+          "start": 0,
+          "end": 256,
+          "bytes": 161278,
+          "nll": 0.948600142744541
+        },
+        {
+          "start": 256,
+          "end": 512,
+          "bytes": 159595,
+          "nll": 1.6549922564170145
+        },
+        {
+          "start": 512,
+          "end": 1024,
+          "bytes": 169391,
+          "nll": 2.4909404155698853
+        },
+        {
+          "start": 1024,
+          "end": 2048,
+          "bytes": 29606,
+          "nll": 3.3181665029136194
+        },
+        {
+          "start": 2048,
+          "end": 8192,
+          "bytes": 4638,
+          "nll": 3.8464133528933395
+        }
+      ]
+    },
+    {
+      "seed": 342,
+      "variant": "transformer_local256",
+      "bytes": 524508,
+      "nll": 1.006581444592156,
+      "positions": [
+        {
+          "start": 0,
+          "end": 256,
+          "bytes": 161278,
+          "nll": 0.948600142744541
+        },
+        {
+          "start": 256,
+          "end": 512,
+          "bytes": 159595,
+          "nll": 1.0264985946633414
+        },
+        {
+          "start": 512,
+          "end": 1024,
+          "bytes": 169391,
+          "nll": 1.0474469182693864
+        },
+        {
+          "start": 1024,
+          "end": 2048,
+          "bytes": 29606,
+          "nll": 0.977282043880713
+        },
+        {
+          "start": 2048,
+          "end": 8192,
+          "bytes": 4638,
+          "nll": 1.0319426864145056
+        }
+      ]
+    },
+    {
+      "seed": 342,
+      "variant": "context_full",
+      "bytes": 524508,
+      "nll": 0.9690154561479623,
+      "positions": [
+        {
+          "start": 0,
+          "end": 256,
+          "bytes": 161278,
+          "nll": 0.900428556909769
+        },
+        {
+          "start": 256,
+          "end": 512,
+          "bytes": 159595,
+          "nll": 0.9927843909202593
+        },
+        {
+          "start": 512,
+          "end": 1024,
+          "bytes": 169391,
+          "nll": 1.0137960946307942
+        },
+        {
+          "start": 1024,
+          "end": 2048,
+          "bytes": 29606,
+          "nll": 0.9537408401539949
+        },
+        {
+          "start": 2048,
+          "end": 8192,
+          "bytes": 4638,
+          "nll": 0.998109448865632
+        }
+      ]
+    }
+  ],
+  "cpu_validation_scope": "All 630 development documents, unpadded full forwards, math SDPA; local window 256 per layer."
+}

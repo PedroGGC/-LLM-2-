@@ -2,6 +2,14 @@
 
 ## Roteiro vigente — arquitetura própria inspirada em fractais
 
+A 0035 confirmou a vantagem do recorrente no primeiro byte com prefixo
+longo e identificou a decodificação como gargalo de geração. Priorizar
+profiling e otimização do passo com os checkpoints preservados. Usar
+Transformer com KV cache global e local, com equivalência a cada
+referência. A máscara local recuperou a maior parte da qualidade que a
+atenção global perdeu em histórias completas após treino em T256.
+[Resultados da 0035](results/CAMPAIGN_0035.md).
+
 A 0033 qualificou duas passagens recorrentes independentes como candidato de
 linguagem. Com 151 mil parâmetros, a NLL melhorou de 1,021963 para 0,987229
 frente ao Transformer de 149 mil. O forward de 8K foi 2,11× mais rápido, com

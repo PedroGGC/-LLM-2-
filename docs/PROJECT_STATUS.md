@@ -1,5 +1,15 @@
 # Estado científico e técnico — 11/11/2026
 
+A 0035 recriou os quatro checkpoints e concluiu a geração incremental nas
+duas T4. Após um prefixo de 7.936 bytes, o recorrente chegou ao primeiro
+byte em 8,06 ms frente a 14,79 ms. Gerar 256 bytes levou 1,09 s frente a
+0,65 s. O estado ocupou 12,2 KiB frente a 10 MiB de cache global, com 5,6%
+menos pico de VRAM. Em histórias completas o recorrente obteve 0,978 NLL
+frente a 1,006 do Transformer com atenção local, verificado em CPU com
+os mesmos pesos. O próximo ensaio proposto reutiliza os pesos e mede
+otimizações do passo incremental com controle de KV local.
+[Resultados da 0035](results/CAMPAIGN_0035.md).
+
 A campanha 0033 concluiu os 16 treinos de memória contextual nas duas T4.
 Duas passagens finas independentes de 151.056 parâmetros chegaram a 0,987229
 NLL frente a 1,021963 do Transformer de 148.960 parâmetros. O ganho ocorreu

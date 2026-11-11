@@ -36,9 +36,12 @@ perdeu qualidade frente a duas passagens finas. A próxima comparação proposta
 [Protocolo](docs/CONTEXT_MEMORY_RUN.md) ·
 [Célula preservada](scripts/11_testar_memoria_contextual_kaggle.py).
 
-A 0034 parou na descoberta dos pesos da 0033. A operação 0035 refaz os quatro
-treinos necessários e executa o diagnóstico com os checkpoints novos na mesma
-sessão. [Operação no Kaggle](docs/CACHED_DECODE_RUN.md).
+A 0035 refez os quatro treinos e concluiu a comparação incremental. Em 8K,
+o primeiro byte do recorrente foi 1,84× mais rápido e o tempo total foi
+1,68× maior. O controle com atenção local recuperou quase toda a qualidade
+do Transformer em histórias completas. A próxima hipótese é reduzir o custo
+por byte mantendo a paridade. [Auditoria da 0035](docs/results/CAMPAIGN_0035.md) ·
+[Operação no Kaggle](docs/CACHED_DECODE_RUN.md).
 
 A [campanha 0032](docs/results/CAMPAIGN_0032.md) concluiu os oito treinos TinyStories
 de 6.000 passos/seeds 331–332 em ~21min12s antes da exportação. NLL média: Transformer
