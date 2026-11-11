@@ -89,7 +89,7 @@ def test_frozen_safetensors_to_benchmark_report(tmp_path, variant, monkeypatch):
 
 
 def test_missing_weights_publish_failure_without_starting_workers(tmp_path, monkeypatch):
-    def missing(*args):
+    def missing(*args, **kwargs):
         raise FileNotFoundError("pesos ausentes")
     monkeypatch.setattr(bench, "locate_weights", missing)
     meta = tmp_path / "bootstrap.json"
@@ -105,6 +105,7 @@ def test_missing_weights_publish_failure_without_starting_workers(tmp_path, monk
         assert archive.testzip() is None
         manifest = json.loads(archive.read("campaign.json"))
         assert manifest["status"] == "failed" and manifest["runs"] == []
+        assert manifest["error"] == "pesos ausentes"
         assert manifest["optimizer_steps"] == 0
         assert not json.loads(archive.read("comparison.json"))["twofold_long_generation"]
 

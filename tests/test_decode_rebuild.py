@@ -85,11 +85,18 @@ def test_rebuild_trains_then_decodes_and_archives_new_weights(tmp_path, monkeypa
             assert campaign["runs"] == []
 
 
-def test_rebuild_bootstrap_dispatches_and_downloads_both_archives(tmp_path, monkeypatch):
+@pytest.mark.parametrize("optimize", [False, True])
+def test_bootstrap_dispatch_and_archive_callbacks(tmp_path, monkeypatch, optimize):
+    reference_name = bootstrap.OPTIMIZATION_REFERENCE if optimize else bootstrap.REFERENCE
+    option = "--optimize" if optimize else "--rebuild"
+    number = 36 if optimize else 35
+    steps = 0 if optimize else 24000
+    suffixes = ("results",) if optimize else ("results", "checkpoints")
     source_files = {"src/llm2/model.py": "hash"}
     operator_meta = {"source_files_sha256": {
-        name: "hash" for name in (bootstrap.BENCHMARK, bootstrap.REFERENCE,
-                                 "src/llm2/research/decode_cache.py", "src/llm2/research/decode_bootstrap.py")}}
+        name: "hash" for name in (bootstrap.BENCHMARK, reference_name,
+                                 "src/llm2/research/decode_cache.py", "src/llm2/research/decode_bootstrap.py",
+                                 "src/llm2/research/decode_optimization.py")}}
     revision = "a" * 40
     roots = {}
     for label, rev, metadata in (("operator", revision, operator_meta),
@@ -98,18 +105,18 @@ def test_rebuild_bootstrap_dispatches_and_downloads_both_archives(tmp_path, monk
         root = parent / "source"
         root.mkdir(parents=True)
         roots[rev] = (root, parent, metadata)
-    reference = roots[revision][0] / bootstrap.REFERENCE
+    reference = roots[revision][0] / reference_name
     reference.parent.mkdir(parents=True)
     reference.write_text(json.dumps({"revision": bootstrap.SCIENTIFIC_REVISION, "source_sha256": source_files}))
-    output = tmp_path / "llm2-campaign-0035"
+    output = tmp_path / f"llm2-campaign-{number:04d}"
     received, cleaned, downloads = [], [], []
 
     def bounded(command, **kwargs):
-        if "--rebuild" in command:
+        if option in command:
             received.extend(command)
             output.mkdir()
-            (output / "campaign.json").write_text(json.dumps({"status": "complete", "optimizer_steps": 24000}))
-            for suffix in ("results", "checkpoints"):
+            (output / "campaign.json").write_text(json.dumps({"status": "complete", "optimizer_steps": steps}))
+            for suffix in suffixes:
                 (tmp_path / f"{output.name}-{suffix}.zip").touch()
 
     helper = {
@@ -124,9 +131,12 @@ def test_rebuild_bootstrap_dispatches_and_downloads_both_archives(tmp_path, monk
     monkeypatch.setattr(bootstrap.runpy, "run_path", lambda path:
                         {"download_file": downloads.append} if path.endswith("notebook_download.py")
                         else {"numbered_output": lambda *a, **kw: output})
-    value = bootstrap.bootstrap_git(revision, run=True, run_number=35, session_seconds=3600, rebuild=True)
-    assert value["optimizer_steps"] == 24000 and value["status"] == "complete"
-    assert "--rebuild" in received and "--weights" not in received
+    value = bootstrap.bootstrap_git(revision, run=True, run_number=number,
+                                    session_seconds=1800 if optimize else 3600,
+                                    rebuild=not optimize, optimize=optimize)
+    assert value["optimizer_steps"] == steps and value["status"] == "complete"
+    assert option in received and "--weights" not in received
+    assert received[received.index("--reference") + 1] == reference
     assert Path(received[received.index("--operator-metadata") + 1]).name == "bootstrap.json"
-    assert [path.name for path in downloads] == [output.name + "-results.zip", output.name + "-checkpoints.zip"]
+    assert [path.name for path in downloads] == [f"{output.name}-{suffix}.zip" for suffix in suffixes]
     assert cleaned == [roots[bootstrap.SCIENTIFIC_REVISION][1], roots[revision][1]]

@@ -1,5 +1,24 @@
 # Validação vigente — 11/11/2026
 
+## Compilação do passo incremental — antes da 0036
+
+**26 passed, 2 deselected em 20,92 s** em Python 3.12.2 e PyTorch CPU.
+`python -m pytest -q tests/test_decode_optimization.py tests/test_cached_decode.py tests/test_decode_rebuild.py tests/test_context_memory.py -m 'not cuda'`.
+A máscara local em blocos coincide com a máscara densa independente.
+Paridade e armazenamento foram conferidos antes e depois da volta do
+cache circular. Um backend de captura executou os grafos em CPU e
+verificou um único grafo para cada adaptador entre comprimentos. Views
+com dimensões unitárias foram normalizadas para evitar especializações
+de stride. A suíte também verifica perfis, a referência mais rápida e
+o critério de 2× com todas as variantes.
+
+Checagem adicional dos quatro safetensors verificados da 0035 em CPU
+com prefixos 255/256/1.024/7.936 e 256 bytes de continuação forçada.
+Um grafo por checkpoint e erro máximo absoluto de logits 9,06e-5.
+O teste focado de bootstrap passou nos dois modos, reconstrução e
+otimização. A compilação Inductor e os tempos reais na T4 serão
+verificados na execução da campanha. [Protocolo](docs/DECODE_OPTIMIZATION_RUN.md).
+
 ## Campanha 0035 — geração na T4 e controle em CPU
 
 Quatro reconstruções de 6.000 passos nas duas T4, com 8 min 03 s antes da

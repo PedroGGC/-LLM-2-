@@ -1,6 +1,7 @@
 """Frozen-weight generation benchmark launched from the operator checkout."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import hashlib
 import json
 import math
@@ -33,8 +34,10 @@ from llm2.runtime import attention_context, environment, source_provenance
 
 if __package__:
     from .decode_cache import RecurrentDecode, TransformerDecode, generate, verify_logits
+    from .decode_optimization import CompiledDecode, LocalTransformerDecode, cold_step_seconds, profile_steps
 else:
     from decode_cache import RecurrentDecode, TransformerDecode, generate, verify_logits
+    from decode_optimization import CompiledDecode, LocalTransformerDecode, cold_step_seconds, profile_steps
 
 LENGTHS = (256, 1024, 7936)
 NEW_BYTES = 256
@@ -47,28 +50,28 @@ def read_json(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def locate_weights(explicit, work, inputs):
+def locate_weights(explicit, work, inputs, *, campaign="llm2-campaign-0033"):
     if explicit:
         source = Path(explicit)
         if not source.exists():
-            raise FileNotFoundError(f"Pesos da 0033 não encontrados em {source}")
+            raise FileNotFoundError(f"Pesos de {campaign} não encontrados em {source}")
         return source
-    original = work / "llm2-campaign-0033"
+    original = work / campaign
     folders = [original / "runs" / f"{variant}-seed-{seed}" / "checkpoints/step-00006000"
                for variant in VARIANTS for seed in SEEDS]
     if all((folder / name).is_file() for folder in folders for name in ("metadata.json", "model.safetensors")):
         return original
-    filename = "llm2-campaign-0033-checkpoints.zip"
+    filename = f"{campaign}-checkpoints.zip"
     if (work / filename).is_file():
         return work / filename
     candidates = sorted(inputs.rglob(filename))
     if len(candidates) == 1:
         return candidates[0]
     if candidates:
-        raise ValueError("Mais de um ZIP de checkpoints da 0033. Informe checkpoints na célula.")
+        raise ValueError(f"Mais de um ZIP de {campaign}. Informe checkpoints na célula.")
     raise FileNotFoundError(
-        "Pesos da 0033 ausentes. Preserve a pasta da 0033 ou adicione "
-        "llm2-campaign-0033-checkpoints.zip como input privado. O ZIP de resultados contém as métricas."
+        f"Pesos de {campaign} ausentes. Preserve a pasta da campanha ou adicione "
+        f"{filename} como input privado. O ZIP de resultados contém as métricas."
     )
 
 
@@ -197,6 +200,20 @@ def paired_jobs(campaign, gpus, commands, *, training=None):
                 task.result()
 
 
+@contextmanager
+def private_compiler_cache(campaign):
+    previous = os.environ.get("LLM2_COMPILER_CACHE_ROOT")
+    os.environ["LLM2_COMPILER_CACHE_ROOT"] = str(campaign.output / "compiler-cache")
+    try:
+        with storage_budget(campaign):
+            yield
+    finally:
+        if previous is None:
+            os.environ.pop("LLM2_COMPILER_CACHE_ROOT", None)
+        else:
+            os.environ["LLM2_COMPILER_CACHE_ROOT"] = previous
+
+
 def rebuild_reference(campaign, args, original, data):
     output = campaign.output
     data_path = data.root
@@ -205,16 +222,8 @@ def rebuild_reference(campaign, args, original, data):
         return [__file__, "--reference", args.reference, "--output", output, "--data", data_path,
                 "--train-job", job]
 
-    previous = os.environ.get("LLM2_COMPILER_CACHE_ROOT")
-    os.environ["LLM2_COMPILER_CACHE_ROOT"] = str(output / "compiler-cache")
-    try:
-        with storage_budget(campaign):
-            paired_jobs(campaign, args.gpus, command, training=original["jobs"])
-    finally:
-        if previous is None:
-            os.environ.pop("LLM2_COMPILER_CACHE_ROOT", None)
-        else:
-            os.environ["LLM2_COMPILER_CACHE_ROOT"] = previous
+    with private_compiler_cache(campaign):
+        paired_jobs(campaign, args.gpus, command, training=original["jobs"])
     new_reference = {
         **original, "campaign": output.name, "rebuild_of": original["campaign"],
         "jobs": {job: verified_rebuild_record(output, job, original, data_path) for job in original["jobs"]},
@@ -283,8 +292,7 @@ def benchmark(decoder, prefix, new_bytes):
     }
 
 
-def evaluate(model, data, device, result_path, result, *, lengths=LENGTHS, new_bytes=NEW_BYTES):
-    decoder = TransformerDecode(model) if result["variant"] == "transformer_medium" else RecurrentDecode(model)
+def validate_frozen(model, data, device, result):
     full_length = max(row["bytes"] for row in data.docs["val"])
     result["validation"] = [
         {"context": length, **score(model, data, "val", length, batch, device)}
@@ -295,11 +303,21 @@ def evaluate(model, data, device, result_path, result, *, lengths=LENGTHS, new_b
     result["nll_difference_from_checkpoint"] = result["validation"][0]["nll"] - result["checkpoint_nll_t256"]
     if abs(result["nll_difference_from_checkpoint"]) > .002:
         raise ValueError("T256 NLL did not reproduce the saved checkpoint")
+
+
+@torch.inference_mode()
+def paired_input(length, new_bytes, device):
+    rng = torch.Generator().manual_seed(17634 + length)
+    tokens = torch.randint(0, 256, (1, length + new_bytes), generator=rng).to(device)
+    return tokens[:, :length], tokens[:, length:]
+
+
+def evaluate(model, data, device, result_path, result, *, lengths=LENGTHS, new_bytes=NEW_BYTES):
+    decoder = TransformerDecode(model) if result["variant"] == "transformer_medium" else RecurrentDecode(model)
+    validate_frozen(model, data, device, result)
     write_result(result_path, result)
     for length in lengths:
-        rng = torch.Generator().manual_seed(17634 + length)
-        tokens = torch.randint(0, 256, (1, length + new_bytes), generator=rng).to(device)
-        prefix, continuation = tokens[:, :length], tokens[:, length:]
+        prefix, continuation = paired_input(length, new_bytes, device)
         with attention_context(device.type == "cpu"):
             parity = verify_logits(decoder, prefix, continuation)
             profile = benchmark(decoder, prefix, new_bytes)
@@ -308,6 +326,60 @@ def evaluate(model, data, device, result_path, result, *, lengths=LENGTHS, new_b
         print(f"{result['variant']} seed {result['seed']} prefixo {length}. "
               f"Primeiro byte {profile['first_byte_seconds'] * 1000:.2f} ms. "
               f"Decodificação {profile['decode_bytes_per_second']:.1f} bytes/s.", flush=True)
+    result.update(status="complete", host_memory=host_memory())
+    write_result(result_path, result)
+
+
+def evaluate_optimized(model, data, device, result_path, result, local_nll, *,
+                       lengths=LENGTHS, new_bytes=NEW_BYTES, compile_backend="inductor"):
+    validate_frozen(model, data, device, result)
+    result["mode_errors"] = {}
+    write_result(result_path, result)
+
+    def measure(name, adapter, *, compiled=False):
+        rows = []
+        try:
+            decoder = CompiledDecode(adapter, backend=compile_backend) if compiled else adapter
+            for length in lengths:
+                prefix, continuation = paired_input(length, new_bytes, device)
+                with attention_context(device.type == "cpu"):
+                    cold = cold_step_seconds(decoder, prefix, continuation) if compiled else None
+                    parity = verify_logits(decoder, prefix, continuation)
+                    timed = benchmark(decoder, prefix, new_bytes)
+                    operations = None
+                    if length == lengths[-1]:
+                        try:
+                            operations = profile_steps(decoder, prefix, continuation)
+                        except Exception as exc:
+                            operations = {"error": f"{type(exc).__name__}: {exc}"[:4000]}
+                rows.append({"mode": name, "parity": parity, "first_step_seconds": cold,
+                             "backend": compile_backend if compiled else "eager",
+                             "profiler": operations, **timed})
+                print(f"{name} seed {result['seed']} prefixo {length}: "
+                      f"{timed['total_seconds'] * 1000:.2f} ms totais.", flush=True)
+        except Exception as exc:
+            if not compiled:
+                raise
+            result["mode_errors"][name] = f"{type(exc).__name__}: {exc}"[:4000]
+            print(f"{name} excluído após erro de compilação, paridade ou medição.", flush=True)
+        else:
+            result["profiles"].extend(rows)
+        write_result(result_path, result)
+
+    if result["variant"] == "transformer_medium":
+        measure("transformer_global_eager", TransformerDecode(model))
+        local = LocalTransformerDecode(model)
+        length = result["validation"][1]["context"]
+        val = score(model, data, "val", length, 4, device)
+        if not math.isfinite(val["nll"]) or abs(val["nll"] - local_nll) > .002:
+            raise ValueError("local attention did not reproduce the 0035 CPU validation")
+        result["local_validation"] = {"context": length, "reference_nll": local_nll, **val}
+        measure("transformer_local_eager", local)
+        measure("transformer_local_inductor", local, compiled=True)
+    else:
+        recurrent = RecurrentDecode(model)
+        measure("recurrent_eager", recurrent)
+        measure("recurrent_inductor", recurrent, compiled=True)
     result.update(status="complete", host_memory=host_memory())
     write_result(result_path, result)
 
@@ -333,7 +405,11 @@ def run_worker(args, ref):
                       "math": torch.backends.cuda.math_sdp_enabled(),
                       "cudnn": torch.backends.cuda.cudnn_sdp_enabled()},
     }
-    evaluate(model, data, device, Path(args.output) / (args.job + ".json"), result)
+    output = Path(args.output) / (args.job + ".json")
+    if args.optimize:
+        evaluate_optimized(model, data, device, output, result, ref["local_validation_nll"][str(job["seed"])])
+    else:
+        evaluate(model, data, device, output, result)
 
 
 def comparisons(rows):
@@ -360,13 +436,41 @@ def comparisons(rows):
     }
 
 
+def optimized_comparisons(rows):
+    pairs = []
+    for seed in SEEDS:
+        for length in LENGTHS:
+            measured = {p["mode"]: p for row in rows if row["seed"] == seed and row["status"] == "complete"
+                        for p in row["profiles"] if p["prefix_bytes"] == length}
+            recurrent = [p for name, p in measured.items() if name.startswith("recurrent_")]
+            transformer = [p for name, p in measured.items() if name.startswith("transformer_")]
+            if not recurrent or not transformer:
+                continue
+            model = min(recurrent, key=lambda p: p["total_seconds"])
+            reference = min(transformer, key=lambda p: p["total_seconds"])
+            pairs.append({
+                "seed": seed, "prefix_bytes": length, "all_modes_measured": len(measured) == 5,
+                "recurrent_mode": model["mode"], "reference_mode": reference["mode"],
+                "total_speedup": reference["total_seconds"] / model["total_seconds"],
+                "decode_speedup": reference["decode_seconds"] / model["decode_seconds"],
+            })
+    long = [p for p in pairs if p["prefix_bytes"] == LENGTHS[-1]]
+    return {
+        "pairs": pairs,
+        "twofold_long_generation": len(long) == len(SEEDS) and all(
+            p["all_modes_measured"] and p["total_speedup"] >= 2 for p in long),
+        "scope": "best qualified mode per model family, FP32 batch 1, synthetic greedy generation",
+    }
+
+
 def run_campaign(args, ref):
     budget = SessionBudget(args.seconds, 300, elapsed=time.monotonic() - args.started_at)
     campaign = SessionCampaign(ROOT, args.output, device="cuda", gpus=args.gpus, budget=budget)
     rebuild = args.rebuild
+    optimize = getattr(args, "optimize", False)
     original = ref
     campaign.manifest.update(
-        cycle="cached_decode_rebuild_v1" if rebuild else "cached_decode_0033_v1",
+        cycle="decode_step_optimization_v1" if optimize else "cached_decode_rebuild_v1" if rebuild else "cached_decode_0033_v1",
         optimizer_steps=0, source_campaign=ref["campaign"],
         dataset_sha256=ref["dataset_sha256"], reference=ref, operator=read_json(args.operator_metadata),
         limitations="Synthetic generation timing, TinyStories development quality. Two paired seeds. Shared host.",
@@ -375,7 +479,9 @@ def run_campaign(args, ref):
     try:
         reference_path = args.reference
         if not rebuild:
-            weights = locate_weights(args.weights, campaign.output.parent, Path("/kaggle/input"))
+            weights = locate_weights(args.weights, campaign.output.parent, Path("/kaggle/input"), campaign=ref["campaign"])
+            if optimize and weights.is_file() and sha256_file(weights) != ref["checkpoint_archive_sha256"]:
+                raise ValueError("checkpoint ZIP differs from the audited 0035 archive")
             for job in ref["jobs"].values():
                 read_weight(weights, job)
             print(f"Quatro checkpoints verificados em {weights}.", flush=True)
@@ -393,9 +499,14 @@ def run_campaign(args, ref):
         campaign.manifest["status"] = "running"
         campaign.save()
         def command(job):
-            return [__file__, "--reference", reference_path, "--output", args.output,
+            call = [__file__, "--reference", reference_path, "--output", args.output,
                     "--weights", weights, "--data", data.root, "--job", job]
-        paired_jobs(campaign, args.gpus, command)
+            return [*call, "--optimize"] if optimize else call
+        if optimize:
+            with private_compiler_cache(campaign):
+                paired_jobs(campaign, args.gpus, command)
+        else:
+            paired_jobs(campaign, args.gpus, command)
         campaign.manifest["status"] = "complete"
     except SessionBudgetExceeded as exc:
         campaign.manifest.update(status="partial_budget", error=str(exc))
@@ -406,14 +517,17 @@ def run_campaign(args, ref):
         campaign.abort()
         rows = [read_json(path) for job in ref["jobs"]
                 if (path := campaign.output / (job + ".json")).is_file()]
-        summary = comparisons(rows)
+        summary = optimized_comparisons(rows) if optimize else comparisons(rows)
+        if optimize and campaign.manifest["status"] == "complete" and any(row["mode_errors"] for row in rows):
+            campaign.manifest["status"] = "partial_compile"
         write_json(campaign.output / "comparison.json", summary)
         campaign.manifest.update(runs=rows, session_budget=budget.snapshot())
-        if rebuild:
+        if rebuild or optimize:
             try:
                 discard_compiler_cache(campaign)
             except (OSError, RuntimeError, ValueError) as exc:
                 campaign.manifest["cache_cleanup_error"] = str(exc)
+        if rebuild:
             checkpoint_paths, steps, errors = rebuilt_checkpoint_files(campaign, original["jobs"])
             campaign.manifest.update(archived_steps_by_job=steps, optimizer_steps=sum(steps.values()),
                                      checkpoint_errors=errors)
@@ -445,12 +559,15 @@ def main():
     parser.add_argument("--job")
     parser.add_argument("--train-job")
     parser.add_argument("--rebuild", action="store_true")
+    parser.add_argument("--optimize", action="store_true")
     parser.add_argument("--cache")
     parser.add_argument("--operator-metadata")
     parser.add_argument("--gpus", nargs=2)
     parser.add_argument("--seconds", type=float)
     parser.add_argument("--started-at", type=float)
     args = parser.parse_args()
+    if args.optimize and (args.rebuild or args.train_job):
+        parser.error("decode optimization uses frozen weights")
     ref = read_json(args.reference)
     if ref["revision"] != source_provenance()["git"]["commit"]:
         raise ValueError("frozen worker revision differs")

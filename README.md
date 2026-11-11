@@ -43,6 +43,10 @@ do Transformer em histórias completas. A próxima hipótese é reduzir o custo
 por byte mantendo a paridade. [Auditoria da 0035](docs/results/CAMPAIGN_0035.md) ·
 [Operação no Kaggle](docs/CACHED_DECODE_RUN.md).
 
+A 0036 está preparada para medir a decodificação em grafo inteiro com
+os pesos da 0035. Inclui KV local de 256 posições e o controle global.
+[Protocolo da 0036](docs/DECODE_OPTIMIZATION_RUN.md).
+
 A [campanha 0032](docs/results/CAMPAIGN_0032.md) concluiu os oito treinos TinyStories
 de 6.000 passos/seeds 331–332 em ~21min12s antes da exportação. NLL média: Transformer
 maior 0,802563, Transformer de 86.400 pesos 1,128058, memória de 86.785 pesos 1,334464,
