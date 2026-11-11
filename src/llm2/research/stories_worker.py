@@ -15,6 +15,7 @@ from ..trainer import Trainer
 from ..runtime import attention_context,source_provenance,environment
 from .stories_data import StoriesData,StoryStream,evaluation_batches
 from .stories_protocol import configuration,PROTOCOL_ID,RATES,PROMPTS
+from . import stories_protocol as DEFAULT_RECIPE
 from .binding_worker import training_benchmark
 from .recall_worker import sync,state_storage_bytes
 from .resource_telemetry import EnergyMeter,energy_result,host_memory
@@ -56,7 +57,8 @@ class StoryTrainer(Trainer):
         return {'validation_loss':value['nll'],'bits_per_byte':value['bits_per_byte'],'validation_bytes':value['bytes']}
 
 
-def calibrate(variant,data_root,campaign_root,*,smoke,device,deadline):
+def calibrate(variant,data_root,campaign_root,*,smoke,device,deadline,recipe=DEFAULT_RECIPE):
+    configuration,PROTOCOL_ID,RATES=recipe.configuration,recipe.PROTOCOL_ID,recipe.RATES
     folder=Path(campaign_root)/'calibration'/variant;selection=folder/'selection.json'
     data=StoriesData(data_root,require_pinned=not smoke);source=source_provenance()['source_sha256'];runtime=environment()
     if selection.exists():
@@ -75,12 +77,12 @@ def calibrate(variant,data_root,campaign_root,*,smoke,device,deadline):
     values=[]
     for rate in RATES:
         if deadline and time.monotonic()+30>=deadline:raise TimeoutError('calibration deadline')
-        cfg=configuration(variant,data_root,folder/str(rate),331,lr=rate,smoke=smoke,device=device,calibration=True)
+        cfg=configuration(variant,data_root,folder/str(rate),recipe.SEEDS[0],lr=rate,smoke=smoke,device=device,calibration=True)
         trial_started=time.monotonic()
         with StoryTrainer(cfg,calibration=True,smoke=smoke) as trainer:
             trainer.fit();meta=read_checkpoint_metadata(trainer.last_checkpoint)
             value={'lr':rate,'nll':trainer.evaluations[-1]['nll'],'evaluation':trainer.evaluations[-1],
-                'initialization_scope':'seed931; fresh init, no main seed weights','checkpoint_metadata':meta,'counters':trainer.counters}
+                'initialization_scope':f'seed{recipe.CALIBRATION_SEED}; fresh init, no main seed weights','checkpoint_metadata':meta,'counters':trainer.counters}
             value['wall_seconds']=time.monotonic()-trial_started
             values.append(value);write_json(folder/'progress.json',{'completed':len(values),'last':{'lr':rate,'nll':value['nll']}})
         # Only this disposable calibration checkpoint; retain scientific metadata.
@@ -168,9 +170,10 @@ def optimization_probe(trainer,*,smoke=False):
     del reference;return result
 
 
-def run(config,variant,campaign_root,*,smoke=False,deadline=None,permit=None):
+def run(config,variant,campaign_root,*,smoke=False,deadline=None,permit=None,recipe=DEFAULT_RECIPE,diagnostic=optimization_probe):
+    PROTOCOL_ID=recipe.PROTOCOL_ID
     original=load_config(config);start=time.monotonic()
-    try:selection=calibrate(variant,original.data.path,campaign_root,smoke=smoke,device=original.train.device,deadline=deadline)
+    try:selection=calibrate(variant,original.data.path,campaign_root,smoke=smoke,device=original.train.device,deadline=deadline,recipe=recipe)
     except TimeoutError:
         output=Path(original.train.output_dir);output.mkdir(parents=True,exist_ok=False)
         value={'protocol_id':PROTOCOL_ID,'dataset_sha256':StoriesData(original.data.path,require_pinned=not smoke).fingerprint,
@@ -206,7 +209,7 @@ def run(config,variant,campaign_root,*,smoke=False,deadline=None,permit=None):
             time.sleep(.25)
         result['training_profile']=training_benchmark(trainer,samples=2 if smoke else 30,warmup=1 if smoke else 3)
         result['profiles']=[forward_profile(trainer,n,smoke=smoke) for n in ([32,64] if smoke else [256,1024,8192])]
-        result['optimization_probe']=optimization_probe(trainer,smoke=smoke)
+        result['optimization_probe']=diagnostic(trainer,smoke=smoke)
         result.update(status='complete',worker_wall_seconds=time.monotonic()-start,final_parameters_sha256=initial_digest(trainer.model))
         write_json(output/'worker.json',result);return result
 

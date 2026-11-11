@@ -8,13 +8,15 @@ ganha só 0,004520 NLL frente à simples, com mais custo. Otimização bloqueada
 na T4 e reduz ~72% de VRAM incremental no forward 8K da mesma memória. Ganho de
 engenharia sem vantagem linguística; 48 textos repetitivos, teste reservado intacto.
 
-Próxima proposta: contextualizar consultas/escritas causais antes de nova expansão
-da matriz atual. A memória acumulativa de transições locais perde ordem distante;
-um probe estrutural ilustra colisão, sem carregar pesos treinados. Não repetir
-esta receita para apenas preencher tempo. Fractal permanece em compartilhamento
-entre níveis/passagens, com controle simples e independente antes de atribuir ganho.
+Próxima operação implementada: [memória contextual](CONTEXT_MEMORY_RUN.md), com
+esquecimento aprendido, profundidade contextual e hierarquia fino/amplo. Sharing
+versus independência permanece explícito. Oito braços/duas seeds/6.000 passos,
+Transformers de 86k/149k/2,16M, teto2h. A campanha medirá se há ganho real: 2x exige
+qualidade equivalente nas duas seeds, e menos parâmetros sozinho é compactação.
+A memória acumulativa anterior perde ordem distante num probe estrutural, sem
+que isso prove causa única dos resultados. Nova família ainda sem medição T4.
 Profundidade variável, compressão, GRM/TTT e demais frentes mantêm condições próprias.
-Novo núcleo não implementado; [operação 0032 preservada](TINYSTORIES_RUN.md).
+[Operação 0032 preservada](TINYSTORIES_RUN.md).
 
 10/11/2026: [0031concluída](results/CAMPAIGN_0031.md), oito treinos/duas seeds.
 Três candidatos100%na recuperação/contrafactuais até8K e64pares. Referência

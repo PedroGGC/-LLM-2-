@@ -195,7 +195,7 @@ class ResearchConfig:
             raise ValueError("context_normalization requires a recurrent architecture")
         if not self.cross_scale_exchange and self.architecture != "fractal":
             raise ValueError("cross_scale_exchange=False requires fractal architecture")
-        if self.architecture not in ("transformer", "recursive", "untied", "fractal", "state_recurrent", "state_hierarchy", "transition_memory"):
+        if self.architecture not in ("transformer", "recursive", "untied", "fractal", "state_recurrent", "state_hierarchy", "transition_memory", "context_memory", "context_hierarchy"):
             raise ValueError("unknown research architecture")
         if self.associative_levels not in (1, 2):
             raise ValueError("associative_levels must be 1 or 2")
@@ -223,7 +223,7 @@ class ResearchConfig:
             raise ValueError("invalid memory capacity/read dimension")
         if self.memory_pattern != "none" and (self.architecture != "state_hierarchy" or self.state_readout != "immediate"):
             raise ValueError("episodic memory requires immediate state_hierarchy")
-        if (self.architecture.startswith("state_") or self.architecture == "transition_memory") and (
+        if (self.architecture.startswith(("state_", "context_")) or self.architecture == "transition_memory") and (
             self.jepa_weight or self.mtp_weight or self.intermediate_weight or self.lm_weight != 1
             or self.latent_steps or self.latent_warmup_steps or self.detach_every
             or self.gradient_checkpointing or self.record_states or self.curriculum != "off"

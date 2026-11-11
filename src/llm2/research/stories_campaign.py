@@ -18,6 +18,7 @@ from ..data import write_json,sha256_file
 from ..runtime import environment,save_source_snapshot
 from .stories_data import prepare,StoriesData,write_dataset,PINNED_FINGERPRINT
 from .stories_protocol import VARIANTS,SEEDS,RATES,PROTOCOL,PROTOCOL_ID,configuration,jobs
+from . import stories_protocol as DEFAULT_RECIPE
 from .stories_ngram import evaluate_ngram
 from .campaign_storage import verify_pair
 from .cycle3_short import heartbeat
@@ -38,13 +39,14 @@ def smoke_data(path):
     return write_dataset(path,splits,spec={'engineering_smoke':True})
 
 
-def history(campaign,args,data):
+def history(campaign,args,data,*,recipe=DEFAULT_RECIPE):
+    PROTOCOL_ID,RATES,VARIANTS,configuration=recipe.PROTOCOL_ID,recipe.RATES,recipe.VARIANTS,recipe.configuration
     found={};runtime=environment()
     for path in sorted(campaign.output.parent.glob('llm2-campaign-*/campaign.json')):
         if path.parent==campaign.output or path.is_symlink():continue
         try:old=read(path)
         except (ValueError,OSError):continue
-        if old.get('cycle')!='stories_language_v1' or old.get('protocol_id')!=PROTOCOL_ID or old.get('engineering_smoke')!=args.engineering_smoke:continue
+        if old.get('cycle')!=recipe.CYCLE or old.get('protocol_id')!=PROTOCOL_ID or old.get('engineering_smoke')!=args.engineering_smoke:continue
         if old['dataset_sha256']!=data.fingerprint or old['provenance']['source_sha256']!=campaign.manifest['provenance']['source_sha256']:
             raise ValueError('story history dataset/source mismatch')
         if any(old['environment'].get(k)!=runtime.get(k) for k in ('python','packages','cuda_version','cudnn_version')):raise ValueError('story history runtime mismatch')
@@ -69,11 +71,12 @@ def history(campaign,args,data):
     return list(found.values())
 
 
-def run_pair(campaign,args,pair):
+def run_pair(campaign,args,pair,*,recipe=DEFAULT_RECIPE):
+    PROTOCOL_ID=recipe.PROTOCOL_ID
     def run(job):
         job['status']='running';campaign.save();cfg=ExperimentConfig.from_dict(job['config_resolved'])
         path=materialize(cfg,campaign.output/'configs'/(job['id']+'-proposal.yaml'))
-        command=['-m','llm2.research.stories_worker','--config',path,'--variant',job['variant'],'--mode','train',
+        command=['-m',recipe.WORKER_MODULE,'--config',path,'--variant',job['variant'],'--mode','train',
             '--campaign-root',str(campaign.output),'--work-deadline',str(time.monotonic()+campaign.budget.work_remaining),
             '--profile-permit',str(Path(job['directory'])/'profile-permit.json')]
         if args.engineering_smoke:command.append('--engineering-smoke')
@@ -114,7 +117,8 @@ def run_pair(campaign,args,pair):
         except BaseException:campaign.abort();raise
 
 
-def report(campaign):
+def report(campaign,*,recipe=DEFAULT_RECIPE):
+    VARIANTS,SEEDS,PROTOCOL_ID=recipe.VARIANTS,recipe.SEEDS,recipe.PROTOCOL_ID
     evidence=campaign.manifest.get('historical_runs',[])+campaign.manifest['runs'];rows=[];curves=[]
     for j in evidence:
         for e in j.get('evaluations',[]):curves.append({'variant':j['variant'],'seed':j['seed'],**e})
@@ -125,22 +129,34 @@ def report(campaign):
             'training_bytes':j['counters']['tokens_processed'],'train_wall_seconds':j['counters']['train_wall_seconds'],
             'train_step_ms':1000*j['training_profile']['median_step_seconds'] if j.get('training_profile') else None,
             'forward_ms':1000*p['median_forward_seconds'] if p else None,'training_vram_bytes':j['counters']['peak_vram_allocated_bytes'],
-            'gpu_slot':j['gpu_slot']})
+            'gpu_slot':j['gpu_slot'],'complete_horizon':j['status']=='complete' and j['step']==j['config_resolved']['train']['max_steps']})
     comparisons=[]
     for row in rows:
         if row['variant'].startswith('transformer'):continue
-        for name in ('transformer','transformer_matched'):
+        for name in recipe.REFERENCES:
             base=next((r for r in rows if r['variant']==name and r['seed']==row['seed']),None)
             if base is None:continue
             difference=row['nll']-base['nll']
             time_factor=base['train_step_ms']/row['train_step_ms'] if base['train_step_ms'] and row['train_step_ms'] else None
             comparisons.append({'variant':row['variant'],'seed':row['seed'],'reference':name,'nll_difference':difference,
+                'complete_horizon':row['complete_horizon'] and base['complete_horizon'],
                 'parameter_factor':base['parameters']/row['parameters'],'train_step_factor':time_factor,
-                'quality_candidate':difference<=-.005,'efficiency_candidate':bool(difference<=.002 and time_factor and time_factor>=1/.9),
+                'quality_candidate':row['complete_horizon'] and base['complete_horizon'] and difference<=-.005,
+                'efficiency_candidate':bool(row['complete_horizon'] and base['complete_horizon'] and difference<=.002 and time_factor and time_factor>=1/.9),
                 'scope':'exploratory per-seed same-input result; not matched compute or independent confirmation'})
     folder=campaign.output/'report';folder.mkdir(exist_ok=True)
+    milestones=[]
+    for variant in VARIANTS:
+        if variant.startswith('transformer'):continue
+        for reference in recipe.REFERENCES:
+            pairs=[r for r in comparisons if r['variant']==variant and r['reference']==reference]
+            for factor in recipe.PROTOCOL.get('cost_targets',[]):
+                passed={p['seed'] for p in pairs}==set(SEEDS) and all(p['complete_horizon'] and p['nll_difference']<=.002 and p['train_step_factor'] is not None and p['train_step_factor']>=factor for p in pairs)
+                milestones.append({'variant':variant,'reference':reference,'target_speed_factor':factor,'passed_both_seeds':passed,
+                    'scope':'isolated update speed at final NLL within+0.002; same targets, exploratory, not confirmed time-to-quality'})
     value={'protocol_id':PROTOCOL_ID,'status':campaign.manifest['status'],'dataset_sha256':campaign.manifest.get('dataset_sha256'),
         'rows':rows,'comparisons':comparisons,'counting_baseline':campaign.manifest.get('counting_baseline'),
+        'resource_milestones':milestones,
         'test_evaluated':False,'limitations':['reduced deterministic prefix subset, byte-level English generated stories',
             'two seeds, fixed finite LR calibration budget, no general LLM superiority','same sampled windows, not matched compute',
             'generation qualitative with fixed prompts, no cherrypicked examples','forward benchmark not cached generation','GPU board energy excludes host/compile']}
@@ -157,6 +173,12 @@ def report(campaign):
     if count:page+=f"<p>Referência de contagens de três bytes: {count['nll']:.4f}NLL / {count['bits_per_byte']:.4f}bits porbyte. Estado de contagens: {count['count_state_bytes']}bytes; não é uma rede com parâmetros equivalentes.</p>"
     page+='<table><tr>'
     page+=''.join('<th>'+k+'</th>' for k in keys)+'</tr>'+table+'</table>'
+    if milestones:
+        passed=[m for m in milestones if m['passed_both_seeds']]
+        page+='<h2>Metas de velocidade com qualidade equivalente</h2><p>Exigem os dois treinos completos e NLL até 0,002 pior em cada seed. Tempo isolado por atualização; confirmação independente ainda necessária.</p>'
+        if passed:
+            page+='<ul>'+''.join('<li>'+html.escape(f"{m['variant']} / {m['reference']}: atingiu {m['target_speed_factor']}x")+'</li>' for m in passed)+'</ul>'
+        else:page+='<p>Nenhuma meta qualificada com os resultados completos disponíveis.</p>'
     for j in evidence:
         for sample in j.get('generation',[]):
             page+='<h3>'+html.escape(j['id']+' / '+sample['mode'])+'</h3><pre>'+html.escape(sample['prompt']+sample['text'])+'</pre>'
@@ -166,7 +188,7 @@ def report(campaign):
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
         fig,axes=plt.subplots(1,2,figsize=(11,4),constrained_layout=True)
-        colors={'transformer':'#185adb','transition':'#00856a','pyramid_shared':'#cc7100','transformer_matched':'#8e53a8'}
+        colors={v:plt.get_cmap('tab10')(i) for i,v in enumerate(VARIANTS)}
         for variant in VARIANTS:
             for index,seed in enumerate(SEEDS):
                 points=[p for p in curves if p['variant']==variant and p['seed']==seed]
@@ -180,8 +202,8 @@ def report(campaign):
         axes[0].legend(fontsize=8);fig.savefig(folder/'quality_cost.png',dpi=150);plt.close(fig)
 
 
-def publish(campaign):
-    campaign.save();report(campaign)
+def publish(campaign,*,recipe=DEFAULT_RECIPE):
+    campaign.save();report(campaign,recipe=recipe)
     files=[]
     for p in campaign.output.rglob('*'):
         if not p.is_file() or 'compiler-cache' in p.parts or p.suffix not in ('.json','.jsonl','.yaml','.log','.txt','.csv','.html','.zip','.png'):continue
@@ -193,10 +215,11 @@ def publish(campaign):
     verify_pair(result,weights);return result,weights
 
 
-def execute(args):
+def execute(args,*,recipe=DEFAULT_RECIPE):
+    PROTOCOL,PROTOCOL_ID,VARIANTS,jobs=recipe.PROTOCOL,recipe.PROTOCOL_ID,recipe.VARIANTS,recipe.jobs
     budget=SessionBudget(args.session_seconds,300,elapsed=args.bootstrap_elapsed_seconds+time.monotonic()-args.started)
     campaign=SessionCampaign(ROOT,args.output,device=args.device,gpus=args.gpus,budget=budget)
-    campaign.manifest.update(cycle='stories_language_v1',protocol=PROTOCOL,protocol_id=PROTOCOL_ID,engineering_smoke=args.engineering_smoke,
+    campaign.manifest.update(cycle=recipe.CYCLE,protocol=PROTOCOL,protocol_id=PROTOCOL_ID,engineering_smoke=args.engineering_smoke,
         environment=environment(),historical_runs=[],dataset_sha256=PINNED_FINGERPRINT,
         limitations='first byte-language screen; reduced corpus; test never evaluated; no automatic general superiority claim')
     old={k:os.environ.get(k) for k in ('LLM2_CYCLE4','LLM2_COMPILER_CACHE_ROOT')}
@@ -218,12 +241,15 @@ def execute(args):
             campaign.manifest['counting_baseline']=evaluate_ngram(data,32 if args.engineering_smoke else 256)
             print('DATASET verificado: '+data.fingerprint,flush=True)
             if not args.engineering_smoke:
-                campaign.command(['-m','pytest','-q','tests/test_stories_models.py','tests/test_stories_data.py','tests/test_stories_training.py','-m','not cuda'],'tests-stories-cpu.log')
-                campaign.command(['-m','pytest','-q','tests/test_stories_models.py','-m','cuda'],'tests-stories-cuda.log',gpu=args.gpus[0])
-            previous=history(campaign,args,data);campaign.manifest['historical_runs']=previous;done={j['id'] for j in previous}
+                campaign.command(['-m','pytest','-q',*recipe.CPU_TESTS,'-m','not cuda'],'tests-stories-cpu.log')
+                campaign.command(['-m','pytest','-q',*recipe.CUDA_TESTS,'-m','cuda'],'tests-stories-cuda.log',gpu=args.gpus[0])
+            previous=history(campaign,args,data,recipe=recipe);campaign.manifest['historical_runs']=previous;done={j['id'] for j in previous}
             rows=[j for j in jobs(campaign.output,data.root,args.gpus,seeds=args.seeds,smoke=args.engineering_smoke,device=args.device) if j['id'] not in done]
             campaign.manifest['runs']=rows;campaign.save()
-            required=(0 if args.engineering_smoke else 4*1024**3)+sum((2164992 if j['variant']=='transformer' else 120000)*48 for j in rows)
+            from .factory import build_backbone
+            with torch.device('meta'):
+                weight_counts=[sum(p.numel() for p in build_backbone(ExperimentConfig.from_dict(j['config_resolved'])).parameters()) for j in rows]
+            required=(0 if args.engineering_smoke else 4*1024**3)+sum(weight_counts)*48
             if shutil.disk_usage(campaign.output).free<required:raise OSError('insufficient space for cache/checkpoints/free reserve')
             campaign.manifest['storage_estimate']={'required_free_bytes':required}
             for seed in args.seeds:
@@ -232,7 +258,7 @@ def execute(args):
                     budget.require(0 if args.engineering_smoke else 180)
                     first=pending.pop(0);other=next((j for j in pending if j['gpu_slot']!=first['gpu_slot']),None);pair=[first]
                     if other:pending.remove(other);pair.append(other)
-                    run_pair(campaign,args,pair)
+                    run_pair(campaign,args,pair,recipe=recipe)
             complete=[j for j in previous+rows if j['status']=='complete']
             for seed in args.seeds:
                 counts={j['counters']['tokens_processed'] for j in complete if j['seed']==seed}
@@ -254,7 +280,7 @@ def execute(args):
         completed={j['id'] for j in campaign.manifest.get('historical_runs',[])+campaign.manifest['runs'] if j['status']=='complete'}
         campaign.manifest['pending_ids']=[f'{v}-seed-{s}' for s in args.seeds for v in VARIANTS if f'{v}-seed-{s}' not in completed]
         campaign.manifest['session_budget']=budget.snapshot()
-        try:result,weights=publish(campaign)
+        try:result,weights=publish(campaign,recipe=recipe)
         finally:
             for k,v in old.items():
                 if v is None:os.environ.pop(k,None)
@@ -264,17 +290,18 @@ def execute(args):
     return campaign.manifest
 
 
-def main():
+def main(*,recipe=DEFAULT_RECIPE,started=STARTED):
+    SEEDS=recipe.SEEDS
     p=argparse.ArgumentParser();p.add_argument('--output',required=True);p.add_argument('--cache',required=True);p.add_argument('--gpus',nargs=2,default=['0','1'])
     p.add_argument('--seeds',nargs='+',type=int,default=list(SEEDS));p.add_argument('--session-seconds',type=float,default=7200)
     p.add_argument('--bootstrap-elapsed-seconds',type=float,default=0);p.add_argument('--bootstrap-metadata')
     p.add_argument('--engineering-smoke',action='store_true');p.add_argument('--device',choices=['cuda','cpu'],default='cuda')
-    a=p.parse_args();a.started=STARTED
+    a=p.parse_args();a.started=started
     if not 300<a.session_seconds<=7200 or len(set(a.gpus))!=2 or (a.device=='cpu')!=a.engineering_smoke:raise ValueError('two-hour/two slots required; CPU is engineering only')
     if not a.seeds or len(set(a.seeds))!=len(a.seeds) or not set(a.seeds)<=set(SEEDS):raise ValueError('invalid language seeds')
     if not a.engineering_smoke and (not a.bootstrap_metadata or not torch.cuda.is_available() or any(not s.isdecimal() or int(s)>=torch.cuda.device_count() or 'T4' not in torch.cuda.get_device_name(int(s)) for s in a.gpus)):
         raise ValueError('pinned bootstrap and two T4 GPUs required')
-    execute(a)
+    execute(a,recipe=recipe)
 
 
 if __name__=='__main__':main()

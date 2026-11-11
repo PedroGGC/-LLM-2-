@@ -22,12 +22,15 @@ def fetch(name,digest):
     ns={'__name__':'stories_pinned_'+name};exec(compile(raw.decode('utf-8'),url,'exec'),ns);return ns
 
 
-def bootstrap_git(revision,*,run=False,run_number=32,session_seconds=7200,seeds=(331,332),started_at=None):
+def bootstrap_git(revision,*,run=False,run_number=32,session_seconds=7200,seeds=(331,332),started_at=None,profile='stories'):
     if not run:return {'status':'not_started'}
-    if (not re.fullmatch(r'[0-9a-f]{40}',revision) or type(run_number) is not int or run_number<32 or
-        not 300<float(session_seconds)<=7200 or not seeds or len(set(seeds))!=len(seeds) or not set(seeds)<={331,332}):
-        raise ValueError('exact revision, run>=32, seeds331/332 and limit<=2h required')
-    print('TinyStories: quatro modelos x duas seeds; calibração train-only; T4x2, teto2h.',flush=True)
+    profiles={'stories':('llm2.research.stories_campaign',32,{331,332},4),'context':('llm2.research.context_campaign',33,{341,342},8)}
+    if profile not in profiles:raise ValueError('unknown language profile')
+    module,minimum,allowed,models=profiles[profile]
+    if (not re.fullmatch(r'[0-9a-f]{40}',revision) or type(run_number) is not int or run_number<minimum or
+        not 300<float(session_seconds)<=7200 or not seeds or len(set(seeds))!=len(seeds) or not set(seeds)<=allowed):
+        raise ValueError('exact revision, correct campaign/seeds and limit<=2h required')
+    print(f'TinyStories/{profile}: {models} modelos x {len(seeds)} seeds; calibração train-only; T4x2, teto2h.',flush=True)
     started_at=time.monotonic() if started_at is None else started_at
     helper=fetch('cycle2_bootstrap',HELPER_SHA256);session=helper['_BootstrapSession'](session_seconds,started_at)
     hardware=helper['_hardware']();work,gpus,before_torch=hardware
@@ -44,10 +47,10 @@ def bootstrap_git(revision,*,run=False,run_number=32,session_seconds=7200,seeds=
         while True:
             try:output=number(work,number=run_number,search_roots=[Path('/kaggle/input')]);break
             except FileExistsError:run_number+=1
-        metadata.update(torch_preserved=before_torch,session_seconds=session_seconds,download_mode='notebook_embedded_base64',
+        metadata.update(torch_preserved=before_torch,session_seconds=session_seconds,download_mode='notebook_embedded_base64',profile=profile,
             scope='pinned 34MiB TinyStories prefixes; document-isolated byte LM; no old weights migrated')
         meta=parent/'bootstrap.json';meta.write_text(json.dumps(metadata,indent=2)+'\n',encoding='utf-8',newline='\n')
-        command=[sys.executable,'-m','llm2.research.stories_campaign','--output',str(output),
+        command=[sys.executable,'-m',module,'--output',str(output),
             '--cache',str(work/'llm2-tinystories-prefix-cache'),'--gpus',*gpus,'--seeds',*map(str,seeds),
             '--session-seconds',str(session_seconds),'--bootstrap-elapsed-seconds',str(session.elapsed),'--bootstrap-metadata',str(meta)]
         env=os.environ.copy();env.update(PYTHONPATH=str(root/'src'),PYTHONUNBUFFERED='1',PYTHONIOENCODING='utf-8')

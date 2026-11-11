@@ -8,6 +8,12 @@ from .stories_data import PINNED_FINGERPRINT
 VARIANTS=('transformer','transition','pyramid_shared','transformer_matched')
 SEEDS=(331,332)
 RATES=(.0003,.001)
+CALIBRATION_SEED=931
+CYCLE='stories_language_v1'
+WORKER_MODULE='llm2.research.stories_worker'
+REFERENCES=('transformer','transformer_matched')
+CPU_TESTS=('tests/test_stories_models.py','tests/test_stories_data.py','tests/test_stories_training.py')
+CUDA_TESTS=('tests/test_stories_models.py',)
 PROMPTS=('Once upon a time, there was a little rabbit',
          'Lily found a small key near the old tree.',
          'Tom wanted to help his friend, but')
@@ -45,11 +51,11 @@ def configuration(variant,data,output,seed,*,lr=.0003,smoke=False,device='cuda',
             output_dir=str(Path(output).resolve()),cpu_threads=2,accumulation_weighting='tokens',console_progress=not calibration),research=research)
 
 
-def jobs(output,data,gpus,*,seeds=SEEDS,smoke=False,device='cuda'):
+def jobs(output,data,gpus,*,seeds=SEEDS,smoke=False,device='cuda',variants=VARIANTS,config_factory=configuration):
     rows=[]
     for si,seed in enumerate(seeds):
-        for vi,variant in enumerate(VARIANTS):
-            name=f'{variant}-seed-{seed}';cfg=configuration(variant,data,Path(output)/'runs'/name,seed,smoke=smoke,device=device)
+        for vi,variant in enumerate(variants):
+            name=f'{variant}-seed-{seed}';cfg=config_factory(variant,data,Path(output)/'runs'/name,seed,smoke=smoke,device=device)
             rows.append({'id':name,'variant':variant,'model':variant,'seed':seed,'directory':cfg.train.output_dir,
                 'config_resolved':cfg.to_dict(),'gpu_slot':str(gpus[(vi+si)%2]),'physical_gpu':None if device=='cpu' else int(gpus[(vi+si)%2]),
                 'status':'pending','max_steps':cfg.train.max_steps,'batch_size':cfg.data.batch_size,'grad_accum_steps':cfg.train.grad_accum_steps,

@@ -1,4 +1,62 @@
-# Validação vigente — 10/11/2026
+# Validação vigente — 11/11/2026
+
+## Memória contextual — antes da campanha 0033
+
+[Protocolo](docs/CONTEXT_MEMORY_RUN.md), [plano prévio](docs/PLAN_CONTEXT_MEMORY_IMPLEMENTATION.md).
+Windows/Python3.12.2/PyTorch2.14.1+cpu, `PYTHONPATH=src`. Sem CUDA local. A nova
+família não foi qualificada na T4 ainda; os dois testes CUDA/Inductor serão
+executados no Kaggle antes dos treinos, com dimensões reais e contexto256.
+
+**39 passed, 4 deselected, 98,97s, exit0**:
+`python -m pytest -q tests/test_context_memory.py tests/test_context_training.py tests/test_context_operations.py tests/test_stories_models.py tests/test_stories_training.py tests/test_stories_bootstrap.py tests/test_stories_operations.py -m 'not cuda'`.
+Inclui kernel sequencial versus blocos, forward/backward/estados, decaimento
+extremo, causalidade nas fronteiras, streaming em chunks irregulares, isolamento
+de documentos, contribuição do ramo amplo, contagem sem pesos duplicados e
+forward inicial idêntico entre compartilhado/independente com dropout desligado.
+Estados finais não retêm o armazenamento de toda a sequência via views.
+Memorização/finitude, retomada exata com dropout0,2/acumulação2, piloto restaurado.
+
+Integrações incluídas nessa suíte: campanha nova de oito workers CPU reais e
+campanha legada de quatro. Duas taxas de calibração, novos treinos principais,
+textos, diagnósticos, perfis, último checkpoint porjob, um snapshot e verificação
+dos dois ZIPs finais. Reuso sem retreino; protocolo antigo ignorado pela nova
+receita; config e fonte continuam verificadas. Falha/deadline/disco exportam
+parcial. Marcos de velocidade bloqueados quando falta seed, horizonte ou qualidade.
+Dispatch/relógio/seeds/Torch/downloads exercitados nos dois perfis do bootstrap.
+
+Regressão comum: **36 passed, 3 deselected, 109,16s, exit0**:
+`python -m pytest -q tests/test_stories_data.py tests/test_binding_models.py tests/test_training.py tests/test_research_configs.py tests/test_stories_delivery.py -m 'not cuda'`.
+Inclui dados/divisões, defaults anteriores, treino/checkpoints e célula0032 preservada.
+O warning legado de optimizer.step vem do wrapper do teste de benchmark; a ordem
+real permanece optimizer antes do scheduler. Deselected são os testes CUDA;
+nenhum skip foi contado como aprovação.
+
+Qualificação adicional CPU com dados TinyStories reais preparados: quatro modelos,
+seed11033, 200passos, B8/T256, taxa0,001, warmup25/scheduler200, sem compilação,
+apenas treino e `cal_val`. A perda caiu de 5,56–5,58 para:
+
+| Modelo | NLL final de calibração |
+|---|---:|
+| Transformer86k | 2,521143 |
+| Contextual simples | 2,204664 |
+| Duas passagens compartilhadas | 2,233852 |
+| Hierarquia compartilhada | 2,215107 |
+
+É teste de aprendizado/finitude, não ranking científico, calibração da campanha
+ou alegação de velocidade. Todas as variantes/taxas previstas permanecem na matriz;
+esses pesos não serão continuados. Dados: SHA portátil
+`d61615e79496f14ef473cc10ad11e5deac6d2bda89be7046d738498ff16ba849`.
+Registro local com configurações, fontes e contadores em
+`artifacts/development/context-cpu-qualification-20261111/qualification.json`.
+Nenhum teste reservado foi avaliado. CUDA/energia/eficiência em2h continuam pendentes.
+
+SHA-256 desse registro: `d70575a44e19bd925a0061e7abbf4b92f8d8d675f5f118f97b6efe6721f513ed`.
+Após tornar os marcos visíveis no HTML e bloquear candidatos com horizonte
+incompleto: **2 passed, 4 deselected, 45,08s, exit0**,
+`python -m pytest -q tests/test_context_operations.py -k 'resource_milestone or full_cpu'`.
+Exercita novamente publicação, oito workers e reuso; não repete a qualificação
+de 200 passos nem transforma o smoke CPU em resultado de campanha.
+
 
 ## Campanha 0032 — T4 e auditoria dos resultados
 

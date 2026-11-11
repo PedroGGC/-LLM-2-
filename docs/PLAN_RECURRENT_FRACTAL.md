@@ -1,6 +1,6 @@
 # Arquitetura própria inspirada em fractais — plano aprovado
 
-Atualizado10/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
+Atualizado11/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
 históricos. Implementação experimental em `experiment/fractal-lrm`.
 
 Atualização 0032: [TinyStories concluído](results/CAMPAIGN_0032.md), oito treinos,
@@ -16,13 +16,17 @@ agrega transições locais sem contextualizar a formação das próximas chaves;
 ordens distintas podem colapsar no mesmo estado. Isso motiva revisar representação,
 sem tratar o diagnóstico como causa única demonstrada da perda.
 
-Próxima proposta: consulta/escrita sobre representações causais contextualizadas,
-comparando primeiro com o núcleo simples e os dois Transformers. Compartilhamento
-entre níveis/passagens continua hipótese fractal; controles independentes voltarão
-quando houver hierarquia útil. Esquecimento, profundidade variável, compressão e
-memórias posteriores serão ablações distintas. Suspender repetições da receita
-linguística 0032; novo núcleo ainda não implementado. O catálogo e as condições das
-tecnologias abaixo permanecem vigentes. [Protocolo histórico](TINYSTORIES_RUN.md).
+Autorização posterior atendida: [memória contextual e hierarquia](CONTEXT_MEMORY_RUN.md).
+Nova regra de retenção com portas e representações causais; duas passagens finas
+ou ritmo amplo/4, com pesos compartilhados versus independentes. Três Transformers
+externos: dois próximos em parâmetros e o maior histórico. Oito braços, seeds
+341/342, 6.000 passos, teto 2h nas duas T4. Nenhum ganho novo medido na T4 ainda.
+As mudanças de família são um pacote exploratório; as ablações internas distinguem
+profundidade, compartilhamento e hierarquia. Não chamar compactação de vantagem
+completa. O catálogo e as condições das tecnologias abaixo permanecem vigentes.
+Profundidade variável, compressão aprendida, atualização corretiva e memória
+consultável/adaptativa serão escolhidas pelo diagnóstico. Fractal segue hipótese
+ativa, não obrigação de manter uma pirâmide ruim. [Protocolo histórico](TINYSTORIES_RUN.md).
 
 Atualização0031: [oito treinos concluídos](results/CAMPAIGN_0031.md), duas seeds.
 Memória única/compartilhada/independente resolveram recuperação de um byte:

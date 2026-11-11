@@ -1,10 +1,12 @@
 # Documentação
 
-Atualizado em 10/11/2026. Comece pelos documentos vigentes abaixo. A implementação
+Atualizado em 11/11/2026. Comece pelos documentos vigentes abaixo. A implementação
 fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém esse módulo.
 
 | Documento | Finalidade |
 |---|---|
+| [Memória contextual e hierarquia](CONTEXT_MEMORY_RUN.md) | Nova família, oito braços/duas seeds, referências próximas em pesos, T4x2/teto2h |
+| [Plano prévio de memória contextual](PLAN_CONTEXT_MEMORY_IMPLEMENTATION.md) | Regra, controles, literatura, riscos e aceitação antes da implementação |
 | [Campanha 0032: linguagem](results/CAMPAIGN_0032.md) | Oito treinos; Transformer de 86k vence; blocos economizam VRAM; revisar representação causal |
 | [Operação TinyStories preservada](TINYSTORIES_RUN.md) | Memória/pirâmide e dois Transformers; dados limitados, textos, duas T4/teto 2h |
 | [Plano prévio TinyStories](PLAN_TINYSTORIES_IMPLEMENTATION.md) | Dados, calibração train-only, execução bloqueada e critérios antes de implementar |

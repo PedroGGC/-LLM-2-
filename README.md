@@ -23,7 +23,15 @@ Este checkout contém a pesquisa fractal: **`experiment/fractal-lrm`**.
 A implementação fractal permanece isolada. O identificador `fractal` em uma configuração
 não instala esse código na branch comum. Confira `git branch --show-current` antes de trabalhar.
 
-## Estado atual — 10/11/2026
+## Estado atual — 11/11/2026
+
+Nova rodada preparada: [memória contextual e organização fractal](docs/CONTEXT_MEMORY_RUN.md).
+Memória matricial com esquecimento aprendido; duas passagens contextualizadas ou
+hierarquia fino/amplo, compartilhadas versus independentes. Sem DecoderBlock/SDPA
+nos candidatos. Oito variantes, incluindo Transformers de 86k/149k/2,16M, duas seeds
+e 6.000 passos: 16 treinos, T4 x2, teto 2h, um par de ZIPs finais. Marcos de 2x ou
+mais exigem qualidade equivalente e referência nomeada. Implementação/testes locais
+não são resultados científicos na T4; ganho linguístico ainda não demonstrado.
 
 A [campanha 0032](docs/results/CAMPAIGN_0032.md) concluiu os oito treinos TinyStories
 de 6.000 passos/seeds 331–332 em ~21min12s antes da exportação. NLL média: Transformer
@@ -37,7 +45,7 @@ rápida que a mesma memória em modo anterior no forward 8K. Ganho de engenharia
 sem qualidade linguística 8K ou geração com cache demonstradas. Teste reservado
 intacto; um par de ZIPs finais/cache limitado. Próxima proposta: contextualizar
 consultas/escritas e preservar o controle fractal, suspendendo novas repetições
-da receita atual. Nenhum novo núcleo implementado após a auditoria.
+da receita atual. A nova família acima atende à autorização posterior à auditoria.
 [Protocolo/célula preservados](docs/TINYSTORIES_RUN.md), [validação](VALIDATION.md).
 
 A [campanha0031](docs/results/CAMPAIGN_0031.md) terminou: oito treinos de3000passos,
