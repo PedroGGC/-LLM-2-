@@ -36,8 +36,9 @@ perdeu qualidade frente a duas passagens finas. A próxima comparação proposta
 [Protocolo](docs/CONTEXT_MEMORY_RUN.md) ·
 [Célula preservada](scripts/11_testar_memoria_contextual_kaggle.py).
 
-O diagnóstico da 0034 está preparado para reutilizar quatro checkpoints da
-0033 e medir o primeiro byte e os bytes seguintes. [Operação no Kaggle](docs/CACHED_DECODE_RUN.md).
+A 0034 parou na descoberta dos pesos da 0033. A operação 0035 refaz os quatro
+treinos necessários e executa o diagnóstico com os checkpoints novos na mesma
+sessão. [Operação no Kaggle](docs/CACHED_DECODE_RUN.md).
 
 A [campanha 0032](docs/results/CAMPAIGN_0032.md) concluiu os oito treinos TinyStories
 de 6.000 passos/seeds 331–332 em ~21min12s antes da exportação. NLL média: Transformer

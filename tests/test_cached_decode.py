@@ -76,11 +76,11 @@ def test_frozen_safetensors_to_benchmark_report(tmp_path, variant, monkeypatch):
     restored = bench.load_frozen_model(archive_path, job, device)
     with torch.inference_mode(), attention_context(True):
         original = score(model, data, "val", 256, 32, device)["nll"]
-        result = {"variant": variant, "seed": 341, "original_nll_t256": original, "profiles": []}
+        result = {"variant": variant, "seed": 341, "checkpoint_nll_t256": original, "profiles": []}
         path = tmp_path / "worker.json"
         bench.evaluate(restored, data, device, path, result, lengths=(33, 96), new_bytes=8)
     value = json.loads(path.read_text())
-    assert value["status"] == "complete" and value["nll_difference_from_0033"] == 0
+    assert value["status"] == "complete" and value["nll_difference_from_checkpoint"] == 0
     for profile in value["profiles"]:
         assert profile["parity"]["positions"] == 9 and len(profile["samples"]) == 7
         assert profile["peak_vram_bytes"] is None and profile["energy"]["board_joules"] is None
@@ -96,7 +96,8 @@ def test_missing_weights_publish_failure_without_starting_workers(tmp_path, monk
     meta.write_text("{}")
     output = tmp_path / "llm2-campaign-0034"
     args = argparse.Namespace(seconds=900, started_at=time.monotonic(), gpus=["0", "1"],
-                              output=str(output), operator_metadata=meta, weights=None)
+                              output=str(output), operator_metadata=meta, weights=None,
+                              rebuild=False, reference="unused")
     ref = {"campaign": "llm2-campaign-0033", "dataset_sha256": "fixture", "jobs": {}}
     with pytest.raises(RuntimeError, match="Consulte o ZIP"):
         bench.run_campaign(args, ref)

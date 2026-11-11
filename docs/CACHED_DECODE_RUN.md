@@ -1,5 +1,30 @@
 # Geração com estado e KV cache — campanha a partir da 0034
 
+## Reconstrução dos pesos após a 0034
+
+O ZIP de resultados da 0033 permaneceu disponível. Os pesos finais se
+perderam, e a tentativa 0034 encerrou na descoberta dos checkpoints.
+A operação 0035 reproduz apenas as duas variantes e duas seeds necessárias.
+Usa a configuração de cada job auditado, o treino original da revisão
+`db507b5`, os mesmos dados e a taxa 0,001 selecionada na 0033. As quatro
+execuções começam do zero, mantêm o horizonte de 6.000 passos e registram
+a NLL final e o SHA-256 dos novos pesos. A reprodução é uma campanha
+própria. Diferenças de runtime podem produzir pesos distintos.
+
+Na mesma sessão, os checkpoints novos alimentam a comparação incremental
+em processos separados. Verificar os arquivos e a fonte antes de medir.
+A paridade de logits, a avaliação de desenvolvimento e os comprimentos
+do protocolo abaixo se aplicam. O teste compara a NLL reavaliada com a
+NLL do novo checkpoint. A diferença em relação à 0033 será registrada.
+
+Usar as duas T4, alternando cada variante de placa entre seeds, com teto de
+uma hora.
+Aplicar o limite de cache e a reserva de exportação. Exportar um ZIP de
+resultados e outro com o último checkpoint íntegro de cada job, inclusive
+se houver interrupção. Conservar a referência de pesos novos junto dos
+checkpoints completos. O bootstrap usa o nome `bootstrap.json` aceito
+pela guarda de limpeza dos checkouts.
+
 ## Plano prévio
 
 A 0033 encontrou menor NLL no recorrente de duas passagens independentes e

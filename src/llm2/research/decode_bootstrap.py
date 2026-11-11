@@ -29,11 +29,14 @@ def fetch(name, digest):
     return namespace
 
 
-def bootstrap_git(revision, *, run=False, run_number=34, session_seconds=1800, checkpoints=None, started_at=None):
+def bootstrap_git(revision, *, run=False, run_number=34, session_seconds=1800,
+                  checkpoints=None, rebuild=False, started_at=None):
     if not run:
         return {"status": "not_started"}
     if (not re.fullmatch(r"[0-9a-f]{40}", revision) or type(run_number) is not int
-            or run_number < 34 or not 300 < float(session_seconds) <= 1800):
+            or run_number < (35 if rebuild else 34)
+            or not 300 < float(session_seconds) <= (3600 if rebuild else 1800)
+            or (rebuild and checkpoints is not None)):
         raise ValueError("invalid revision, campaign number or session limit")
     started_at = time.monotonic() if started_at is None else started_at
     helper = fetch("cycle2_bootstrap", HELPER_SHA256)
@@ -71,7 +74,7 @@ def bootstrap_git(revision, *, run=False, run_number=34, session_seconds=1800, c
                 break
             except FileExistsError:
                 run_number += 1
-        metadata = parent / "decode-bootstrap.json"
+        metadata = parent / "bootstrap.json"
         metadata.write_text(json.dumps({
             "operator_revision": revision, "scientific_revision": SCIENTIFIC_REVISION,
             "operator_sha256": {name: operator_meta["source_files_sha256"][name] for name in (
@@ -84,20 +87,31 @@ def bootstrap_git(revision, *, run=False, run_number=34, session_seconds=1800, c
                    "--seconds", str(session_seconds), "--started-at", str(started_at)]
         if checkpoints:
             command.extend(["--weights", checkpoints])
+        if rebuild:
+            command.append("--rebuild")
         env = os.environ.copy()
         env.update(PYTHONPATH=str(frozen / "src"), PYTHONUNBUFFERED="1",
                    PYTHONIOENCODING="utf-8", LLM2_CYCLE4="1")
+        env.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         bundle = work / f"{output.name}-results.zip"
-        print(f"Diagnóstico {output.name} com os pesos finais da 0033 nas duas T4.", flush=True)
+        weights = work / f"{output.name}-checkpoints.zip"
+        if rebuild:
+            print(f"{output.name}: quatro treinos de 6.000 passos e diagnóstico nas duas T4.", flush=True)
+        else:
+            print(f"Diagnóstico {output.name} com os pesos finais da 0033 nas duas T4.", flush=True)
         try:
             helper["bounded_command"](command, cwd=frozen, env=env, timeout=session.remaining(export=True))
         finally:
-            if bundle.is_file():
-                try:
-                    download_file(bundle)
-                except Exception as exc:
-                    print(f"Resultado em {bundle}. Botão indisponível: {exc}", flush=True)
-        return {"campaign": str(output), "results": str(bundle), "optimizer_steps": 0}
+            for archive in (bundle, weights):
+                if archive.is_file():
+                    try:
+                        download_file(archive)
+                    except Exception as exc:
+                        print(f"Arquivo em {archive}. Botão indisponível: {exc}", flush=True)
+        manifest = json.loads((output / "campaign.json").read_text(encoding="utf-8"))
+        return {"campaign": str(output), "results": str(bundle),
+                "checkpoints": str(weights) if weights.is_file() else None,
+                "status": manifest["status"], "optimizer_steps": manifest["optimizer_steps"]}
     finally:
         for parent in reversed(parents):
             try:

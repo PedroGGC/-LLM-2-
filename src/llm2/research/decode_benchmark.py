@@ -17,15 +17,18 @@ import llm2
 import torch
 from safetensors.torch import load_model
 
+from llm2.checkpoint import read_checkpoint_metadata
 from llm2.config import ExperimentConfig
-from llm2.data import write_json
+from llm2.data import sha256_file, write_json
 from llm2.research.checkpoint_review import verified_source
-from llm2.research.cycle4 import archive_files
+from llm2.research.cycle4 import archive_files, checkpoint_files
 from llm2.research.factory import build_backbone
 from llm2.research.resource_telemetry import EnergyMeter, energy_result, host_memory
 from llm2.research.session import SessionBudget, SessionBudgetExceeded, SessionCampaign
+from llm2.research.state_readout_worker import retain_final
+from llm2.research.state_study import discard_compiler_cache, storage_budget
 from llm2.research.stories_data import StoriesData, prepare
-from llm2.research.stories_worker import score
+from llm2.research.stories_worker import StoryTrainer, score
 from llm2.runtime import attention_context, environment, source_provenance
 
 if __package__:
@@ -118,6 +121,128 @@ def write_result(path, value):
     os.replace(temporary, path)
 
 
+def rebuild_config(original, directory, data):
+    cfg = ExperimentConfig.from_dict(original["config"])
+    cfg.train.output_dir = str(directory)
+    cfg.data.path = str(data)
+    return cfg
+
+
+def rebuild_job(output, job_id, ref, data, *, smoke=False):
+    original = ref["jobs"][job_id]
+    directory = output / "runs" / job_id
+    cfg = rebuild_config(original, directory, data)
+    with StoryTrainer(cfg, smoke=smoke) as trainer:
+        if trainer.data.fingerprint != ref["dataset_sha256"]:
+            raise ValueError("rebuild dataset differs from the frozen protocol")
+        trainer.fit()
+        if trainer.counters["step"] != cfg.train.max_steps:
+            raise RuntimeError("rebuild missed the fixed training horizon")
+        final = trainer.last_checkpoint
+        meta = read_checkpoint_metadata(final)
+        nll = trainer.evaluations[-1]["nll"]
+        if not math.isfinite(nll):
+            raise ValueError("nonfinite rebuilt checkpoint NLL")
+        retain_final(directory, final)
+        result = {
+            **original, "config": cfg.to_dict(), "folder": final.relative_to(output).as_posix(),
+            "architecture_version": meta["architecture_version"], "nll_t256": nll,
+            "original_nll_t256": original["nll_t256"], "original_weight_sha256": original["weight_sha256"],
+            "weight_sha256": meta["files"]["model.safetensors"],
+            "metadata_sha256": sha256_file(final / "metadata.json"), "evaluations": trainer.evaluations,
+        }
+        write_result(directory / "rebuilt.json", result)
+
+
+def verified_rebuild_record(output, job_id, ref, data):
+    original = ref["jobs"][job_id]
+    directory = output / "runs" / job_id
+    record = read_json(directory / "rebuilt.json")
+    cfg = rebuild_config(original, directory, data)
+    final = directory / "checkpoints" / f"step-{cfg.train.max_steps:08d}"
+    meta = read_checkpoint_metadata(final)
+    if (meta["config"] != cfg.to_dict() or record["config"] != meta["config"]
+            or record["folder"] != final.relative_to(output).as_posix()
+            or record["variant"] != original["variant"] or record["seed"] != original["seed"]
+            or meta["dataset_sha256"] != ref["dataset_sha256"]
+            or meta["provenance"]["source_sha256"] != ref["source_sha256"]
+            or meta["provenance"]["git"]["commit"] != ref["revision"]
+            or record["architecture_version"] != original["architecture_version"]
+            or meta["architecture_version"] != record["architecture_version"]
+            or record["weight_sha256"] != meta["files"]["model.safetensors"]):
+        raise ValueError("rebuilt checkpoint provenance mismatch")
+    summary = read_json(directory / "summary.json")
+    if summary["step"] != cfg.train.max_steps or summary["validation_loss"] != record["nll_t256"]:
+        raise ValueError("rebuilt checkpoint validation record mismatch")
+    read_weight(output, record)
+    return record
+
+
+def paired_jobs(campaign, gpus, commands, *, training=None):
+    for index, seed in enumerate(SEEDS):
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            tasks = []
+            for slot, variant in enumerate(VARIANTS):
+                job = f"{variant}-seed-{seed}"
+                gpu = gpus[(slot + index) % 2]
+                progress = None if training is None else {
+                    "max_steps": training[job]["config"]["train"]["max_steps"],
+                    "model": variant, "seed": seed, "physical_gpu": gpu,
+                    "checkpoint_interval": training[job]["config"]["train"]["checkpoint_interval"],
+                }
+                stage = "rebuild" if training is not None else "decode"
+                tasks.append(workers.submit(campaign.command, commands(job), f"{stage}-{job}.log",
+                                            gpu=gpu, job=progress))
+            for task in tasks:
+                task.result()
+
+
+def rebuild_reference(campaign, args, original, data):
+    output = campaign.output
+    data_path = data.root
+
+    def command(job):
+        return [__file__, "--reference", args.reference, "--output", output, "--data", data_path,
+                "--train-job", job]
+
+    previous = os.environ.get("LLM2_COMPILER_CACHE_ROOT")
+    os.environ["LLM2_COMPILER_CACHE_ROOT"] = str(output / "compiler-cache")
+    try:
+        with storage_budget(campaign):
+            paired_jobs(campaign, args.gpus, command, training=original["jobs"])
+    finally:
+        if previous is None:
+            os.environ.pop("LLM2_COMPILER_CACHE_ROOT", None)
+        else:
+            os.environ["LLM2_COMPILER_CACHE_ROOT"] = previous
+    new_reference = {
+        **original, "campaign": output.name, "rebuild_of": original["campaign"],
+        "jobs": {job: verified_rebuild_record(output, job, original, data_path) for job in original["jobs"]},
+    }
+    path = output / "decode-reference.json"
+    write_result(path, new_reference)
+    return new_reference, path
+
+
+def rebuilt_checkpoint_files(campaign, job_ids):
+    files, steps, errors = [], {}, {}
+    for job in job_ids:
+        run = campaign.output / "runs" / job
+        try:
+            payload = checkpoint_files(campaign, [{"directory": str(run)}])
+            weights = next((path for path in payload if path.name == "model.safetensors"), None)
+            if weights is None:
+                continue
+            steps[job] = int(weights.parent.name.removeprefix("step-"))
+            files.extend(payload)
+        except (OSError, ValueError, KeyError) as exc:
+            errors[job] = str(exc)
+    reference = campaign.output / "decode-reference.json"
+    if reference.is_file() and files:
+        files.append(reference)
+    return files, steps, errors
+
+
 def benchmark(decoder, prefix, new_bytes):
     device = prefix.device
     warm, expected = generate(decoder, prefix, new_bytes)
@@ -167,9 +292,9 @@ def evaluate(model, data, device, result_path, result, *, lengths=LENGTHS, new_b
     ]
     if not all(math.isfinite(item["nll"]) for item in result["validation"]):
         raise ValueError("nonfinite validation NLL")
-    result["nll_difference_from_0033"] = result["validation"][0]["nll"] - result["original_nll_t256"]
-    if abs(result["nll_difference_from_0033"]) > .002:
-        raise ValueError("T256 NLL did not reproduce the frozen 0033 checkpoint")
+    result["nll_difference_from_checkpoint"] = result["validation"][0]["nll"] - result["checkpoint_nll_t256"]
+    if abs(result["nll_difference_from_checkpoint"]) > .002:
+        raise ValueError("T256 NLL did not reproduce the saved checkpoint")
     write_result(result_path, result)
     for length in lengths:
         rng = torch.Generator().manual_seed(17634 + length)
@@ -201,7 +326,7 @@ def run_worker(args, ref):
         raise ValueError("validation dataset differs from the frozen checkpoint")
     result = {
         "variant": job["variant"], "seed": job["seed"], "status": "running", "profiles": [],
-        "original_nll_t256": job["nll_t256"], "weight_sha256": job["weight_sha256"],
+        "checkpoint_nll_t256": job["nll_t256"], "weight_sha256": job["weight_sha256"],
         "dataset_sha256": data.fingerprint, "environment": environment(),
         "attention": {"mode": "PyTorch eager SDPA auto", "flash": torch.backends.cuda.flash_sdp_enabled(),
                       "efficient": torch.backends.cuda.mem_efficient_sdp_enabled(),
@@ -238,34 +363,39 @@ def comparisons(rows):
 def run_campaign(args, ref):
     budget = SessionBudget(args.seconds, 300, elapsed=time.monotonic() - args.started_at)
     campaign = SessionCampaign(ROOT, args.output, device="cuda", gpus=args.gpus, budget=budget)
+    rebuild = args.rebuild
+    original = ref
     campaign.manifest.update(
-        cycle="cached_decode_0033_v1", optimizer_steps=0, source_campaign=ref["campaign"],
+        cycle="cached_decode_rebuild_v1" if rebuild else "cached_decode_0033_v1",
+        optimizer_steps=0, source_campaign=ref["campaign"],
         dataset_sha256=ref["dataset_sha256"], reference=ref, operator=read_json(args.operator_metadata),
         limitations="Synthetic generation timing, TinyStories development quality. Two paired seeds. Shared host.",
     )
     error = None
     try:
-        weights = locate_weights(args.weights, campaign.output.parent, Path("/kaggle/input"))
-        for job in ref["jobs"].values():
-            read_weight(weights, job)
-        print(f"Quatro checkpoints verificados em {weights}.", flush=True)
+        reference_path = args.reference
+        if not rebuild:
+            weights = locate_weights(args.weights, campaign.output.parent, Path("/kaggle/input"))
+            for job in ref["jobs"].values():
+                read_weight(weights, job)
+            print(f"Quatro checkpoints verificados em {weights}.", flush=True)
         data = prepare(args.cache, budget=budget)
         if data.fingerprint != ref["dataset_sha256"]:
             raise ValueError("prepared dataset differs from 0033")
+        if rebuild:
+            campaign.manifest["status"] = "rebuilding"
+            campaign.save()
+            ref, reference_path = rebuild_reference(campaign, args, original, data)
+            weights = campaign.output
+            campaign.manifest["reference"] = ref
+            print("Quatro pesos novos verificados. Iniciando geração em processos novos.", flush=True)
         campaign.manifest["weight_source"] = str(weights)
         campaign.manifest["status"] = "running"
         campaign.save()
-        for index, seed in enumerate(SEEDS):
-            with ThreadPoolExecutor(max_workers=2) as workers:
-                tasks = []
-                for slot, variant in enumerate(VARIANTS):
-                    job = f"{variant}-seed-{seed}"
-                    command = [__file__, "--reference", args.reference, "--output", args.output,
-                               "--weights", weights, "--data", data.root, "--job", job]
-                    tasks.append(workers.submit(campaign.command, command, job + ".log",
-                                                gpu=args.gpus[(slot + index) % 2]))
-                for task in tasks:
-                    task.result()
+        def command(job):
+            return [__file__, "--reference", reference_path, "--output", args.output,
+                    "--weights", weights, "--data", data.root, "--job", job]
+        paired_jobs(campaign, args.gpus, command)
         campaign.manifest["status"] = "complete"
     except SessionBudgetExceeded as exc:
         campaign.manifest.update(status="partial_budget", error=str(exc))
@@ -276,12 +406,30 @@ def run_campaign(args, ref):
         campaign.abort()
         rows = [read_json(path) for job in ref["jobs"]
                 if (path := campaign.output / (job + ".json")).is_file()]
-        campaign.manifest.update(runs=rows, session_budget=budget.snapshot())
-        campaign.save()
         summary = comparisons(rows)
         write_json(campaign.output / "comparison.json", summary)
+        campaign.manifest.update(runs=rows, session_budget=budget.snapshot())
+        if rebuild:
+            try:
+                discard_compiler_cache(campaign)
+            except (OSError, RuntimeError, ValueError) as exc:
+                campaign.manifest["cache_cleanup_error"] = str(exc)
+            checkpoint_paths, steps, errors = rebuilt_checkpoint_files(campaign, original["jobs"])
+            campaign.manifest.update(archived_steps_by_job=steps, optimizer_steps=sum(steps.values()),
+                                     checkpoint_errors=errors)
+            if checkpoint_paths:
+                campaign.save()
+                try:
+                    archive_files(campaign.output.parent / (campaign.output.name + "-checkpoints.zip"),
+                                  checkpoint_paths, base=campaign.output, stored=True)
+                except (OSError, ValueError) as exc:
+                    error = error or exc
+                    campaign.manifest.update(status="failed", checkpoint_export_error=str(exc))
+        campaign.save()
         result = campaign.output.parent / (campaign.output.name + "-results.zip")
         files = list(campaign.output.glob("*.json")) + list((campaign.output / "logs").glob("*.log"))
+        files.extend(path for path in (campaign.output / "runs").rglob("*")
+                     if path.is_file() and path.suffix in (".json", ".jsonl", ".yaml"))
         archive_files(result, files, base=campaign.output)
         print(f"Status {campaign.manifest['status']}. Resultado {result.name}.", flush=True)
     if error is not None:
@@ -295,6 +443,8 @@ def main():
     parser.add_argument("--weights")
     parser.add_argument("--data")
     parser.add_argument("--job")
+    parser.add_argument("--train-job")
+    parser.add_argument("--rebuild", action="store_true")
     parser.add_argument("--cache")
     parser.add_argument("--operator-metadata")
     parser.add_argument("--gpus", nargs=2)
@@ -305,7 +455,11 @@ def main():
     if ref["revision"] != source_provenance()["git"]["commit"]:
         raise ValueError("frozen worker revision differs")
     verified_source(ROOT, ref["source_sha256"])
-    if args.job:
+    if args.train_job:
+        if torch.cuda.device_count() != 1 or "T4" not in torch.cuda.get_device_name(0):
+            raise RuntimeError("rebuild worker requires one isolated T4")
+        rebuild_job(Path(args.output).resolve(), args.train_job, ref, args.data)
+    elif args.job:
         run_worker(args, ref)
     else:
         run_campaign(args, ref)

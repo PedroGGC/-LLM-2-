@@ -1,5 +1,21 @@
 # Validação vigente — 11/11/2026
 
+## Reconstrução e geração — antes da 0035
+
+A tentativa 0034 terminou na busca pelos checkpoints. A célula exportou
+o relatório de falha. O bootstrap da 0035 usa `bootstrap.json` para os
+metadados temporários, conforme a guarda de limpeza.
+
+**24 passed, 2 deselected em 21,50 s** em Python 3.12.2 e PyTorch CPU.
+`python -m pytest -q tests/test_decode_rebuild.py tests/test_cached_decode.py tests/test_context_memory.py tests/test_context_training.py -m 'not cuda'`.
+Integração local com quatro treinos curtos, arquivos safetensors novos,
+verificação de configuração e proveniência, carregamento dos novos hashes
+para inferência e validação dos dois ZIPs. O ensaio de deadline preservou
+o checkpoint completo disponível. O teste simulado do bootstrap verificou
+o dispatch, os downloads e o nome aceito pela guarda de limpeza.
+Os testes CUDA foram excluídos da execução local. O treino de 6.000 passos
+e as medições da 0035 ocorrerão nas T4. [Operação](docs/CACHED_DECODE_RUN.md).
+
 ## Geração incremental — antes da 0034
 
 **17 passed, 2 deselected em 6,43 s**, Python 3.12.2 e PyTorch CPU.
