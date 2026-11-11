@@ -46,3 +46,9 @@ Qualidade linguística em 8K permanece uma pergunta própria.
 Teto de 30 minutos, com cinco reservados para publicação. Um job por
 placa e alternância entre seeds. Guardar os pesos da 0035 e exportar
 apenas um ZIP de resultados da 0036, com cache temporário limitado.
+
+Use a [célula para Kaggle](../scripts/14_perfilhar_e_compilar_geracao_kaggle.py)
+com Internet e GPU T4 x2. A busca automática tenta a pasta da 0035,
+o ZIP em working e o ZIP anexado em `/kaggle/input`. O campo
+`checkpoints` também aceita um caminho explícito para a pasta ou o
+ZIP auditado. Baixe o ZIP de resultados pelo botão ao fim.

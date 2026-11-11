@@ -19,6 +19,12 @@ O teste focado de bootstrap passou nos dois modos, reconstrução e
 otimização. A compilação Inductor e os tempos reais na T4 serão
 verificados na execução da campanha. [Protocolo](docs/DECODE_OPTIMIZATION_RUN.md).
 
+Os checkpoints da seed 341 também passaram pela funcionalização com
+`aot_eager` em CPU, atravessando o limite da janela. Erro máximo de
+3,48e-5 no recorrente e 1,34e-5 no Transformer local. A célula 14
+passou na checagem do SHA do bootstrap `0b16bf144b788df8b899cf6368463a2143fd7bff`,
+dispatch da otimização, teto de 1.800 s e callback de download.
+
 ## Campanha 0035 — geração na T4 e controle em CPU
 
 Quatro reconstruções de 6.000 passos nas duas T4, com 8 min 03 s antes da
