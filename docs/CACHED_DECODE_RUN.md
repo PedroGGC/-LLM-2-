@@ -45,7 +45,8 @@ resultados com botão no notebook. Priorizar o diretório da 0033 em working,
 com opção de ler o ZIP de checkpoints em working ou em um input. Se os pesos
 faltarem ou divergirem, interromper antes de executar os modelos.
 
-Use Internet e GPU T4 x2 no Kaggle. Com `checkpoints=None`, a célula procura
+Cole a [célula da 0034](../scripts/12_testar_geracao_com_cache_kaggle.py)
+com Internet e GPU T4 x2 no Kaggle. Com `checkpoints=None`, a célula procura
 a pasta da 0033, o ZIP de checkpoints no working e o ZIP anexado em
 `/kaggle/input`. O campo aceita um caminho explícito para a pasta ou ZIP.
 Baixe o ZIP de resultados gerado pelo diagnóstico.

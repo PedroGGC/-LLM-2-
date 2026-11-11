@@ -16,6 +16,10 @@ Os quatro pesos reais serão conferidos pelo Kaggle antes de construir os
 modelos. A paridade e a velocidade na T4 serão medidas na 0034.
 [Protocolo](docs/CACHED_DECODE_RUN.md).
 
+Célula 12 conferida contra o blob Git do bootstrap em
+`3f71accb5413a6efe9afdffeb692cb018d250f6c`. Teste simulado verificou modo desativado,
+rejeição de payload alterado, limite de 1.800 s e callback do download.
+
 ## Campanha 0033 — T4 e auditoria
 
 16 treinos de 6.000 passos concluídos nas duas T4, seeds 341/342, com 35 min
