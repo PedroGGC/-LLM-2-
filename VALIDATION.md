@@ -16,6 +16,11 @@ o dispatch, os downloads e o nome aceito pela guarda de limpeza.
 Os testes CUDA foram excluídos da execução local. O treino de 6.000 passos
 e as medições da 0035 ocorrerão nas T4. [Operação](docs/CACHED_DECODE_RUN.md).
 
+Célula 13 conferida contra o bootstrap Git `94b5aa83d2aff64dd068e74e7f6fbeedc6baa5f0`.
+O teste simulado confirmou a seleção da reconstrução, o teto de 3.600 s e
+o callback de download. O teste focado do bootstrap passou após configurar
+o ambiente cuBLAS.
+
 ## Geração incremental — antes da 0034
 
 **17 passed, 2 deselected em 6,43 s**, Python 3.12.2 e PyTorch CPU.

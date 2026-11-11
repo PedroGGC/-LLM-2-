@@ -25,6 +25,11 @@ se houver interrupção. Conservar a referência de pesos novos junto dos
 checkpoints completos. O bootstrap usa o nome `bootstrap.json` aceito
 pela guarda de limpeza dos checkouts.
 
+Use a [célula da 0035](../scripts/13_recriar_pesos_e_testar_geracao_kaggle.py)
+com Internet e GPU T4 x2. Baixe os dois ZIPs ao terminar. O ZIP de checkpoints
+contém os pesos, os estados de treino e a referência de decodificação quando
+os quatro jobs terminam.
+
 ## Plano prévio
 
 A 0033 encontrou menor NLL no recorrente de duas passagens independentes e
