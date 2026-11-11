@@ -57,6 +57,14 @@ incompleto: **2 passed, 4 deselected, 45,08s, exit0**,
 Exercita novamente publicação, oito workers e reuso; não repete a qualificação
 de 200 passos nem transforma o smoke CPU em resultado de campanha.
 
+Células 10 e 11 e seus perfis de bootstrap verificados com
+`python -m pytest -q tests/test_stories_delivery.py tests/test_stories_bootstrap.py`.
+**11 passed em 1,21s**. A célula 11 usa a revisão
+`db507b5258615e94cab7620dc5816fb31c36d8c7` e confere o SHA-256 do bootstrap
+`dc53834fb3b7c6f10f81914abc8e33105e34a008274e55232b75ec415326d815`.
+Testes cobrem o payload alterado, a revisão exata, relógio, seeds, teto de 2h,
+dispatch e callback dos botões de download.
+
 
 ## Campanha 0032 — T4 e auditoria dos resultados
 

@@ -89,8 +89,9 @@ as ablações isolam profundidade, compartilhamento e organização hierárquica
 
 ## Execução e resultados
 
-Usar a célula `scripts/11_testar_memoria_contextual_kaggle.py`, com revisão e SHA
-fixados. T4 x2, um job por GPU, alternância entre seeds e **teto de duas horas**
+Cole a [célula para Kaggle](../scripts/11_testar_memoria_contextual_kaggle.py)
+com revisão e SHA fixados em um notebook com Internet e GPU T4 x2.
+Um job por GPU, alternância entre seeds e **teto de duas horas**
 desde o início da célula. Não é duração obrigatória. Pilotos com margem de 35%
 decidem a admissão de cada par; horizontes/schedulers não são encurtados para
 caber. Se faltar tempo, exportar parcial e identificar os jobs pendentes.

@@ -32,6 +32,7 @@ nos candidatos. Oito variantes, incluindo Transformers de 86k/149k/2,16M, duas s
 e 6.000 passos: 16 treinos, T4 x2, teto 2h, um par de ZIPs finais. Marcos de 2x ou
 mais exigem qualidade equivalente e referência nomeada. Implementação/testes locais
 não são resultados científicos na T4; ganho linguístico ainda não demonstrado.
+[Célula para Kaggle](scripts/11_testar_memoria_contextual_kaggle.py).
 
 A [campanha 0032](docs/results/CAMPAIGN_0032.md) concluiu os oito treinos TinyStories
 de 6.000 passos/seeds 331–332 em ~21min12s antes da exportação. NLL média: Transformer
