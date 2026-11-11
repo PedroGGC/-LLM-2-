@@ -36,6 +36,9 @@ perdeu qualidade frente a duas passagens finas. A próxima comparação proposta
 [Protocolo](docs/CONTEXT_MEMORY_RUN.md) ·
 [Célula preservada](scripts/11_testar_memoria_contextual_kaggle.py).
 
+O diagnóstico da 0034 está preparado para reutilizar quatro checkpoints da
+0033 e medir o primeiro byte e os bytes seguintes. [Operação no Kaggle](docs/CACHED_DECODE_RUN.md).
+
 A [campanha 0032](docs/results/CAMPAIGN_0032.md) concluiu os oito treinos TinyStories
 de 6.000 passos/seeds 331–332 em ~21min12s antes da exportação. NLL média: Transformer
 maior 0,802563, Transformer de 86.400 pesos 1,128058, memória de 86.785 pesos 1,334464,

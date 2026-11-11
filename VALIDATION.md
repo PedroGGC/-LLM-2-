@@ -1,5 +1,21 @@
 # Validação vigente — 11/11/2026
 
+## Geração incremental — antes da 0034
+
+**17 passed, 2 deselected em 6,43 s**, Python 3.12.2 e PyTorch CPU.
+`python -m pytest -q tests/test_cached_decode.py tests/test_context_memory.py -m 'not cuda'`.
+Equivalência de logits com vários comprimentos e posições de RoPE, reset,
+capacidade de cache, estado recorrente de tamanho fixo, leitura de pesos
+safetensors com hashes, rejeição de divergência e relatório de geração
+com modelos de teste. O loader de inferência leu somente metadados e pesos.
+
+Um smoke com checkout destacado na revisão original `db507b5` conferiu
+a fonte e exportou um ZIP válido de falha quando os pesos estavam ausentes.
+O teste usou pesos artificiais nas verificações locais de inferência.
+Os quatro pesos reais serão conferidos pelo Kaggle antes de construir os
+modelos. A paridade e a velocidade na T4 serão medidas na 0034.
+[Protocolo](docs/CACHED_DECODE_RUN.md).
+
 ## Campanha 0033 — T4 e auditoria
 
 16 treinos de 6.000 passos concluídos nas duas T4, seeds 341/342, com 35 min
