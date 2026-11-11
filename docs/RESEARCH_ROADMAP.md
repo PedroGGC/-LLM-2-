@@ -2,19 +2,28 @@
 
 ## Roteiro vigente — arquitetura própria inspirada em fractais
 
+A 0033 qualificou duas passagens recorrentes independentes como candidato de
+linguagem. Com 151 mil parâmetros, a NLL melhorou de 1,021963 para 0,987229
+frente ao Transformer de 149 mil. O forward de 8K foi 2,11× mais rápido, com
+energia de placa de 0,665 J frente a 1,466 J. A atualização de treino em T256
+custou 35% mais tempo. Priorizar geração com estado recorrente frente a KV
+cache e medir custo até a mesma NLL com alvos definidos antes da sessão.
+Pausar a hierarquia de média/4 e usar o contraste fino como referência para
+futura compressão aprendida. [Resultados da 0033](results/CAMPAIGN_0033.md).
+
 [0032 concluída](results/CAMPAIGN_0032.md): oito treinos TinyStories em ~21min12s;
 Transformer próximo em parâmetros vence memória simples e pirâmide. A pirâmide
 ganha só 0,004520 NLL frente à simples, com mais custo. Otimização bloqueada passa
 na T4 e reduz ~72% de VRAM incremental no forward 8K da mesma memória. Ganho de
 engenharia sem vantagem linguística; 48 textos repetitivos, teste reservado intacto.
 
-Próxima operação implementada: [memória contextual](CONTEXT_MEMORY_RUN.md), com
+Operação executada na 0033: [memória contextual](CONTEXT_MEMORY_RUN.md), com
 esquecimento aprendido, profundidade contextual e hierarquia fino/amplo. Sharing
 versus independência permanece explícito. Oito braços/duas seeds/6.000 passos,
 Transformers de 86k/149k/2,16M, teto2h. A campanha medirá se há ganho real: 2x exige
 qualidade equivalente nas duas seeds, e menos parâmetros sozinho é compactação.
 A memória acumulativa anterior perde ordem distante num probe estrutural, sem
-que isso prove causa única dos resultados. Nova família ainda sem medição T4.
+que isso prove causa única dos resultados. A 0033 concluiu as medições nas T4.
 Profundidade variável, compressão, GRM/TTT e demais frentes mantêm condições próprias.
 [Operação 0032 preservada](TINYSTORIES_RUN.md).
 

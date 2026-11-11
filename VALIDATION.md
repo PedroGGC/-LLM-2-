@@ -1,5 +1,25 @@
 # Validação vigente — 11/11/2026
 
+## Campanha 0033 — T4 e auditoria
+
+16 treinos de 6.000 passos concluídos nas duas T4, seeds 341/342, com 35 min
+34 s registrados antes da exportação. Preflight registrado pelo Kaggle com
+**19 testes CPU aprovados (19,93 s)** e **2 testes CUDA/Inductor aprovados
+(73,52 s)**. Versões PyTorch 2.11.0+cu130 e Python 3.13.16.
+
+Auditoria local com Python 3.12.2 e Torch CPU. O ZIP passou na verificação de
+CRC, caminhos e 412 membros únicos. Foram confrontados 409 hashes do Git,
+154 arquivos do snapshot, manifesto e tokenizer com o preparo local, 16
+configurações e metadados de checkpoints, 320 métricas, 64 avaliações e 96
+gerações. Recalculados os marcos de desempenho, os tempos medianos e a
+energia por byte. Os pesos finais estão no ZIP separado de checkpoints.
+
+Streaming em chunks e sequência inteira diferiram por até 3,59e-5 nos
+probes dos candidatos. Duas passagens independentes obtiveram menor NLL
+que o Transformer de 149 mil parâmetros nas duas seeds. O perfil T8192
+mede forward eager em bytes aleatórios. A qualidade foi avaliada em T256.
+[Relatório da 0033](docs/results/CAMPAIGN_0033.md).
+
 ## Memória contextual — antes da campanha 0033
 
 [Protocolo](docs/CONTEXT_MEMORY_RUN.md), [plano prévio](docs/PLAN_CONTEXT_MEMORY_IMPLEMENTATION.md).

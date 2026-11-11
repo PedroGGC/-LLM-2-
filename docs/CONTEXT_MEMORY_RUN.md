@@ -5,6 +5,10 @@ Implementação autorizada em 10/11/2026, entrega em 11/11. Branch
 [plano de implementação](PLAN_CONTEXT_MEMORY_IMPLEMENTATION.md) e
 [verificações reais](../VALIDATION.md).
 
+A execução da 0033 concluiu os 16 treinos nas duas T4. A auditoria registra
+qualidade, custo e a decisão para o próximo ensaio de geração.
+[Resultados da 0033](results/CAMPAIGN_0033.md).
+
 ## O que mudou e por quê
 
 A 0032 demonstrou aprendizado de linguagem, mas o Transformer de 86.400 pesos

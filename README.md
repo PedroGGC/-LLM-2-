@@ -25,14 +25,16 @@ não instala esse código na branch comum. Confira `git branch --show-current` a
 
 ## Estado atual — 11/11/2026
 
-Nova rodada preparada: [memória contextual e organização fractal](docs/CONTEXT_MEMORY_RUN.md).
-Memória matricial com esquecimento aprendido; duas passagens contextualizadas ou
-hierarquia fino/amplo, compartilhadas versus independentes. Sem DecoderBlock/SDPA
-nos candidatos. Oito variantes, incluindo Transformers de 86k/149k/2,16M, duas seeds
-e 6.000 passos: 16 treinos, T4 x2, teto 2h, um par de ZIPs finais. Marcos de 2x ou
-mais exigem qualidade equivalente e referência nomeada. Implementação/testes locais
-não são resultados científicos na T4; ganho linguístico ainda não demonstrado.
-[Célula para Kaggle](scripts/11_testar_memoria_contextual_kaggle.py).
+A campanha 0033 concluiu 16 treinos em 35 min 34 s antes da exportação.
+Memória contextual com duas passagens independentes atingiu 0,987229 NLL
+contra 1,021963 do Transformer de tamanho próximo nas duas seeds.
+O forward de 8.192 bytes aleatórios foi 2,11× mais rápido em média, com
+35% mais tempo por atualização de treino em T256. A hierarquia de média/4
+perdeu qualidade frente a duas passagens finas. A próxima comparação proposta
+é geração com estado recorrente frente a Transformer com KV cache.
+[Auditoria da 0033](docs/results/CAMPAIGN_0033.md) ·
+[Protocolo](docs/CONTEXT_MEMORY_RUN.md) ·
+[Célula preservada](scripts/11_testar_memoria_contextual_kaggle.py).
 
 A [campanha 0032](docs/results/CAMPAIGN_0032.md) concluiu os oito treinos TinyStories
 de 6.000 passos/seeds 331–332 em ~21min12s antes da exportação. NLL média: Transformer

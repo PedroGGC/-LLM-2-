@@ -3,6 +3,18 @@
 Atualizado11/11/2026. Substitui a prioridade operacional do ciclo 5; não altera protocolos
 históricos. Implementação experimental em `experiment/fractal-lrm`.
 
+Atualização 0033. Duas passagens finas independentes superaram o Transformer
+de tamanho próximo em qualidade de desenvolvimento nas duas seeds. A
+referência continua com atualização de treino mais rápida em T256. O recorrente
+atingiu 2,02×/2,19× no forward de 8.192 bytes aleatórios, o que orienta a próxima
+comparação de geração com estado recorrente e KV cache. A avaliação linguística
+em contextos longos precisa de dados com cobertura suficiente.
+
+A hierarquia de média/4 fica em pausa. Seus controles indicam valor em manter
+profundidade fina e especialização. A hipótese fractal passa a investigar
+compressão que preserve detalhe e compartilhamento parcial, condicionados à
+comparação de custo da nova família. [Auditoria da 0033](results/CAMPAIGN_0033.md).
+
 Atualização 0032: [TinyStories concluído](results/CAMPAIGN_0032.md), oito treinos,
 seeds 331/332 e 6.000 passos. Memória simples/pirâmide aprendem linguagem, mas perdem
 para ambos os Transformers, inclusive o controle próximo em parâmetros. NLL média:
@@ -20,7 +32,7 @@ Autorização posterior atendida: [memória contextual e hierarquia](CONTEXT_MEM
 Nova regra de retenção com portas e representações causais; duas passagens finas
 ou ritmo amplo/4, com pesos compartilhados versus independentes. Três Transformers
 externos: dois próximos em parâmetros e o maior histórico. Oito braços, seeds
-341/342, 6.000 passos, teto 2h nas duas T4. Nenhum ganho novo medido na T4 ainda.
+341/342, 6.000 passos, teto 2h nas duas T4. A execução da 0033 está resumida acima.
 As mudanças de família são um pacote exploratório; as ablações internas distinguem
 profundidade, compartilhamento e hierarquia. Não chamar compactação de vantagem
 completa. O catálogo e as condições das tecnologias abaixo permanecem vigentes.

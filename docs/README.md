@@ -5,6 +5,7 @@ fractal pertence à branch `experiment/fractal-lrm`; a base comum não contém e
 
 | Documento | Finalidade |
 |---|---|
+| [Campanha 0033](results/CAMPAIGN_0033.md) | Memória contextual melhora NLL frente aos controles próximos e acelera forward de 8K |
 | [Memória contextual e hierarquia](CONTEXT_MEMORY_RUN.md) | Nova família, oito braços/duas seeds, referências próximas em pesos, T4x2/teto2h |
 | [Plano prévio de memória contextual](PLAN_CONTEXT_MEMORY_IMPLEMENTATION.md) | Regra, controles, literatura, riscos e aceitação antes da implementação |
 | [Campanha 0032: linguagem](results/CAMPAIGN_0032.md) | Oito treinos; Transformer de 86k vence; blocos economizam VRAM; revisar representação causal |

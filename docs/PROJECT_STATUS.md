@@ -1,13 +1,14 @@
 # Estado científico e técnico — 11/11/2026
 
-Implementação posterior à 0032: [memória contextual](CONTEXT_MEMORY_RUN.md),
-arquiteturas `context_memory`/`context_hierarchy`. Retenção com esquecimento por
-conteúdo, passagens contextualizadas, hierarquia causal de estados finos/amplos.
-Sharing versus independência com operações idênticas e estados separados testa a
-hipótese fractal. Três Transformers externos de 86k/149k/2,16M; candidatos 85.848–
-151.136 pesos. Dezesseis treinos novos, seeds341/342, horizonte6000, T4x2/teto2h.
-Qualificação e limitações locais em [VALIDATION](../VALIDATION.md); nenhuma execução
-real dessa campanha na T4 está concluída. Bootstrap/código antigos preservados por pin.
+A campanha 0033 concluiu os 16 treinos de memória contextual nas duas T4.
+Duas passagens finas independentes de 151.056 parâmetros chegaram a 0,987229
+NLL frente a 1,021963 do Transformer de 148.960 parâmetros. O ganho ocorreu
+nas duas seeds. O forward de 8.192 bytes aleatórios foi 2,11× mais rápido e
+usou 45% da energia de placa da referência. O treino em T256 teve atualização
+35% mais lenta. A hierarquia por média/4 perdeu qualidade frente à profundidade
+fina. O candidato passa à investigação de geração com estado e custo até
+qualidade fixa. [Resultados da 0033](results/CAMPAIGN_0033.md) ·
+[Protocolo](CONTEXT_MEMORY_RUN.md) · [Validação](../VALIDATION.md).
 
 [Campanha 0032 concluída](results/CAMPAIGN_0032.md): oito treinos/duas seeds/6.000
 passos, ~21min12s antes da exportação. NLL média maior/pequeno/simples/pirâmide:
