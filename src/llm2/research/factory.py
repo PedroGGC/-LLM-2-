@@ -11,6 +11,9 @@ def build_backbone(config):
     if research.architecture in ("context_memory", "context_hierarchy"):
         from ..architectures.context_memory import ContextMemory
         return ContextMemory(config.model,research)
+    if research.architecture == "fractal_delta":
+        from ..architectures.fractal_delta import FractalDeltaMemory
+        return FractalDeltaMemory(config.model, research)
     if research.architecture == "transition_memory":
         from ..architectures.transition_memory import TransitionMemory
         return TransitionMemory(config.model, research)

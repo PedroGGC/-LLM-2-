@@ -133,32 +133,103 @@ def canonical_recurrent_state(state):
     return ContextState(cells, pending, last_coarse)
 
 
+def _iter_tensors(value):
+    from dataclasses import fields, is_dataclass
+
+    if isinstance(value, torch.Tensor):
+        yield value
+    elif isinstance(value, (tuple, list)):
+        for item in value:
+            yield from _iter_tensors(item)
+    elif is_dataclass(value) and not isinstance(value, type):
+        for item in fields(value):
+            yield from _iter_tensors(getattr(value, item.name))
+
+
+def _map_tensors(value, fn):
+    from dataclasses import fields, is_dataclass
+
+    if isinstance(value, torch.Tensor):
+        return fn(value)
+    if isinstance(value, tuple):
+        return tuple(_map_tensors(item, fn) for item in value)
+    if isinstance(value, list):
+        return [_map_tensors(item, fn) for item in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        return type(value)(**{item.name: _map_tensors(getattr(value, item.name), fn) for item in fields(value)})
+    return value
+
+
 class CompiledDecode:
     def __init__(self, decoder, *, backend="inductor"):
         self.decoder = decoder
         self.model = decoder.model
-        self.recurrent = isinstance(decoder, RecurrentDecode)
+        self.recurrent = bool(getattr(decoder, "is_recurrent", isinstance(decoder, RecurrentDecode)))
         device = next(decoder.model.parameters()).device if list(decoder.model.parameters()) else None
         self.backend = resolve_compile_backend(backend, device)
         step = decoder.step
-        if self.recurrent:
+        if self.recurrent and isinstance(decoder, RecurrentDecode):
             def recurrent_step(ids, state):
                 logits, current = decoder.step(ids, state)
                 return logits, canonical_recurrent_state(current)
             step = recurrent_step
         self._raw_step = step
         self.compiled_step = torch.compile(step, backend=self.backend, fullgraph=True, dynamic=False)
+        self.use_cudagraph = bool(self.recurrent and self.backend == "inductor" and device is not None and device.type == "cuda")
+        self._graph = None
+        self._graph_key = None
+        self._static_token = None
+        self._static_in_tensors = None
+        self._static_out = None
 
     def prefill(self, ids, capacity):
         if ids.ndim != 2 or ids.shape[0] != 1:
             raise ValueError("compiled benchmark requires batch 1")
         logits, state = self.decoder.prefill(ids, capacity)
-        return logits, canonical_recurrent_state(state) if self.recurrent else state
+        if self.recurrent and isinstance(self.decoder, RecurrentDecode):
+            return logits, canonical_recurrent_state(state)
+        return logits, state
+
+    def _capture_cudagraph(self, token, state, key):
+        static_token = token.clone()
+        static_state = _map_tensors(state, torch.Tensor.clone)
+        torch.cuda.synchronize(static_token.device)
+        for _ in range(3):
+            self.compiled_step(static_token, static_state)
+        torch.cuda.synchronize(static_token.device)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            static_out = self.compiled_step(static_token, static_state)
+        torch.cuda.synchronize(static_token.device)
+        self._graph = graph
+        self._graph_key = key
+        self._static_token = static_token
+        self._static_in_tensors = tuple(_iter_tensors(static_state))
+        self._static_out = static_out
 
     def step(self, ids, state):
         if ids.shape != (1, 1):
             raise ValueError("compiled benchmark requires a single byte at batch 1")
-        token = ids.reshape(1, 1).contiguous()
+        token = ids.reshape(1, 1).clone()
+        if self.use_cudagraph:
+            state_tensors = tuple(_iter_tensors(state))
+            key = (token.dtype, tuple((t.shape, t.dtype) for t in state_tensors))
+            try:
+                if self._graph is None or self._graph_key != key:
+                    self._capture_cudagraph(token, state, key)
+                self._static_token.copy_(token)
+                for dst, src in zip(self._static_in_tensors, state_tensors, strict=True):
+                    dst.copy_(src)
+                self._graph.replay()
+                logits, next_state = self._static_out
+                return logits.clone(), _map_tensors(next_state, torch.Tensor.clone)
+            except Exception as exc:
+                if "InvalidCxxCompiler" in str(exc) or "cl is not found" in str(exc):
+                    self.use_cudagraph = False
+                    self.backend = "aot_eager"
+                    self.compiled_step = torch.compile(self._raw_step, backend="aot_eager", fullgraph=True, dynamic=False)
+                else:
+                    raise
         try:
             return self.compiled_step(token, state)
         except Exception as exc:
