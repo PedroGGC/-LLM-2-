@@ -353,7 +353,7 @@ def evaluate_optimized(model, data, device, result_path, result, local_nll, *,
                         except Exception as exc:
                             operations = {"error": f"{type(exc).__name__}: {exc}"[:4000]}
                 rows.append({"mode": name, "parity": parity, "first_step_seconds": cold,
-                             "backend": compile_backend if compiled else "eager",
+                             "backend": getattr(decoder, "backend", compile_backend) if compiled else "eager",
                              "profiler": operations, **timed})
                 print(f"{name} seed {result['seed']} prefixo {length}: "
                       f"{timed['total_seconds'] * 1000:.2f} ms totais.", flush=True)

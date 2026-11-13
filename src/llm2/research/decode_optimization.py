@@ -1,5 +1,7 @@
 """Local KV cache, full-graph step compilation and launch profiling."""
 from dataclasses import dataclass
+import shutil
+import sys
 import time
 
 import torch
@@ -106,13 +108,29 @@ class LocalTransformerDecode(TransformerDecode):
         return self.last_logits(x), WindowState(position + 1, state.layers)
 
 
-def canonical_recurrent_state(state):
-    def batch_view(tensor):
-        # Batch size is one. Only the stride of its singleton axis changes.
-        return tensor.as_strided(tensor.shape, (tensor.numel(), *tensor.stride()[1:]))
+def resolve_compile_backend(backend="inductor", device=None):
+    """Resolve compilation backend, falling back to aot_eager on Windows CPU when C++ compiler is absent."""
+    if backend != "inductor":
+        return backend
+    if device is not None and getattr(device, "type", None) == "cuda":
+        return "inductor"
+    if sys.platform == "win32" and shutil.which("cl") is None:
+        return "aot_eager"
+    return "inductor"
 
-    cells = tuple(ContextCellState(batch_view(cell.memory), batch_view(cell.tail)) for cell in state.cells)
-    return ContextState(cells, state.pending, state.last_coarse)
+
+def canonical_recurrent_state(state):
+    """Enforce strictly contiguous memory layout on recurrent state tensors without as_strided layout distortion."""
+    cells = tuple(
+        ContextCellState(
+            cell.memory.reshape(cell.memory.shape).contiguous(),
+            cell.tail.reshape(cell.tail.shape).contiguous(),
+        )
+        for cell in state.cells
+    )
+    pending = state.pending.reshape(state.pending.shape).contiguous() if state.pending is not None else None
+    last_coarse = state.last_coarse.reshape(state.last_coarse.shape).contiguous() if state.last_coarse is not None else None
+    return ContextState(cells, pending, last_coarse)
 
 
 class CompiledDecode:
@@ -120,13 +138,16 @@ class CompiledDecode:
         self.decoder = decoder
         self.model = decoder.model
         self.recurrent = isinstance(decoder, RecurrentDecode)
+        device = next(decoder.model.parameters()).device if list(decoder.model.parameters()) else None
+        self.backend = resolve_compile_backend(backend, device)
         step = decoder.step
         if self.recurrent:
             def recurrent_step(ids, state):
                 logits, current = decoder.step(ids, state)
                 return logits, canonical_recurrent_state(current)
             step = recurrent_step
-        self.compiled_step = torch.compile(step, backend=backend, fullgraph=True, dynamic=False)
+        self._raw_step = step
+        self.compiled_step = torch.compile(step, backend=self.backend, fullgraph=True, dynamic=False)
 
     def prefill(self, ids, capacity):
         if ids.ndim != 2 or ids.shape[0] != 1:
@@ -137,9 +158,15 @@ class CompiledDecode:
     def step(self, ids, state):
         if ids.shape != (1, 1):
             raise ValueError("compiled benchmark requires a single byte at batch 1")
-        # A one-element view can carry the entire source sequence's stride.
-        # Canonicalize it without copying or specializing the graph on prefix length.
-        return self.compiled_step(ids.as_strided((1, 1), (1, 1)), state)
+        token = ids.reshape(1, 1).contiguous()
+        try:
+            return self.compiled_step(token, state)
+        except Exception as exc:
+            if self.backend == "inductor" and ("InvalidCxxCompiler" in str(exc) or "cl is not found" in str(exc)):
+                self.backend = "aot_eager"
+                self.compiled_step = torch.compile(self._raw_step, backend="aot_eager", fullgraph=True, dynamic=False)
+                return self.compiled_step(token, state)
+            raise
 
 
 @torch.inference_mode()
