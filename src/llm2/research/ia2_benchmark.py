@@ -33,6 +33,8 @@ class ArmSpec:
     hidden_dim: int
     shared: bool = True
     beta_scale: float = 2.0
+    fractal_window: int = 0
+    fractal_value_residual: bool = False
 
 
 ARMS = (
@@ -41,6 +43,8 @@ ARMS = (
     ArmSpec("transformer_2x", "baseline_2x", "transformer", d_model=80, n_layers=3, n_heads=4, hidden_dim=128),
     ArmSpec("context_shared2", "recurrent_ref", "context_memory", d_model=80, n_layers=2, n_heads=4, hidden_dim=144, shared=True),
     ArmSpec("fractal_delta_med", "candidate", "fractal_delta", d_model=104, n_layers=4, n_heads=2, hidden_dim=184, shared=True, beta_scale=2.0),
+    ArmSpec("fractal_hybrid_med", "candidate", "fractal_delta", d_model=104, n_layers=4, n_heads=2, hidden_dim=112, shared=True, beta_scale=2.0, fractal_window=32),
+    ArmSpec("fractal_pure_med", "candidate", "fractal_delta", d_model=104, n_layers=6, n_heads=2, hidden_dim=176, shared=True, beta_scale=2.0, fractal_value_residual=True),
 )
 
 
@@ -63,6 +67,8 @@ def _build_research_config(arm: ArmSpec, *, smoke=False):
         state_execution="chunked",
         state_chunk_size=32,
         fractal_beta_scale=arm.beta_scale,
+        fractal_window=arm.fractal_window,
+        fractal_value_residual=arm.fractal_value_residual,
     )
 
 

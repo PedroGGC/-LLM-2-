@@ -178,6 +178,8 @@ class ResearchConfig:
     associative_execution: str = "reference"
     associative_block_size: int = 32
     fractal_beta_scale: float = 2.0
+    fractal_window: int = 0
+    fractal_value_residual: bool = False
 
     def __post_init__(self):
         _types(self)
@@ -200,6 +202,10 @@ class ResearchConfig:
             raise ValueError("unknown research architecture")
         if not 0 < self.fractal_beta_scale <= 2.0:
             raise ValueError("fractal_beta_scale must be in (0, 2]")
+        if self.fractal_window != 0 and (self.architecture != "fractal_delta" or not 4 <= self.fractal_window <= 128):
+            raise ValueError("fractal_window must be 0 or 4..128 for fractal_delta")
+        if self.fractal_value_residual and self.architecture != "fractal_delta":
+            raise ValueError("fractal_value_residual requires fractal_delta")
         if self.associative_levels not in (1, 2):
             raise ValueError("associative_levels must be 1 or 2")
         if self.associative_levels != 1 and self.architecture != "transition_memory":

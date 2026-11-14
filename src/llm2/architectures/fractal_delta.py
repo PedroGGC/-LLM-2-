@@ -1,4 +1,6 @@
-"""Fractal recursive Gated Delta memory with multi-timescale causal state and lag-1 associative induction."""
+"""Fractal recursive Gated Delta memory with multi-timescale causal state,
+lag-1 associative induction, optional value residual, and optional local window attention.
+"""
 
 from copy import copy
 from dataclasses import dataclass
@@ -74,16 +76,126 @@ class FractalLevelState:
 
 
 @dataclass
+class LocalWindowState:
+    k_tail: torch.Tensor
+    v_tail: torch.Tensor
+    valid_tail: torch.Tensor
+
+
+@dataclass
 class FractalDeltaState:
     levels: tuple[FractalLevelState, ...]
     assoc_memory: torch.Tensor
     local_tail: torch.Tensor
+    window: LocalWindowState | None = None
+
+
+class CausalLocalWindow(nn.Module):
+    """Fixed-horizon causal sliding-window softmax attention with O(W) fixed state."""
+
+    def __init__(self, config, window: int):
+        super().__init__()
+        d = config.d_model
+        self.window = window
+        self.heads = 2 if d < 64 else 4
+        self.head_dim = max(4, (d // 2) // self.heads)
+        self.win_dim = self.heads * self.head_dim
+        self.dropout = config.dropout
+
+        self.norm = RMSNorm(d, eps=config.norm_eps)
+        self.qkv = nn.Linear(d, 3 * self.win_dim, bias=False)
+        self.out_proj = nn.Linear(self.win_dim, d, bias=False)
+        self.rel_bias = nn.Parameter(torch.zeros(self.heads, window))
+
+        nn.init.normal_(self.qkv.weight, std=0.02)
+        nn.init.normal_(self.out_proj.weight, std=0.02 / math.sqrt(2 * config.n_layers))
+
+    def validate_state(self, state: LocalWindowState, b: int, device: torch.device) -> None:
+        if not isinstance(state, LocalWindowState):
+            raise ValueError("invalid fractal delta state shape/dtype")
+        w_tail = self.window - 1
+        checks = (
+            (state.k_tail, (b, self.heads, w_tail, self.head_dim)),
+            (state.v_tail, (b, self.heads, w_tail, self.head_dim)),
+            (state.valid_tail, (b, w_tail)),
+        )
+        for tensor, expected in checks:
+            if tensor.shape != expected or tensor.dtype != torch.float32 or tensor.device != device:
+                raise ValueError("invalid fractal delta state shape/dtype")
+
+    def forward(self, x: torch.Tensor, state: LocalWindowState | None = None) -> tuple[torch.Tensor, LocalWindowState]:
+        b, t, _ = x.shape
+        w = self.window
+        w_tail = w - 1
+        h = self.norm(x)
+        q, k, v = self.qkv(h).reshape(b, t, 3, self.heads, self.head_dim).unbind(2)
+        q, k, v = (tensor.transpose(1, 2).float() for tensor in (q, k, v))
+
+        if state is None:
+            k_tail = q.new_zeros(b, self.heads, w_tail, self.head_dim)
+            v_tail = q.new_zeros(b, self.heads, w_tail, self.head_dim)
+            valid_tail = q.new_zeros(b, w_tail)
+        else:
+            k_tail, v_tail, valid_tail = state.k_tail, state.v_tail, state.valid_tail
+
+        bias = self.rel_bias.float()
+        drop = self.dropout if self.training else 0.0
+
+        if t == 1:
+            k_full = torch.cat((k_tail, k), dim=2)
+            v_full = torch.cat((v_tail, v), dim=2)
+            valid_full = torch.cat((valid_tail, q.new_ones(b, 1)), dim=1)
+            mask = torch.where(valid_full > 0.5, 0.0, float("-inf"))[:, None, None, :] + bias[None, :, None, :]
+            attn = F.scaled_dot_product_attention(q, k_full, v_full, attn_mask=mask, dropout_p=drop)
+            next_state = LocalWindowState(
+                k_full[:, :, 1:].clone(memory_format=torch.contiguous_format),
+                v_full[:, :, 1:].clone(memory_format=torch.contiguous_format),
+                valid_full[:, 1:].clone(memory_format=torch.contiguous_format),
+            )
+            return self.out_proj(attn.transpose(1, 2).reshape(b, 1, self.win_dim).to(x.dtype)), next_state
+
+        chunk = max(w, 64)
+        outputs = []
+        kt, vt, val_t = k_tail, v_tail, valid_tail
+        for start in range(0, t, chunk):
+            end = min(start + chunk, t)
+            clen = end - start
+            kc = k[:, :, start:end]
+            vc = v[:, :, start:end]
+            qc = q[:, :, start:end]
+            k_ctx = torch.cat((kt, kc), dim=2)
+            v_ctx = torch.cat((vt, vc), dim=2)
+            valid_ctx = torch.cat((val_t, q.new_ones(b, clen)), dim=1)
+
+            q_pos = torch.arange(w_tail, w_tail + clen, device=x.device)[:, None]
+            k_pos = torch.arange(w_tail + clen, device=x.device)[None, :]
+            dist = q_pos - k_pos
+            in_win = (dist >= 0) & (dist < w)
+            rel = bias[:, (w - 1) - dist.clamp(0, w - 1)]
+            rel = torch.where(in_win[None, :, :], rel, float("-inf"))
+            valid_mask = torch.where(valid_ctx > 0.5, 0.0, float("-inf"))[:, None, None, :]
+            mask = valid_mask + rel[None, :, :, :]
+
+            outputs.append(F.scaled_dot_product_attention(qc, k_ctx, v_ctx, attn_mask=mask, dropout_p=drop))
+            kt = k_ctx[:, :, -w_tail:].clone(memory_format=torch.contiguous_format)
+            vt = v_ctx[:, :, -w_tail:].clone(memory_format=torch.contiguous_format)
+            val_t = valid_ctx[:, -w_tail:].clone(memory_format=torch.contiguous_format)
+
+        out = torch.cat(outputs, dim=2).transpose(1, 2).contiguous().reshape(b, t, self.win_dim).to(x.dtype)
+        return self.out_proj(out), LocalWindowState(kt, vt, val_t)
+
+    def parameter_count(self, d: int) -> int:
+        return d + 3 * d * self.win_dim + self.win_dim * d + self.heads * self.window
+
+    def state_floats_per_seq(self) -> int:
+        w_tail = self.window - 1
+        return 2 * self.heads * w_tail * self.head_dim + w_tail
 
 
 class FractalLevelAdapter(nn.Module):
     """Lightweight per-level conditioning and Euler residual scaling (all 1D, no weight decay)."""
 
-    def __init__(self, d_model, heads, level, depth):
+    def __init__(self, d_model, heads, level, depth, *, value_residual: bool = False):
         super().__init__()
         self.attn_scale = nn.Parameter(torch.ones(d_model))
         self.attn_shift = nn.Parameter(torch.zeros(d_model))
@@ -95,6 +207,7 @@ class FractalLevelAdapter(nn.Module):
         self.euler_attn = nn.Parameter(torch.ones(d_model))
         self.euler_ffn = nn.Parameter(torch.ones(d_model))
         self.anchor_gate = nn.Parameter(torch.full((d_model,), -2.0)) if level > 0 else None
+        self.val_mix = nn.Parameter(torch.full((heads,), -1.0)) if (value_residual and level > 0) else None
 
 
 class FractalDeltaCell(nn.Module):
@@ -136,7 +249,7 @@ class FractalDeltaCell(nn.Module):
         nn.init.normal_(self.out_proj.weight, std=proj_std)
         nn.init.normal_(self.ffn.down.weight, std=proj_std)
 
-    def forward(self, x, state=None, adapter=None):
+    def forward(self, x, state=None, adapter=None, *, v0=None, return_v0: bool = False):
         b, t, d = x.shape
         normed = self.attn_norm(x)
         if adapter is not None:
@@ -146,7 +259,7 @@ class FractalDeltaCell(nn.Module):
         norm_f = normed.float().transpose(1, 2)
         prefix = norm_f.new_zeros(b, d, tail_width) if state is None else state.tail
         padded = torch.cat((prefix, norm_f), dim=2)
-        new_tail = padded[:, :, -tail_width:].contiguous()
+        new_tail = padded[:, :, -tail_width:].clone()
         conv_out = F.conv1d(padded, self.conv.weight.float(), self.conv.bias.float(), groups=d).transpose(1, 2)
         local = (normed.float() + conv_out).to(normed.dtype)
 
@@ -154,6 +267,10 @@ class FractalDeltaCell(nn.Module):
         q, k, v = (tensor.transpose(1, 2) for tensor in (q, k, v))
         key = F.normalize(k.float(), dim=-1, eps=1e-6)
         query = F.normalize(q.float(), dim=-1, eps=1e-6)
+        val_f = v.float()
+        if adapter is not None and adapter.val_mix is not None and v0 is not None:
+            mix = adapter.val_mix.float().sigmoid().view(1, self.heads, 1, 1)
+            val_f = torch.lerp(val_f, v0, mix)
 
         decay_logits = self.decay(local).transpose(1, 2).float()
         beta_logits = self.beta(local).transpose(1, 2).float()
@@ -165,7 +282,7 @@ class FractalDeltaCell(nn.Module):
         beta = (self.beta_scale * beta_logits.sigmoid()).unsqueeze(-1)
         w = log_w.exp()
         a = -w * beta * key
-        values = beta * v.float()
+        values = beta * val_f
 
         prev_mem = None if state is None else state.memory
         if self.execution == "sequential" or t == 1:
@@ -189,7 +306,11 @@ class FractalDeltaCell(nn.Module):
         ffn_update = F.dropout(self.ffn(ffn_in), p=self.dropout, training=self.training)
         if adapter is not None:
             ffn_update = ffn_update * adapter.euler_ffn
-        return x + ffn_update, FractalLevelState(new_mem, new_tail)
+        next_x = x + ffn_update
+        level_state = FractalLevelState(new_mem, new_tail)
+        if return_v0:
+            return next_x, level_state, val_f
+        return next_x, level_state
 
 
 class FractalDeltaMemory(Backbone):
@@ -205,6 +326,7 @@ class FractalDeltaMemory(Backbone):
         self.head_dim = config.d_model // self.heads
         self.assoc_dim = research.memory_dim
         self.chunk_size = research.state_chunk_size
+        self.value_residual = research.fractal_value_residual
 
         d = config.d_model
         self.assoc_val_dim = min(d, 8 if d < 32 else 24)
@@ -225,10 +347,17 @@ class FractalDeltaMemory(Backbone):
         nn.init.constant_(self.assoc_write_gate.bias, -2.0)
         self.assoc_scale = nn.Parameter(torch.ones(d))
 
+        self.window_attn = CausalLocalWindow(config, research.fractal_window) if research.fractal_window > 0 else None
+
         cell_count = 1 if self.shared else self.depth
         self.cells = nn.ModuleList([FractalDeltaCell(config, research) for _ in range(cell_count)])
         self.adapters = (
-            nn.ModuleList([FractalLevelAdapter(d, self.heads, lvl, self.depth) for lvl in range(self.depth)])
+            nn.ModuleList(
+                [
+                    FractalLevelAdapter(d, self.heads, lvl, self.depth, value_residual=self.value_residual)
+                    for lvl in range(self.depth)
+                ]
+            )
             if self.depth > 1
             else nn.ModuleList()
         )
@@ -255,6 +384,11 @@ class FractalDeltaMemory(Backbone):
             for tensor, expected in ((level_state.memory, mem_shape), (level_state.tail, tail_shape)):
                 if tensor.shape != expected or tensor.dtype != torch.float32 or tensor.device != x.device:
                     raise ValueError("invalid fractal delta state shape/dtype")
+        if self.window_attn is None:
+            if state.window is not None:
+                raise ValueError("invalid fractal delta state shape/dtype")
+        else:
+            self.window_attn.validate_state(state.window, b, x.device)
 
     def _run_assoc(self, raw_embed, state=None, *, execution="chunked"):
         b, t, d = raw_embed.shape
@@ -268,7 +402,7 @@ class FractalDeltaMemory(Backbone):
             prev_mem = state.assoc_memory
 
         padded = torch.cat((local_tail, x_norm_t), dim=2)
-        next_local_tail = padded[:, :, -2:].contiguous()
+        next_local_tail = padded[:, :, -2:].clone()
         conv_out = F.conv1d(padded, self.local_conv.weight.float(), None, groups=d).transpose(1, 2)
         local = self.local_norm((x_norm + conv_out).to(raw_embed.dtype)).float()
 
@@ -293,19 +427,25 @@ class FractalDeltaMemory(Backbone):
         if state is not None:
             self._validate_state(state, raw)
         exec_mode = self.cells[0].execution
-        assoc_out, next_assoc_mem, next_local_tail = self._run_assoc(
-            raw, state, execution=exec_mode
-        )
+        assoc_out, next_assoc_mem, next_local_tail = self._run_assoc(raw, state, execution=exec_mode)
         x = F.dropout(raw, p=self.config.dropout, training=self.training)
+        next_window = None
+        if self.window_attn is not None:
+            win_out, next_window = self.window_attn(x, None if state is None else state.window)
+            x = x + F.dropout(win_out, p=self.config.dropout, training=self.training)
         anchor = x
         next_levels = []
+        v0 = None
         for level in range(self.depth):
             adapter = self.adapters[level] if self.depth > 1 else None
             if adapter is not None and adapter.anchor_gate is not None:
                 x = x + adapter.anchor_gate.sigmoid() * anchor
             cell = self.cells[0 if self.shared else level]
             prev = None if state is None else state.levels[level]
-            x, current = cell(x, prev, adapter=adapter)
+            if self.value_residual and level == 0:
+                x, current, v0 = cell(x, prev, adapter=adapter, return_v0=True)
+            else:
+                x, current = cell(x, prev, adapter=adapter, v0=v0)
             next_levels.append(current)
         x = x + F.dropout(assoc_out, p=self.config.dropout, training=self.training)
         hidden = self.norm(x)
@@ -314,6 +454,7 @@ class FractalDeltaMemory(Backbone):
             tuple(next_levels),
             next_assoc_mem,
             next_local_tail,
+            next_window,
         )
         return ModelOutput(logits=logits, hidden_states=hidden, state=next_state)
 
@@ -321,7 +462,8 @@ class FractalDeltaMemory(Backbone):
         d = self.config.d_model
         levels_floats = self.depth * (self.heads * self.head_dim * self.head_dim + d * 3)
         assoc_floats = self.assoc_dim * self.assoc_val_dim + 2 * d
-        return (levels_floats + assoc_floats) * 4
+        win_floats = self.window_attn.state_floats_per_seq() if self.window_attn is not None else 0
+        return (levels_floats + assoc_floats + win_floats) * 4
 
     def analytical_cost(self, seq_len, *, include_logits=True):
         d = self.config.d_model
@@ -335,9 +477,14 @@ class FractalDeltaMemory(Backbone):
             + 6 * d
             + 4 * self.assoc_dim * self.assoc_val_dim
         )
+        win_flops = 0
+        if self.window_attn is not None:
+            wd = self.window_attn.win_dim
+            win_flops = seq_len * (8 * d * wd + 4 * min(seq_len, self.window_attn.window) * wd)
         forward = (
             self.depth * per_level
             + assoc_flops
+            + win_flops
             + (2 * seq_len * d * self.config.vocab_size if include_logits else 0)
         )
         return forward, 0, self.depth
@@ -347,6 +494,7 @@ class FractalDeltaMemory(Backbone):
         d, h, ff, k = c.d_model, self.heads, c.hidden_dim, 4
         embed = c.vocab_size * d
         assoc_params = d + 3 * d + d + d * self.assoc_dim + d * self.assoc_val_dim + (d + 1) + self.assoc_val_dim * d + d
+        win_params = self.window_attn.parameter_count(d) if self.window_attn is not None else 0
         cell = (
             d  # attn_norm
             + d * (k + 1)  # depthwise conv weight + bias
@@ -359,8 +507,10 @@ class FractalDeltaMemory(Backbone):
             + 3 * d * ff  # SwiGLU
         )
         adapters = self.depth * (6 * d + 2 * h) + max(self.depth - 1, 0) * d if self.depth > 1 else 0
+        if self.value_residual and self.depth > 1:
+            adapters += (self.depth - 1) * h
         final_norm = d
-        return embed + assoc_params + len(self.cells) * cell + adapters + final_norm
+        return embed + assoc_params + win_params + len(self.cells) * cell + adapters + final_norm
 
 
 class FractalDecode:
@@ -390,14 +540,22 @@ class FractalDecode:
             raw, state, execution="sequential"
         )
         x = raw
+        next_window = None
+        if self.model.window_attn is not None:
+            win_out, next_window = self.model.window_attn(x, state.window)
+            x = x + win_out
         anchor = x
         next_levels = []
+        v0 = None
         for level, prev in enumerate(state.levels):
             adapter = self.model.adapters[level] if self.model.depth > 1 else None
             if adapter is not None and adapter.anchor_gate is not None:
                 x = x + adapter.anchor_gate.sigmoid() * anchor
             cell = self.step_cells[0 if self.model.shared else level]
-            x, current = cell(x, prev, adapter=adapter)
+            if self.model.value_residual and level == 0:
+                x, current, v0 = cell(x, prev, adapter=adapter, return_v0=True)
+            else:
+                x, current = cell(x, prev, adapter=adapter, v0=v0)
             next_levels.append(current)
         x = x + assoc_out
         logits = self.model.lm_head(self.model.norm(x))
@@ -405,5 +563,6 @@ class FractalDecode:
             tuple(next_levels),
             next_assoc_mem,
             next_local_tail,
+            next_window,
         )
         return logits, next_state
