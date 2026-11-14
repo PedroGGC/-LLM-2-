@@ -35,6 +35,9 @@ class ArmSpec:
     beta_scale: float = 2.0
     fractal_window: int = 0
     fractal_value_residual: bool = False
+    fractal_golden_phase: bool = False
+    fractal_free_energy: bool = False
+    fractal_weight_mode: str = "dense"
 
 
 ARMS = (
@@ -45,6 +48,10 @@ ARMS = (
     ArmSpec("fractal_delta_med", "candidate", "fractal_delta", d_model=104, n_layers=4, n_heads=2, hidden_dim=184, shared=True, beta_scale=2.0),
     ArmSpec("fractal_hybrid_med", "candidate", "fractal_delta", d_model=104, n_layers=4, n_heads=2, hidden_dim=112, shared=True, beta_scale=2.0, fractal_window=32),
     ArmSpec("fractal_pure_med", "candidate", "fractal_delta", d_model=104, n_layers=6, n_heads=2, hidden_dim=176, shared=True, beta_scale=2.0, fractal_value_residual=True),
+    ArmSpec("fractal_golden_med", "candidate", "fractal_delta", d_model=104, n_layers=6, n_heads=2, hidden_dim=176, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True),
+    ArmSpec("fractal_free_energy_med", "candidate", "fractal_delta", d_model=104, n_layers=6, n_heads=2, hidden_dim=164, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_free_energy=True),
+    ArmSpec("fractal_ternary_med", "candidate", "fractal_delta", d_model=104, n_layers=6, n_heads=2, hidden_dim=176, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_weight_mode="ternary"),
+    ArmSpec("fractal_quat_med", "candidate", "fractal_delta", d_model=160, n_layers=6, n_heads=4, hidden_dim=432, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_weight_mode="quaternion"),
 )
 
 
@@ -69,6 +76,9 @@ def _build_research_config(arm: ArmSpec, *, smoke=False):
         fractal_beta_scale=arm.beta_scale,
         fractal_window=arm.fractal_window,
         fractal_value_residual=arm.fractal_value_residual,
+        fractal_golden_phase=arm.fractal_golden_phase,
+        fractal_free_energy=arm.fractal_free_energy,
+        fractal_weight_mode=arm.fractal_weight_mode,
     )
 
 

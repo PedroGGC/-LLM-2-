@@ -22,7 +22,23 @@ from test_stories_data import fixture_data
 from test_training import assert_nested_equal
 
 
-def _fractal_cfg(data_root, output_dir, *, depth=4, shared=True, d_model=32, heads=4, hidden_dim=64, dropout=0.0, device="cpu", window=0, value_residual=False):
+def _fractal_cfg(
+    data_root,
+    output_dir,
+    *,
+    depth=4,
+    shared=True,
+    d_model=32,
+    heads=4,
+    hidden_dim=64,
+    dropout=0.0,
+    device="cpu",
+    window=0,
+    value_residual=False,
+    golden_phase=False,
+    free_energy=False,
+    weight_mode="dense",
+):
     return ExperimentConfig(
         model=ModelConfig(
             vocab_size=257,
@@ -66,22 +82,42 @@ def _fractal_cfg(data_root, output_dir, *, depth=4, shared=True, d_model=32, hea
             fractal_beta_scale=2.0,
             fractal_window=window,
             fractal_value_residual=value_residual,
+            fractal_golden_phase=golden_phase,
+            fractal_free_energy=free_energy,
+            fractal_weight_mode=weight_mode,
         ),
     )
 
 
 @pytest.mark.parametrize(
-    "shared,depth,window,value_residual",
+    "shared,depth,window,value_residual,golden_phase,free_energy,weight_mode",
     [
-        (True, 4, 0, False),
-        (False, 2, 0, False),
-        (True, 1, 0, False),
-        (True, 4, 8, False),
-        (True, 4, 0, True),
+        (True, 4, 0, False, False, False, "dense"),
+        (False, 2, 0, False, False, False, "dense"),
+        (True, 1, 0, False, False, False, "dense"),
+        (True, 4, 8, False, False, False, "dense"),
+        (True, 4, 0, True, False, False, "dense"),
+        (True, 4, 0, True, True, False, "dense"),
+        (True, 4, 0, True, False, True, "dense"),
+        (True, 4, 0, True, False, False, "ternary"),
+        (True, 4, 0, True, False, False, "quaternion"),
     ],
 )
-def test_fractal_delta_causality_streaming_chunked_vs_seq_and_params(tmp_path, shared, depth, window, value_residual):
-    cfg = _fractal_cfg(tmp_path, tmp_path / "run", depth=depth, shared=shared, dropout=0.0, window=window, value_residual=value_residual)
+def test_fractal_delta_causality_streaming_chunked_vs_seq_and_params(
+    tmp_path, shared, depth, window, value_residual, golden_phase, free_energy, weight_mode
+):
+    cfg = _fractal_cfg(
+        tmp_path,
+        tmp_path / "run",
+        depth=depth,
+        shared=shared,
+        dropout=0.0,
+        window=window,
+        value_residual=value_residual,
+        golden_phase=golden_phase,
+        free_energy=free_energy,
+        weight_mode=weight_mode,
+    )
     torch.manual_seed(17)
     model = build_backbone(cfg).eval()
     assert type(model) is FractalDeltaMemory
@@ -141,9 +177,30 @@ def test_fractal_delta_eval_dropout_zero(tmp_path):
     torch.testing.assert_close(model(ids).logits, model(ids).logits, rtol=0, atol=0)
 
 
-@pytest.mark.parametrize("window,value_residual", [(0, False), (8, False), (0, True)])
-def test_fractal_delta_decode_compiled_parity(tmp_path, window, value_residual):
-    cfg = _fractal_cfg(tmp_path, tmp_path / "dec", depth=3, shared=True, window=window, value_residual=value_residual)
+@pytest.mark.parametrize(
+    "window,value_residual,golden_phase,free_energy,weight_mode",
+    [
+        (0, False, False, False, "dense"),
+        (8, False, False, False, "dense"),
+        (0, True, False, False, "dense"),
+        (0, True, True, False, "dense"),
+        (0, True, False, True, "dense"),
+        (0, True, False, False, "ternary"),
+        (0, True, False, False, "quaternion"),
+    ],
+)
+def test_fractal_delta_decode_compiled_parity(tmp_path, window, value_residual, golden_phase, free_energy, weight_mode):
+    cfg = _fractal_cfg(
+        tmp_path,
+        tmp_path / "dec",
+        depth=3,
+        shared=True,
+        window=window,
+        value_residual=value_residual,
+        golden_phase=golden_phase,
+        free_energy=free_energy,
+        weight_mode=weight_mode,
+    )
     torch.manual_seed(31)
     model = build_backbone(cfg).eval()
     adapter = FractalDecode(model)
@@ -184,9 +241,29 @@ def test_fractal_delta_memorization_and_finite_gradients(tmp_path):
         assert losses[-1] < losses[0] * 0.35
 
 
-def test_fractal_delta_exact_resume_dropout_and_accumulation(tmp_path):
+@pytest.mark.parametrize(
+    "golden_phase,free_energy,weight_mode",
+    [
+        (False, False, "dense"),
+        (True, False, "dense"),
+        (False, True, "dense"),
+        (False, False, "ternary"),
+        (False, False, "quaternion"),
+    ],
+)
+def test_fractal_delta_exact_resume_dropout_and_accumulation(tmp_path, golden_phase, free_energy, weight_mode):
     data = fixture_data(tmp_path / "data")
-    cfg = _fractal_cfg(data.root, tmp_path / "first", depth=3, shared=True, dropout=0.2)
+    cfg = _fractal_cfg(
+        data.root,
+        tmp_path / "first",
+        depth=3,
+        shared=True,
+        dropout=0.2,
+        value_residual=True,
+        golden_phase=golden_phase,
+        free_energy=free_energy,
+        weight_mode=weight_mode,
+    )
     with StoryTrainer(cfg, smoke=True) as a:
         a.fit(until_step=2)
         checkpoint = a.last_checkpoint

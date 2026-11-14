@@ -15,6 +15,81 @@ from ..model import RMSNorm, SwiGLU
 from .state_kernels import dplr_chunked, dplr_sequential
 
 
+_GOLDEN_PHI = (1.0 + math.sqrt(5.0)) * 0.5
+
+
+class TernaryLinear(nn.Module):
+    """BitNet b1.58 ternary weight quantization {-1, 0, +1} with absmean scaling + STE."""
+
+    def __init__(self, in_features: int, out_features: int, bias: bool = False):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = nn.Parameter(torch.empty(out_features, in_features))
+        self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
+        nn.init.normal_(self.weight, std=0.02)
+
+    def reset_weight(self, std: float) -> None:
+        nn.init.normal_(self.weight, std=std)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        w = self.weight
+        scale = w.abs().mean().clamp_min(1e-5)
+        w_q = (w / scale).round().clamp(-1.0, 1.0) * scale
+        return F.linear(x, w + (w_q - w).detach(), self.bias)
+
+
+class QuaternionLinear(nn.Module):
+    """Hamilton quaternion linear transform sharing 4 component matrices (4x param compression)."""
+
+    def __init__(self, in_features: int, out_features: int, bias: bool = False):
+        super().__init__()
+        if in_features % 4 != 0 or out_features % 4 != 0:
+            raise ValueError("quaternion weight mode requires dimensions divisible by 4")
+        self.in_features = in_features
+        self.out_features = out_features
+        self.components = nn.Parameter(torch.empty(4, out_features // 4, in_features // 4))
+        self.bias = nn.Parameter(torch.zeros(out_features)) if bias else None
+        nn.init.normal_(self.components, std=0.02)
+
+    def reset_weight(self, std: float) -> None:
+        nn.init.normal_(self.components, std=std)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        wr, wi, wj, wk = self.components.unbind(0)
+        row0 = torch.cat((wr, -wi, -wj, -wk), dim=1)
+        row1 = torch.cat((wi, wr, -wk, wj), dim=1)
+        row2 = torch.cat((wj, wk, wr, -wi), dim=1)
+        row3 = torch.cat((wk, -wj, wi, wr), dim=1)
+        weight = torch.cat((row0, row1, row2, row3), dim=0)
+        return F.linear(x, weight, self.bias)
+
+
+def _make_linear(in_features: int, out_features: int, mode: str, *, bias: bool = False) -> nn.Module:
+    if mode == "ternary":
+        return TernaryLinear(in_features, out_features, bias=bias)
+    if mode == "quaternion":
+        return QuaternionLinear(in_features, out_features, bias=bias)
+    layer = nn.Linear(in_features, out_features, bias=bias)
+    nn.init.normal_(layer.weight, std=0.02)
+    return layer
+
+
+def _apply_golden_phase(tensor: torch.Tensor, angles: torch.Tensor) -> torch.Tensor:
+    """Apply norm-preserving 2D phase rotation on key/query pairs."""
+    pairs = angles.shape[-1]
+    rot_dim = pairs * 2
+    rot = tensor[..., :rot_dim]
+    x1 = rot[..., 0::2]
+    x2 = rot[..., 1::2]
+    cos = angles.cos()
+    sin = angles.sin()
+    rotated = torch.stack((x1 * cos - x2 * sin, x1 * sin + x2 * cos), dim=-1).flatten(-2)
+    if rot_dim == tensor.shape[-1]:
+        return rotated
+    return torch.cat((rotated, tensor[..., rot_dim:]), dim=-1)
+
+
 def _init_decay_bias(heads, min_tau=4.0, max_tau=4096.0):
     if heads == 1:
         taus = torch.tensor([max_tau], dtype=torch.float32)
@@ -88,6 +163,7 @@ class FractalDeltaState:
     assoc_memory: torch.Tensor
     local_tail: torch.Tensor
     window: LocalWindowState | None = None
+    phase_pos: torch.Tensor | None = None
 
 
 class CausalLocalWindow(nn.Module):
@@ -195,7 +271,17 @@ class CausalLocalWindow(nn.Module):
 class FractalLevelAdapter(nn.Module):
     """Lightweight per-level conditioning and Euler residual scaling (all 1D, no weight decay)."""
 
-    def __init__(self, d_model, heads, level, depth, *, value_residual: bool = False):
+    def __init__(
+        self,
+        d_model,
+        heads,
+        level,
+        depth,
+        *,
+        value_residual: bool = False,
+        golden_phase: bool = False,
+        free_energy: bool = False,
+    ):
         super().__init__()
         self.attn_scale = nn.Parameter(torch.ones(d_model))
         self.attn_shift = nn.Parameter(torch.zeros(d_model))
@@ -208,6 +294,17 @@ class FractalLevelAdapter(nn.Module):
         self.euler_ffn = nn.Parameter(torch.ones(d_model))
         self.anchor_gate = nn.Parameter(torch.full((d_model,), -2.0)) if level > 0 else None
         self.val_mix = nn.Parameter(torch.full((heads,), -1.0)) if (value_residual and level > 0) else None
+        self.phase_scale = nn.Parameter(torch.ones(heads)) if golden_phase else None
+        self.fe_alpha = nn.Parameter(torch.ones(1)) if (free_energy and level > 0) else None
+        self.fe_bias = nn.Parameter(torch.ones(1)) if (free_energy and level > 0) else None
+        self.fe_err_mix = nn.Parameter(torch.full((d_model,), -2.0)) if (free_energy and level > 0) else None
+
+
+def _init_linear_weight(layer: nn.Module, std: float) -> None:
+    if hasattr(layer, "reset_weight"):
+        layer.reset_weight(std)
+    else:
+        nn.init.normal_(layer.weight, std=std)
 
 
 class FractalDeltaCell(nn.Module):
@@ -222,38 +319,81 @@ class FractalDeltaCell(nn.Module):
         self.execution = research.state_execution
         self.chunk_size = research.state_chunk_size
         self.beta_scale = research.fractal_beta_scale
+        self.weight_mode = research.fractal_weight_mode
+        self.golden_phase = research.fractal_golden_phase
+        self.free_energy = research.fractal_free_energy
 
         self.attn_norm = RMSNorm(self.d_model, eps=config.norm_eps)
         self.conv = nn.Conv1d(self.d_model, self.d_model, self.conv_kernel, groups=self.d_model)
-        self.qkv = nn.Linear(self.d_model, 3 * self.d_model, bias=False)
+        self.qkv = _make_linear(self.d_model, 3 * self.d_model, self.weight_mode)
         self.decay = nn.Linear(self.d_model, self.heads, bias=True)
         self.beta = nn.Linear(self.d_model, self.heads, bias=True)
-        self.out_gate = nn.Linear(self.d_model, self.d_model, bias=False)
+        self.out_gate = _make_linear(self.d_model, self.d_model, self.weight_mode)
         self.head_gamma = nn.Parameter(torch.ones(self.d_model))
-        self.out_proj = nn.Linear(self.d_model, self.d_model, bias=False)
+        self.out_proj = _make_linear(self.d_model, self.d_model, self.weight_mode)
         self.ffn_norm = RMSNorm(self.d_model, eps=config.norm_eps)
         self.ffn = SwiGLU(self.d_model, self.hidden_dim)
+        if self.weight_mode != "dense":
+            self.ffn.gate = _make_linear(self.d_model, self.hidden_dim, self.weight_mode)
+            self.ffn.up = _make_linear(self.d_model, self.hidden_dim, self.weight_mode)
+            self.ffn.down = _make_linear(self.hidden_dim, self.d_model, self.weight_mode)
+
+        if self.golden_phase:
+            rot_pairs = max(1, self.head_dim // 2)
+            exponents = 1.0 + 12.0 * torch.arange(rot_pairs, dtype=torch.float32) / max(1, rot_pairs)
+            inv_freq = math.pi / (_GOLDEN_PHI ** exponents)
+            self.register_buffer("golden_inv_freq", inv_freq, persistent=False)
+
+        if self.free_energy:
+            self.fe_rank = min(16, max(4, self.d_model // 6))
+            self.fe_norm = RMSNorm(self.d_model, eps=config.norm_eps)
+            self.fe_down = nn.Linear(self.d_model, self.fe_rank, bias=False)
+            self.fe_up = nn.Linear(self.fe_rank, self.d_model, bias=False)
+
         self._reset_parameters(config.n_layers)
 
     def _reset_parameters(self, depth):
         proj_std = 0.02 / math.sqrt(2 * depth)
         nn.init.normal_(self.conv.weight, std=0.02)
         nn.init.zeros_(self.conv.bias)
-        nn.init.normal_(self.qkv.weight, std=0.02)
+        _init_linear_weight(self.qkv, 0.02)
         nn.init.normal_(self.decay.weight, std=0.02)
         with torch.no_grad():
             self.decay.bias.copy_(_init_decay_bias(self.heads))
         nn.init.normal_(self.beta.weight, std=0.02)
         nn.init.constant_(self.beta.bias, -1.0)
-        nn.init.normal_(self.out_gate.weight, std=0.02)
-        nn.init.normal_(self.out_proj.weight, std=proj_std)
-        nn.init.normal_(self.ffn.down.weight, std=proj_std)
+        _init_linear_weight(self.out_gate, 0.02)
+        _init_linear_weight(self.out_proj, proj_std)
+        _init_linear_weight(self.ffn.gate, 0.02)
+        _init_linear_weight(self.ffn.up, 0.02)
+        _init_linear_weight(self.ffn.down, proj_std)
+        if self.free_energy:
+            nn.init.normal_(self.fe_down.weight, std=0.02)
+            nn.init.normal_(self.fe_up.weight, std=proj_std)
 
-    def forward(self, x, state=None, adapter=None, *, v0=None, return_v0: bool = False):
+    def forward(
+        self,
+        x,
+        state=None,
+        adapter=None,
+        *,
+        v0=None,
+        return_v0: bool = False,
+        phase_pos=None,
+        anchor=None,
+    ):
         b, t, d = x.shape
         normed = self.attn_norm(x)
         if adapter is not None:
             normed = normed * adapter.attn_scale + adapter.attn_shift
+
+        surprise = None
+        if self.free_energy and anchor is not None and adapter is not None and adapter.fe_alpha is not None:
+            pred = self.fe_up(F.silu(self.fe_down(normed)))
+            err = self.fe_norm(anchor) - pred
+            err_rms = err.float().square().mean(-1, keepdim=True).sqrt()
+            surprise = torch.sigmoid(adapter.fe_alpha.float() * (err_rms - 1.0) + adapter.fe_bias.float()).to(x.dtype)
+            normed = normed + adapter.fe_err_mix.sigmoid() * err
 
         tail_width = self.conv_kernel - 1
         norm_f = normed.float().transpose(1, 2)
@@ -267,6 +407,15 @@ class FractalDeltaCell(nn.Module):
         q, k, v = (tensor.transpose(1, 2) for tensor in (q, k, v))
         key = F.normalize(k.float(), dim=-1, eps=1e-6)
         query = F.normalize(q.float(), dim=-1, eps=1e-6)
+        if self.golden_phase and self.head_dim >= 2:
+            base_pos = x.new_zeros((b,), dtype=torch.float32) if phase_pos is None else phase_pos
+            pos_steps = base_pos[:, None] + torch.arange(t, device=x.device, dtype=torch.float32)[None, :]
+            freq = self.golden_inv_freq.float().view(1, 1, 1, -1)
+            if adapter is not None and adapter.phase_scale is not None:
+                freq = freq * adapter.phase_scale.float().view(1, self.heads, 1, 1)
+            angles = pos_steps[:, None, :, None] * freq
+            query = _apply_golden_phase(query, angles)
+            key = _apply_golden_phase(key, angles)
         val_f = v.float()
         if adapter is not None and adapter.val_mix is not None and v0 is not None:
             mix = adapter.val_mix.float().sigmoid().view(1, self.heads, 1, 1)
@@ -298,6 +447,8 @@ class FractalDeltaCell(nn.Module):
         attn_update = F.dropout(self.out_proj(gated), p=self.dropout, training=self.training)
         if adapter is not None:
             attn_update = attn_update * adapter.euler_attn
+        if surprise is not None:
+            attn_update = attn_update * surprise
         x = x + attn_update
 
         ffn_in = self.ffn_norm(x)
@@ -306,6 +457,8 @@ class FractalDeltaCell(nn.Module):
         ffn_update = F.dropout(self.ffn(ffn_in), p=self.dropout, training=self.training)
         if adapter is not None:
             ffn_update = ffn_update * adapter.euler_ffn
+        if surprise is not None:
+            ffn_update = ffn_update * surprise
         next_x = x + ffn_update
         level_state = FractalLevelState(new_mem, new_tail)
         if return_v0:
@@ -327,6 +480,9 @@ class FractalDeltaMemory(Backbone):
         self.assoc_dim = research.memory_dim
         self.chunk_size = research.state_chunk_size
         self.value_residual = research.fractal_value_residual
+        self.golden_phase = research.fractal_golden_phase
+        self.free_energy = research.fractal_free_energy
+        self.weight_mode = research.fractal_weight_mode
 
         d = config.d_model
         self.assoc_val_dim = min(d, 8 if d < 32 else 24)
@@ -354,7 +510,15 @@ class FractalDeltaMemory(Backbone):
         self.adapters = (
             nn.ModuleList(
                 [
-                    FractalLevelAdapter(d, self.heads, lvl, self.depth, value_residual=self.value_residual)
+                    FractalLevelAdapter(
+                        d,
+                        self.heads,
+                        lvl,
+                        self.depth,
+                        value_residual=self.value_residual,
+                        golden_phase=self.golden_phase,
+                        free_energy=self.free_energy,
+                    )
                     for lvl in range(self.depth)
                 ]
             )
@@ -389,6 +553,16 @@ class FractalDeltaMemory(Backbone):
                 raise ValueError("invalid fractal delta state shape/dtype")
         else:
             self.window_attn.validate_state(state.window, b, x.device)
+        if self.golden_phase:
+            if (
+                state.phase_pos is None
+                or state.phase_pos.shape != (b,)
+                or state.phase_pos.dtype != torch.float32
+                or state.phase_pos.device != x.device
+            ):
+                raise ValueError("invalid fractal delta state shape/dtype")
+        elif state.phase_pos is not None:
+            raise ValueError("invalid fractal delta state shape/dtype")
 
     def _run_assoc(self, raw_embed, state=None, *, execution="chunked"):
         b, t, d = raw_embed.shape
@@ -433,6 +607,15 @@ class FractalDeltaMemory(Backbone):
         if self.window_attn is not None:
             win_out, next_window = self.window_attn(x, None if state is None else state.window)
             x = x + F.dropout(win_out, p=self.config.dropout, training=self.training)
+        cur_phase = None
+        next_phase_pos = None
+        if self.golden_phase:
+            cur_phase = (
+                raw.new_zeros((raw.shape[0],), dtype=torch.float32)
+                if state is None
+                else state.phase_pos
+            )
+            next_phase_pos = (cur_phase + float(raw.shape[1])).contiguous()
         anchor = x
         next_levels = []
         v0 = None
@@ -443,9 +626,13 @@ class FractalDeltaMemory(Backbone):
             cell = self.cells[0 if self.shared else level]
             prev = None if state is None else state.levels[level]
             if self.value_residual and level == 0:
-                x, current, v0 = cell(x, prev, adapter=adapter, return_v0=True)
+                x, current, v0 = cell(
+                    x, prev, adapter=adapter, return_v0=True, phase_pos=cur_phase, anchor=anchor
+                )
             else:
-                x, current = cell(x, prev, adapter=adapter, v0=v0)
+                x, current = cell(
+                    x, prev, adapter=adapter, v0=v0, phase_pos=cur_phase, anchor=anchor
+                )
             next_levels.append(current)
         x = x + F.dropout(assoc_out, p=self.config.dropout, training=self.training)
         hidden = self.norm(x)
@@ -455,6 +642,7 @@ class FractalDeltaMemory(Backbone):
             next_assoc_mem,
             next_local_tail,
             next_window,
+            next_phase_pos,
         )
         return ModelOutput(logits=logits, hidden_states=hidden, state=next_state)
 
@@ -463,7 +651,8 @@ class FractalDeltaMemory(Backbone):
         levels_floats = self.depth * (self.heads * self.head_dim * self.head_dim + d * 3)
         assoc_floats = self.assoc_dim * self.assoc_val_dim + 2 * d
         win_floats = self.window_attn.state_floats_per_seq() if self.window_attn is not None else 0
-        return (levels_floats + assoc_floats + win_floats) * 4
+        phase_floats = 1 if self.golden_phase else 0
+        return (levels_floats + assoc_floats + win_floats + phase_floats) * 4
 
     def analytical_cost(self, seq_len, *, include_logits=True):
         d = self.config.d_model
@@ -495,20 +684,26 @@ class FractalDeltaMemory(Backbone):
         embed = c.vocab_size * d
         assoc_params = d + 3 * d + d + d * self.assoc_dim + d * self.assoc_val_dim + (d + 1) + self.assoc_val_dim * d + d
         win_params = self.window_attn.parameter_count(d) if self.window_attn is not None else 0
+        linear_scale = 4 if self.weight_mode == "quaternion" else 1
+        dense_proj = (3 * d * d + 2 * d * d + 3 * d * ff) // linear_scale
+        fe_cell = (d + 2 * d * self.cells[0].fe_rank) if self.free_energy else 0
         cell = (
             d  # attn_norm
             + d * (k + 1)  # depthwise conv weight + bias
-            + 3 * d * d  # qkv
+            + dense_proj  # qkv, out_gate, out_proj, SwiGLU
             + (d + 1) * h  # decay
             + (d + 1) * h  # beta
-            + 2 * d * d  # out_gate + out_proj
             + d  # head_gamma
             + d  # ffn_norm
-            + 3 * d * ff  # SwiGLU
+            + fe_cell
         )
         adapters = self.depth * (6 * d + 2 * h) + max(self.depth - 1, 0) * d if self.depth > 1 else 0
         if self.value_residual and self.depth > 1:
             adapters += (self.depth - 1) * h
+        if self.golden_phase and self.depth > 1:
+            adapters += self.depth * h
+        if self.free_energy and self.depth > 1:
+            adapters += (self.depth - 1) * (d + 2)
         final_norm = d
         return embed + assoc_params + win_params + len(self.cells) * cell + adapters + final_norm
 
@@ -544,6 +739,11 @@ class FractalDecode:
         if self.model.window_attn is not None:
             win_out, next_window = self.model.window_attn(x, state.window)
             x = x + win_out
+        cur_phase = None
+        next_phase_pos = None
+        if self.model.golden_phase:
+            cur_phase = state.phase_pos
+            next_phase_pos = (cur_phase + 1.0).contiguous()
         anchor = x
         next_levels = []
         v0 = None
@@ -553,9 +753,13 @@ class FractalDecode:
                 x = x + adapter.anchor_gate.sigmoid() * anchor
             cell = self.step_cells[0 if self.model.shared else level]
             if self.model.value_residual and level == 0:
-                x, current, v0 = cell(x, prev, adapter=adapter, return_v0=True)
+                x, current, v0 = cell(
+                    x, prev, adapter=adapter, return_v0=True, phase_pos=cur_phase, anchor=anchor
+                )
             else:
-                x, current = cell(x, prev, adapter=adapter, v0=v0)
+                x, current = cell(
+                    x, prev, adapter=adapter, v0=v0, phase_pos=cur_phase, anchor=anchor
+                )
             next_levels.append(current)
         x = x + assoc_out
         logits = self.model.lm_head(self.model.norm(x))
@@ -564,5 +768,6 @@ class FractalDecode:
             next_assoc_mem,
             next_local_tail,
             next_window,
+            next_phase_pos,
         )
         return logits, next_state
