@@ -27,37 +27,57 @@ def dplr_sequential(q, k, v, log_w, a, b, state=None):
 
 
 def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32):
-    """Exact DPLR recurrence via within-chunk causal triangular systems."""
+    """Exact DPLR recurrence via batched within-chunk causal triangular systems."""
     q, k, v, log_w, a, b = (x.float() for x in (q, k, v, log_w, a, b))
-    memory = v.new_zeros(*q.shape[:2], v.shape[-1], q.shape[-1]) if state is None else state
+    batch, heads, total_len, k_dim = q.shape
+    v_dim = v.shape[-1]
+    memory = v.new_zeros(batch, heads, v_dim, k_dim) if state is None else state
+    pad = (-total_len) % chunk_size
+    if pad:
+        q, k, v, log_w, a, b = (F.pad(x, (0, 0, 0, pad)) for x in (q, k, v, log_w, a, b))
+    n_chunks = q.shape[-2] // chunk_size
+    qc, kc, wc, ac, bc = (x.reshape(batch, heads, n_chunks, chunk_size, k_dim) for x in (q, k, log_w, a, b))
+    vc = v.reshape(batch, heads, n_chunks, chunk_size, v_dim)
+
+    cumulative = wc.cumsum(-2)
+    previous = cumulative - wc
+    index = torch.arange(chunk_size, device=q.device)
+    strict = index[:, None] > index[None, :]
+    causal = index[:, None] >= index[None, :]
+    # Invalid future differences must be masked BEFORE exp (no inf*0).
+    decay_before = previous.unsqueeze(-2) - cumulative.unsqueeze(-3)
+    decay_before = torch.where(strict[..., None], decay_before, 0.0).exp()
+    rank = (ac.unsqueeze(-2) * bc.unsqueeze(-3) * decay_before).sum(-1).masked_fill(~strict, 0.0)
+    inputs = (ac.unsqueeze(-2) * kc.unsqueeze(-3) * decay_before).sum(-1).masked_fill(~strict, 0.0)
+
+    eye = torch.eye(chunk_size, device=q.device, dtype=q.dtype)
+    rhs_combined = torch.cat((inputs @ vc, ac * previous.exp()), dim=-1)
+    solved = torch.linalg.solve_triangular(eye - rank, rhs_combined, upper=False, unitriangular=True)
+    u_local, u_state = solved.split((v_dim, k_dim), dim=-1)
+
+    decay_after = cumulative.unsqueeze(-2) - cumulative.unsqueeze(-3)
+    decay_after = torch.where(causal[..., None], decay_after, 0.0).exp()
+    reads_k = (qc.unsqueeze(-2) * kc.unsqueeze(-3) * decay_after).sum(-1).masked_fill(~causal, 0.0)
+    reads_b = (qc.unsqueeze(-2) * bc.unsqueeze(-3) * decay_after).sum(-1).masked_fill(~causal, 0.0)
+
+    kv_local = reads_k @ vc + reads_b @ u_local
+    read_proj = qc * cumulative.exp() + reads_b @ u_state
+    tail = (cumulative[:, :, :, -1:] - cumulative).exp()
+    bc_tail = bc * tail
+    mem_decay = cumulative[:, :, :, -1].exp().unsqueeze(-2)
+    mem_local = torch.einsum("bhctv,bhctk->bhcvk", vc, kc * tail) + torch.einsum("bhctv,bhctk->bhcvk", u_local, bc_tail)
+    state_trans = torch.einsum("bhctm,bhctk->bhcmk", u_state, bc_tail)
+
     outputs = []
-    for start in range(0, q.shape[-2], chunk_size):
-        qc, kc, vc, wc, ac, bc = (x[:, :, start:start+chunk_size] for x in (q, k, v, log_w, a, b))
-        n = qc.shape[-2]
-        cumulative = wc.cumsum(-2)
-        previous = cumulative - wc
-        index = torch.arange(n, device=q.device)
-        strict = index[:, None] > index[None, :]
-        causal = index[:, None] >= index[None, :]
-        # Invalid future differences must be masked BEFORE exp (no inf*0).
-        decay_before = (previous.unsqueeze(-2)-cumulative.unsqueeze(-3))
-        decay_before = torch.where(strict[..., None], decay_before, 0.).exp()
-        rank = (ac.unsqueeze(-2)*bc.unsqueeze(-3)*decay_before).sum(-1).masked_fill(~strict, 0.)
-        inputs = (ac.unsqueeze(-2)*kc.unsqueeze(-3)*decay_before).sum(-1).masked_fill(~strict, 0.)
-        rhs = torch.einsum("bhvk,bhtk->bhtv", memory, ac*previous.exp()) + inputs @ vc
-        eye = torch.eye(n, device=q.device, dtype=q.dtype)
-        updates = torch.linalg.solve_triangular(eye-rank, rhs, upper=False, unitriangular=True)
-        decay_after = cumulative.unsqueeze(-2)-cumulative.unsqueeze(-3)
-        decay_after = torch.where(causal[..., None], decay_after, 0.).exp()
-        reads_k = (qc.unsqueeze(-2)*kc.unsqueeze(-3)*decay_after).sum(-1).masked_fill(~causal, 0.)
-        reads_b = (qc.unsqueeze(-2)*bc.unsqueeze(-3)*decay_after).sum(-1).masked_fill(~causal, 0.)
-        outputs.append(torch.einsum("bhvk,bhtk->bhtv", memory, qc*cumulative.exp())
-                       + reads_k @ vc + reads_b @ updates)
-        tail = (cumulative[:, :, -1:]-cumulative).exp()
-        memory = (memory*cumulative[:, :, -1].exp().unsqueeze(-2)
-                  + torch.einsum("bhtv,bhtk->bhvk", vc, kc*tail)
-                  + torch.einsum("bhtv,bhtk->bhvk", updates, bc*tail))
-    return torch.cat(outputs, -2), memory
+    for m in range(n_chunks):
+        outputs.append(kv_local[:, :, m] + torch.einsum("bhvk,bhtk->bhtv", memory, read_proj[:, :, m]))
+        memory = (
+            memory * mem_decay[:, :, m]
+            + mem_local[:, :, m]
+            + torch.einsum("bhvm,bhmk->bhvk", memory, state_trans[:, :, m])
+        )
+    out = torch.cat(outputs, dim=-2)
+    return (out[:, :, :total_len] if pad else out), memory
 
 
 def mlstm_sequential(q, k, v, input_gate, forget_gate, state=None):

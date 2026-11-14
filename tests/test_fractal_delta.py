@@ -97,6 +97,8 @@ def test_fractal_delta_causality_streaming_chunked_vs_seq_and_params(tmp_path, s
     for a, b in zip(state.levels, full.state.levels, strict=True):
         torch.testing.assert_close(a.memory, b.memory, atol=3e-5, rtol=2e-4)
         torch.testing.assert_close(a.tail, b.tail, atol=3e-5, rtol=2e-4)
+    torch.testing.assert_close(state.assoc_memory, full.state.assoc_memory, atol=3e-5, rtol=2e-4)
+    torch.testing.assert_close(state.local_tail, full.state.local_tail, atol=3e-5, rtol=2e-4)
 
     # Sequential vs chunked forward and backward gradient equivalence.
     seq_model = copy.deepcopy(model)
@@ -187,3 +189,38 @@ def test_fractal_delta_exact_resume_dropout_and_accumulation(tmp_path):
             expected,
             (b.model.state_dict(), b.optimizer.state_dict(), b.scheduler.state_dict(), b.sampler.state_dict()),
         )
+
+
+def test_fractal_delta_binding_recall_learning(tmp_path):
+    import numpy as np
+    from llm2.research.binding_data import generate as gen_binding, intervene
+    from llm2.research.binding_worker import BindingTrainer
+
+    cfg = _fractal_cfg(tmp_path, tmp_path / "bind", depth=4, shared=True, d_model=48, heads=4, hidden_dim=48, dropout=0.05)
+    cfg.research.memory_dim = 32
+    cfg.data.batch_size = 16
+    cfg.data.seq_len = 32
+    with BindingTrainer(cfg, smoke=True) as trainer:
+        opt = torch.optim.AdamW(trainer.model.parameters(), lr=0.003, weight_decay=0.01)
+        for _ in range(180):
+            batch = trainer.sampler.next("cpu")
+            opt.zero_grad()
+            out = trainer.objective(trainer.model, batch)
+            out.loss.backward()
+            torch.nn.utils.clip_grad_norm_(trainer.parameters, 1.0)
+            opt.step()
+        trainer.model.eval()
+        rng = np.random.default_rng(999)
+        eb = gen_binding(rng, 32, 64, writes=4, queries=4, device="cpu")
+        ib = intervene(eb)
+        with torch.no_grad():
+            p1 = trainer.model(eb["input_ids"]).logits.argmax(-1)
+            p2 = trainer.model(ib["input_ids"]).logits.argmax(-1)
+            mask = eb["targets"] >= 0
+            c1 = p1[mask] == eb["targets"][mask]
+            c2 = p2[mask] == ib["targets"][mask]
+            acc = c1.float().mean().item()
+            paired = (c1 & c2).float().mean().item()
+        print(f"UNSEEN_ACC={acc:.4f} PAIRED_ACC={paired:.4f}")
+        assert acc >= 0.90 and paired >= 0.85
+

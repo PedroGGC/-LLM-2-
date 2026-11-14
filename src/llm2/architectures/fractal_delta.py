@@ -1,4 +1,4 @@
-"""Fractal recursive Gated Delta memory with multi-timescale causal state."""
+"""Fractal recursive Gated Delta memory with multi-timescale causal state and lag-1 associative induction."""
 
 from copy import copy
 from dataclasses import dataclass
@@ -18,8 +18,53 @@ def _init_decay_bias(heads, min_tau=4.0, max_tau=4096.0):
         taus = torch.tensor([max_tau], dtype=torch.float32)
     else:
         taus = torch.logspace(math.log10(min_tau), math.log10(max_tau), heads, dtype=torch.float32)
-    rates = (-1.0 / taus).exp().clamp(1e-4, 1.0 - 1e-4)
+    rates = (-1.0 / taus).exp().clamp(1e-4, 1.0 - 1.0e-4)
     return torch.log(rates / (1.0 - rates))
+
+
+def _assoc_sequential(q, k, v, prev_mem=None):
+    b, t, key_dim = q.shape
+    val_dim = v.shape[-1]
+    mem = q.new_zeros(b, key_dim, val_dim) if prev_mem is None else prev_mem
+    outputs = []
+    for idx in range(t):
+        mem = mem + k[:, idx].unsqueeze(2) * v[:, idx].unsqueeze(1)
+        outputs.append(torch.bmm(q[:, idx].unsqueeze(1), mem).squeeze(1))
+    return torch.stack(outputs, dim=1), mem.contiguous()
+
+
+def _assoc_chunked(q, k, v, prev_mem=None, chunk_size=32):
+    b, t, key_dim = q.shape
+    val_dim = v.shape[-1]
+    if t <= 2 or chunk_size <= 1:
+        return _assoc_sequential(q, k, v, prev_mem)
+
+    c = min(chunk_size, t)
+    pad = (c - (t % c)) % c
+    qf, kf, vf = q, k, v
+    if pad:
+        qf = F.pad(qf, (0, 0, 0, pad))
+        kf = F.pad(kf, (0, 0, 0, pad))
+        vf = F.pad(vf, (0, 0, 0, pad))
+
+    n_chunks = qf.shape[1] // c
+    qc = qf.reshape(b, n_chunks, c, key_dim)
+    kc = kf.reshape(b, n_chunks, c, key_dim)
+    vc = vf.reshape(b, n_chunks, c, val_dim)
+
+    upper = torch.triu(torch.ones(c, c, device=q.device, dtype=torch.bool), diagonal=1)
+    intra_scores = torch.matmul(qc, kc.transpose(-1, -2)).masked_fill(upper, 0.0)
+    intra_out = torch.matmul(intra_scores, vc)
+    chunk_deltas = torch.matmul(kc.transpose(-1, -2), vc)
+
+    mem = q.new_zeros(b, key_dim, val_dim) if prev_mem is None else prev_mem
+    outputs = []
+    for idx in range(n_chunks):
+        outputs.append(torch.matmul(qc[:, idx], mem) + intra_out[:, idx])
+        mem = mem + chunk_deltas[:, idx]
+
+    out = torch.cat(outputs, dim=1)[:, :t].contiguous()
+    return out, mem.contiguous()
 
 
 @dataclass
@@ -31,6 +76,8 @@ class FractalLevelState:
 @dataclass
 class FractalDeltaState:
     levels: tuple[FractalLevelState, ...]
+    assoc_memory: torch.Tensor
+    local_tail: torch.Tensor
 
 
 class FractalLevelAdapter(nn.Module):
@@ -42,7 +89,6 @@ class FractalLevelAdapter(nn.Module):
         self.attn_shift = nn.Parameter(torch.zeros(d_model))
         self.ffn_scale = nn.Parameter(torch.ones(d_model))
         self.ffn_shift = nn.Parameter(torch.zeros(d_model))
-        # Geometric timescale shift across levels: early levels focus local, deeper levels retain longer.
         span = (level - 0.5 * (depth - 1)) * 0.5
         self.decay_bias = nn.Parameter(torch.full((heads,), span))
         self.beta_bias = nn.Parameter(torch.zeros(heads))
@@ -70,7 +116,6 @@ class FractalDeltaCell(nn.Module):
         self.decay = nn.Linear(self.d_model, self.heads, bias=True)
         self.beta = nn.Linear(self.d_model, self.heads, bias=True)
         self.out_gate = nn.Linear(self.d_model, self.d_model, bias=False)
-        # Stored as 1D so AdamW keeps weight_decay=0 on per-head scale.
         self.head_gamma = nn.Parameter(torch.ones(self.d_model))
         self.out_proj = nn.Linear(self.d_model, self.d_model, bias=False)
         self.ffn_norm = RMSNorm(self.d_model, eps=config.norm_eps)
@@ -158,18 +203,36 @@ class FractalDeltaMemory(Backbone):
         self.shared = research.share_scales
         self.heads = config.n_heads
         self.head_dim = config.d_model // self.heads
+        self.assoc_dim = research.memory_dim
+        self.chunk_size = research.state_chunk_size
 
-        self.embedding = nn.Embedding(config.vocab_size, config.d_model)
+        d = config.d_model
+        self.embedding = nn.Embedding(config.vocab_size, d)
         nn.init.normal_(self.embedding.weight, std=0.02)
+
+        # Causal lag-1 shared-address associative induction channel.
+        self.input_norm = RMSNorm(d, eps=config.norm_eps)
+        self.local_conv = nn.Conv1d(d, d, 3, groups=d, bias=False)
+        nn.init.normal_(self.local_conv.weight, std=0.02)
+        self.local_norm = RMSNorm(d, eps=config.norm_eps)
+        self.assoc_address = nn.Linear(d, self.assoc_dim, bias=False)
+        self.assoc_value = nn.Linear(d, d, bias=False)
+        self.assoc_write_gate = nn.Linear(d, 1, bias=True)
+        self.assoc_readout = nn.Linear(d, d, bias=False)
+        for layer in (self.assoc_address, self.assoc_value, self.assoc_write_gate, self.assoc_readout):
+            nn.init.normal_(layer.weight, std=0.02)
+        nn.init.constant_(self.assoc_write_gate.bias, -2.0)
+        self.assoc_scale = nn.Parameter(torch.ones(d))
+
         cell_count = 1 if self.shared else self.depth
         self.cells = nn.ModuleList([FractalDeltaCell(config, research) for _ in range(cell_count)])
         self.adapters = (
-            nn.ModuleList([FractalLevelAdapter(config.d_model, self.heads, lvl, self.depth) for lvl in range(self.depth)])
+            nn.ModuleList([FractalLevelAdapter(d, self.heads, lvl, self.depth) for lvl in range(self.depth)])
             if self.depth > 1
             else nn.ModuleList()
         )
-        self.norm = RMSNorm(config.d_model, eps=config.norm_eps)
-        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.norm = RMSNorm(d, eps=config.norm_eps)
+        self.lm_head = nn.Linear(d, config.vocab_size, bias=False)
         self.lm_head.weight = self.embedding.weight
 
     def _validate_state(self, state, x):
@@ -178,6 +241,13 @@ class FractalDeltaMemory(Backbone):
         b, _, d = x.shape
         mem_shape = (b, self.heads, self.head_dim, self.head_dim)
         tail_shape = (b, d, 3)
+        assoc_checks = (
+            (state.assoc_memory, (b, self.assoc_dim, d)),
+            (state.local_tail, (b, d, 2)),
+        )
+        for tensor, expected in assoc_checks:
+            if tensor.shape != expected or tensor.dtype != torch.float32 or tensor.device != x.device:
+                raise ValueError("invalid fractal delta state shape/dtype")
         for level_state in state.levels:
             if not isinstance(level_state, FractalLevelState):
                 raise ValueError("invalid fractal delta state shape/dtype")
@@ -185,10 +255,47 @@ class FractalDeltaMemory(Backbone):
                 if tensor.shape != expected or tensor.dtype != torch.float32 or tensor.device != x.device:
                     raise ValueError("invalid fractal delta state shape/dtype")
 
+    def _run_assoc(self, raw_embed, state=None, *, execution="chunked"):
+        b, t, d = raw_embed.shape
+        x_norm = self.input_norm(raw_embed).float()
+        x_norm_t = x_norm.transpose(1, 2)
+        if state is None:
+            local_tail = x_norm_t.new_zeros(b, d, 2)
+            prev_mem = None
+        else:
+            local_tail = state.local_tail
+            prev_mem = state.assoc_memory
+
+        padded = torch.cat((local_tail, x_norm_t), dim=2)
+        next_local_tail = padded[:, :, -2:].contiguous()
+        conv_out = F.conv1d(padded, self.local_conv.weight.float(), None, groups=d).transpose(1, 2)
+        local = self.local_norm((x_norm + conv_out).to(raw_embed.dtype)).float()
+
+        shifted = padded[:, :, 1:-1].transpose(1, 2)
+
+        q = F.normalize(F.linear(x_norm, self.assoc_address.weight.float()), dim=-1, eps=1e-6)
+        k_base = F.normalize(F.linear(shifted, self.assoc_address.weight.float()), dim=-1, eps=1e-6)
+        gate = torch.sigmoid(F.linear(local, self.assoc_write_gate.weight.float(), self.assoc_write_gate.bias.float()))
+        k = k_base * gate
+        v = F.linear(local, self.assoc_value.weight.float())
+
+        if execution == "sequential" or t == 1:
+            read, next_mem = _assoc_sequential(q, k, v, prev_mem)
+        else:
+            read, next_mem = _assoc_chunked(q, k, v, prev_mem, chunk_size=self.chunk_size)
+
+        assoc_out = self.assoc_readout(read.to(raw_embed.dtype)) * self.assoc_scale
+        return assoc_out, next_mem.float().contiguous(), next_local_tail
+
     def forward(self, input_ids, *, state=None, return_logits=True):
-        x = F.dropout(self.embedding(input_ids), p=self.config.dropout, training=self.training)
+        raw = self.embedding(input_ids)
         if state is not None:
-            self._validate_state(state, x)
+            self._validate_state(state, raw)
+        exec_mode = self.cells[0].execution
+        assoc_out, next_assoc_mem, next_local_tail = self._run_assoc(
+            raw, state, execution=exec_mode
+        )
+        x = F.dropout(raw, p=self.config.dropout, training=self.training)
         anchor = x
         next_levels = []
         for level in range(self.depth):
@@ -199,12 +306,21 @@ class FractalDeltaMemory(Backbone):
             prev = None if state is None else state.levels[level]
             x, current = cell(x, prev, adapter=adapter)
             next_levels.append(current)
+        x = x + F.dropout(assoc_out, p=self.config.dropout, training=self.training)
         hidden = self.norm(x)
         logits = self.lm_head(hidden) if return_logits else None
-        return ModelOutput(logits=logits, hidden_states=hidden, state=FractalDeltaState(tuple(next_levels)))
+        next_state = FractalDeltaState(
+            tuple(next_levels),
+            next_assoc_mem,
+            next_local_tail,
+        )
+        return ModelOutput(logits=logits, hidden_states=hidden, state=next_state)
 
     def state_bytes_per_sequence(self):
-        return self.depth * (self.heads * self.head_dim * self.head_dim + self.config.d_model * 3) * 4
+        d = self.config.d_model
+        levels_floats = self.depth * (self.heads * self.head_dim * self.head_dim + d * 3)
+        assoc_floats = (self.assoc_dim + 2) * d
+        return (levels_floats + assoc_floats) * 4
 
     def analytical_cost(self, seq_len, *, include_logits=True):
         d = self.config.d_model
@@ -212,13 +328,19 @@ class FractalDeltaMemory(Backbone):
         dh = self.head_dim
         ff = self.config.hidden_dim
         per_level = seq_len * (10 * d * d + 4 * d * h + 6 * d * ff + 6 * d * dh)
-        forward = self.depth * per_level + (2 * seq_len * d * self.config.vocab_size if include_logits else 0)
+        assoc_flops = seq_len * (4 * d * self.assoc_dim + 4 * d * d + 6 * d + 4 * self.assoc_dim * d)
+        forward = (
+            self.depth * per_level
+            + assoc_flops
+            + (2 * seq_len * d * self.config.vocab_size if include_logits else 0)
+        )
         return forward, 0, self.depth
 
     def parameter_formula(self):
         c = self.config
         d, h, ff, k = c.d_model, self.heads, c.hidden_dim, 4
         embed = c.vocab_size * d
+        assoc_params = d + 3 * d + d + d * self.assoc_dim + d * d + (d + 1) + d * d + d
         cell = (
             d  # attn_norm
             + d * (k + 1)  # depthwise conv weight + bias
@@ -232,7 +354,7 @@ class FractalDeltaMemory(Backbone):
         )
         adapters = self.depth * (6 * d + 2 * h) + max(self.depth - 1, 0) * d if self.depth > 1 else 0
         final_norm = d
-        return embed + len(self.cells) * cell + adapters + final_norm
+        return embed + assoc_params + len(self.cells) * cell + adapters + final_norm
 
 
 class FractalDecode:
@@ -257,7 +379,11 @@ class FractalDecode:
     def step(self, ids, state):
         if ids.shape != (state.levels[0].memory.shape[0], 1):
             raise ValueError("fractal recurrent step requires one byte")
-        x = self.model.embedding(ids)
+        raw = self.model.embedding(ids)
+        assoc_out, next_assoc_mem, next_local_tail = self.model._run_assoc(
+            raw, state, execution="sequential"
+        )
+        x = raw
         anchor = x
         next_levels = []
         for level, prev in enumerate(state.levels):
@@ -267,5 +393,11 @@ class FractalDecode:
             cell = self.step_cells[0 if self.model.shared else level]
             x, current = cell(x, prev, adapter=adapter)
             next_levels.append(current)
+        x = x + assoc_out
         logits = self.model.lm_head(self.model.norm(x))
-        return logits, FractalDeltaState(tuple(next_levels))
+        next_state = FractalDeltaState(
+            tuple(next_levels),
+            next_assoc_mem,
+            next_local_tail,
+        )
+        return logits, next_state

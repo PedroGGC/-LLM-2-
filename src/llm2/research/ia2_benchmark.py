@@ -37,10 +37,10 @@ class ArmSpec:
 
 ARMS = (
     ArmSpec("transformer_1x", "baseline_1x", "transformer", d_model=64, n_layers=2, n_heads=4, hidden_dim=96),
-    ArmSpec("fractal_delta_1x", "candidate", "fractal_delta", d_model=80, n_layers=4, n_heads=4, hidden_dim=144, shared=True, beta_scale=2.0),
+    ArmSpec("fractal_delta_1x", "candidate", "fractal_delta", d_model=80, n_layers=4, n_heads=4, hidden_dim=72, shared=True, beta_scale=2.0),
     ArmSpec("transformer_2x", "baseline_2x", "transformer", d_model=80, n_layers=3, n_heads=4, hidden_dim=128),
     ArmSpec("context_shared2", "recurrent_ref", "context_memory", d_model=80, n_layers=2, n_heads=4, hidden_dim=144, shared=True),
-    ArmSpec("fractal_delta_med", "candidate", "fractal_delta", d_model=104, n_layers=4, n_heads=4, hidden_dim=208, shared=True, beta_scale=2.0),
+    ArmSpec("fractal_delta_med", "candidate", "fractal_delta", d_model=104, n_layers=4, n_heads=4, hidden_dim=128, shared=True, beta_scale=2.0),
 )
 
 
@@ -59,6 +59,7 @@ def _build_research_config(arm: ArmSpec, *, smoke=False):
         architecture=arm.architecture,
         share_scales=arm.shared,
         scale_conditioning=False,
+        memory_dim=8 if smoke else 64,
         state_execution="chunked",
         state_chunk_size=32,
         fractal_beta_scale=arm.beta_scale,
@@ -113,7 +114,7 @@ def make_story_config(arm: ArmSpec, data_root, output_dir, *, seed=341, lr=0.001
     )
 
 
-def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, smoke=False, device="cuda"):
+def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, lr=0.003, smoke=False, device="cuda"):
     steps = 4 if smoke else 3000
     d = 16 if smoke else arm.d_model
     ff = 24 if smoke else arm.hidden_dim
@@ -136,7 +137,7 @@ def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, smoke=False, devi
             eval_batch_size=1,
         ),
         optimizer=OptimizerConfig(
-            lr=0.001,
+            lr=lr,
             weight_decay=0.01,
             warmup_steps=1 if smoke else 50,
             schedule_steps=steps,
@@ -260,7 +261,7 @@ def run_arm(arm: ArmSpec, data_root, work_root: Path, *, smoke=False, device="cu
             flush=True,
         )
 
-    bind_cfg = make_binding_config(arm, arm_root / "binding", smoke=smoke, device=device)
+    bind_cfg = make_binding_config(arm, arm_root / "binding", lr=cal["lr"], smoke=smoke, device=device)
     with BindingTrainer(bind_cfg, smoke=smoke) as btrainer:
         bind_t0 = time.perf_counter()
         if btrainer.device.type == "cuda":
