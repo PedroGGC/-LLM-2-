@@ -38,6 +38,8 @@ class ArmSpec:
     fractal_golden_phase: bool = False
     fractal_free_energy: bool = False
     fractal_weight_mode: str = "dense"
+    memory_dim: int = 64
+    chunk_size: int = 32
 
 
 ARMS = (
@@ -52,6 +54,10 @@ ARMS = (
     ArmSpec("fractal_free_energy_med", "candidate", "fractal_delta", d_model=104, n_layers=6, n_heads=2, hidden_dim=164, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_free_energy=True),
     ArmSpec("fractal_ternary_med", "candidate", "fractal_delta", d_model=104, n_layers=6, n_heads=2, hidden_dim=176, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_weight_mode="ternary"),
     ArmSpec("fractal_quat_med", "candidate", "fractal_delta", d_model=160, n_layers=6, n_heads=4, hidden_dim=432, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_weight_mode="quaternion"),
+    ArmSpec("transformer_big", "baseline_big", "transformer", d_model=128, n_layers=6, n_heads=4, hidden_dim=288),
+    ArmSpec("fractal_delta_big", "candidate", "fractal_delta", d_model=256, n_layers=4, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, memory_dim=96, chunk_size=64),
+    ArmSpec("fractal_pure_big", "candidate", "fractal_delta", d_model=256, n_layers=6, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, fractal_value_residual=True, memory_dim=96, chunk_size=64),
+    ArmSpec("fractal_golden_big", "candidate", "fractal_delta", d_model=256, n_layers=6, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, memory_dim=96, chunk_size=64),
 )
 
 
@@ -70,9 +76,9 @@ def _build_research_config(arm: ArmSpec, *, smoke=False):
         architecture=arm.architecture,
         share_scales=arm.shared,
         scale_conditioning=False,
-        memory_dim=8 if smoke else 64,
+        memory_dim=8 if smoke else arm.memory_dim,
         state_execution="chunked",
-        state_chunk_size=32,
+        state_chunk_size=arm.chunk_size,
         fractal_beta_scale=arm.beta_scale,
         fractal_window=arm.fractal_window,
         fractal_value_residual=arm.fractal_value_residual,
@@ -82,11 +88,13 @@ def _build_research_config(arm: ArmSpec, *, smoke=False):
     )
 
 
-def make_story_config(arm: ArmSpec, data_root, output_dir, *, seed=341, lr=0.001, smoke=False, device="cuda", calibration=False):
+def make_story_config(arm: ArmSpec, data_root, output_dir, *, seed=341, lr=0.001, smoke=False, device="cuda", calibration=False, story_seq_len=256):
     steps = (2 if calibration else 4) if smoke else (400 if calibration else 6000)
     d = 16 if smoke else arm.d_model
     ff = 24 if smoke else arm.hidden_dim
     heads = 2 if smoke else arm.n_heads
+    seq_len = 32 if smoke else story_seq_len
+    batch = 2 if smoke else max(1, (256 * 32) // seq_len)
     research = _build_research_config(arm, smoke=smoke)
     return ExperimentConfig(
         model=ModelConfig(
@@ -100,9 +108,9 @@ def make_story_config(arm: ArmSpec, data_root, output_dir, *, seed=341, lr=0.001
         ),
         data=DataConfig(
             path=str(Path(data_root).resolve()),
-            seq_len=32 if smoke else 256,
-            batch_size=2 if smoke else 32,
-            eval_batch_size=2 if smoke else 32,
+            seq_len=seq_len,
+            batch_size=batch,
+            eval_batch_size=batch,
         ),
         optimizer=OptimizerConfig(
             lr=lr,
@@ -179,13 +187,13 @@ def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, lr=0.003, smoke=F
     )
 
 
-def select_story_lr(arm: ArmSpec, data_root, cal_root: Path, *, smoke=False, device="cuda"):
+def select_story_lr(arm: ArmSpec, data_root, cal_root: Path, *, smoke=False, device="cuda", story_seq_len=256):
     selection_file = cal_root / arm.name / "selection.json"
     if selection_file.exists():
         return json.loads(selection_file.read_text(encoding="utf-8"))
     trials = []
     for lr in RATES:
-        cfg = make_story_config(arm, data_root, cal_root / arm.name / str(lr), lr=lr, smoke=smoke, device=device, calibration=True)
+        cfg = make_story_config(arm, data_root, cal_root / arm.name / str(lr), lr=lr, smoke=smoke, device=device, calibration=True, story_seq_len=story_seq_len)
         with StoryTrainer(cfg, calibration=True, smoke=smoke) as trainer:
             trainer.fit()
             nll = float(trainer.evaluations[-1]["nll"])
@@ -203,6 +211,14 @@ def select_story_lr(arm: ArmSpec, data_root, cal_root: Path, *, smoke=False, dev
     return result
 
 
+def _make_decode_adapter(model, span):
+    if type(model).__name__ == "TransformerLM":
+        return LocalTransformerDecode(model, span=span)
+    if type(model) is FractalDeltaMemory:
+        return FractalDecode(model)
+    return RecurrentDecode(model)
+
+
 def benchmark_decode(model, device, *, smoke=False):
     was_training = model.training
     model.eval()
@@ -213,12 +229,7 @@ def benchmark_decode(model, device, *, smoke=False):
     prefix = torch.randint(0, 256, (1, prefix_len), generator=gen).to(device)
     cont = torch.randint(0, 256, (1, 12 if smoke else 32), generator=gen).to(device)
     try:
-        if type(model).__name__ == "TransformerLM":
-            eager = LocalTransformerDecode(model, span=span)
-        elif type(model) is FractalDeltaMemory:
-            eager = FractalDecode(model)
-        else:
-            eager = RecurrentDecode(model)
+        eager = _make_decode_adapter(model, span=span)
         results = {}
         for mode_name, use_compiled in (("eager", False), ("inductor", True)):
             decoder = CompiledDecode(eager, backend="inductor") if use_compiled else eager
@@ -242,19 +253,47 @@ def benchmark_decode(model, device, *, smoke=False):
                 "warmup_parity_seconds": first_step_wall,
                 "cudagraph": getattr(decoder, "use_cudagraph", False),
             }
-        return results
+        return results, eager
     finally:
         model.train(was_training)
 
 
-def run_arm(arm: ArmSpec, data_root, work_root: Path, *, smoke=False, device="cuda"):
+def sample_story_text(model, device, *, smoke=False, decoder=None):
+    prompts = (
+        "Once upon a time, a little ",
+        "One day, Lily found a shiny ",
+    )
+    new_bytes = 16 if smoke else 96
+    was_training = model.training
+    model.eval()
+    try:
+        if decoder is None:
+            decoder = _make_decode_adapter(model, span=32 if smoke else 256)
+        samples = []
+        with torch.inference_mode():
+            for prompt in prompts:
+                raw = list(prompt.encode("utf-8"))
+                prefix = torch.tensor([raw], dtype=torch.long, device=device)
+                logits, state = decoder.prefill(prefix, len(raw) + new_bytes)
+                gen = []
+                for _ in range(new_bytes):
+                    nxt = int(logits[:, -1, :256].argmax(-1).item())
+                    gen.append(nxt)
+                    logits, state = decoder.step(torch.tensor([[nxt]], dtype=torch.long, device=device), state)
+                samples.append({"prompt": prompt, "completion": bytes(gen).decode("utf-8", errors="replace")})
+        return samples
+    finally:
+        model.train(was_training)
+
+
+def run_arm(arm: ArmSpec, data_root, work_root: Path, *, smoke=False, device="cuda", story_seq_len=256, binding_hard_writes=0):
     print(f"\n=== [{arm.name}] ({arm.group}) starting on {device} ===", flush=True)
     arm_root = work_root / arm.name
     arm_root.mkdir(parents=True, exist_ok=True)
-    cal = select_story_lr(arm, data_root, work_root / "calibration", smoke=smoke, device=device)
+    cal = select_story_lr(arm, data_root, work_root / "calibration", smoke=smoke, device=device, story_seq_len=story_seq_len)
     print(f"[{arm.name}] calibrated LR = {cal['lr']} (trials={cal['trials']})", flush=True)
 
-    story_cfg = make_story_config(arm, data_root, arm_root / "stories", lr=cal["lr"], smoke=smoke, device=device)
+    story_cfg = make_story_config(arm, data_root, arm_root / "stories", lr=cal["lr"], smoke=smoke, device=device, story_seq_len=story_seq_len)
     with StoryTrainer(story_cfg, smoke=smoke) as trainer:
         params = trainer.model_parameters
         story_t0 = time.perf_counter()
@@ -264,16 +303,23 @@ def run_arm(arm: ArmSpec, data_root, work_root: Path, *, smoke=False, device="cu
         story_wall = time.perf_counter() - story_t0
         story_vram = torch.cuda.max_memory_allocated(trainer.device) if trainer.device.type == "cuda" else None
         val_256 = score_stories(trainer.model, trainer.data, "val", 32 if smoke else 256, 2 if smoke else 32, trainer.device)
+        val_512 = (
+            score_stories(trainer.model, trainer.data, "val", 48 if smoke else story_seq_len, 2 if smoke else story_cfg.data.eval_batch_size, trainer.device)
+            if story_seq_len != 256
+            else None
+        )
         long_len = 48 if smoke else 3219
         try:
             val_long = score_stories(trainer.model, trainer.data, "val", long_len, 1 if smoke else 4, trainer.device)
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
             val_long = {"nll": None, "error": "CUDA OOM"}
-        decode_stats = benchmark_decode(trainer.model, trainer.device, smoke=smoke)
+        decode_stats, eager_decoder = benchmark_decode(trainer.model, trainer.device, smoke=smoke)
+        samples = sample_story_text(trainer.model, trainer.device, smoke=smoke, decoder=eager_decoder)
         print(
-            f"[{arm.name}] TinyStories params={params} | val@256={val_256['nll']:.4f} | val@{long_len}={val_long.get('nll')} | "
-            f"decode_inductor={decode_stats['inductor']['bytes_per_sec']:.1f} B/s",
+            f"[{arm.name}] TinyStories params={params} | val@256={val_256['nll']:.4f} | "
+            + (f"val@{story_seq_len}={val_512['nll']:.4f} | " if val_512 else "")
+            + f"val@{long_len}={val_long.get('nll')} | decode_inductor={decode_stats['inductor']['bytes_per_sec']:.1f} B/s",
             flush=True,
         )
 
@@ -303,7 +349,29 @@ def run_arm(arm: ArmSpec, data_root, work_root: Path, *, smoke=False, device="cu
             bind_scores.append(compact)
             if pt.get("accuracy") is not None:
                 print(
-                    f"[{arm.name}] Binding len={length}: acc={100*pt['accuracy']:.1f}% | paired={100*pt['paired_accuracy']:.1f}%",
+                    f"[{arm.name}] Binding len={length} w={compact['writes']}: acc={100*pt['accuracy']:.1f}% | paired={100*pt['paired_accuracy']:.1f}%",
+                    flush=True,
+                )
+        if binding_hard_writes > 0:
+            hard_len = 64 if smoke else 8192
+            hard_w = min(binding_hard_writes, hard_len // 8)
+            try:
+                pt = score_binding(
+                    btrainer.model,
+                    hard_len,
+                    examples=2 if smoke else 64,
+                    seed=99231 + hard_len,
+                    device=btrainer.device,
+                    writes=hard_w,
+                )
+            except torch.cuda.OutOfMemoryError:
+                torch.cuda.empty_cache()
+                pt = {"length": hard_len, "writes": hard_w, "error": "CUDA OOM", "accuracy": None, "paired_accuracy": None}
+            compact = {k: v for k, v in pt.items() if k not in ("examples_out", "per_sequence")}
+            bind_scores.append(compact)
+            if pt.get("accuracy") is not None:
+                print(
+                    f"[{arm.name}] Binding HARD len={hard_len} w={compact['writes']}: acc={100*pt['accuracy']:.1f}% | paired={100*pt['paired_accuracy']:.1f}%",
                     flush=True,
                 )
 
@@ -318,11 +386,14 @@ def run_arm(arm: ArmSpec, data_root, work_root: Path, *, smoke=False, device="cu
         "stories": {
             "lr": cal["lr"],
             "calibration": cal["trials"],
+            "train_seq_len": 32 if smoke else story_seq_len,
             "wall_seconds": story_wall,
             "peak_vram_bytes": story_vram,
             "val_256_nll": val_256["nll"],
+            "val_train_len_nll": val_512["nll"] if val_512 else None,
             "val_long_nll": val_long.get("nll"),
             "val_long_length": long_len,
+            "samples": samples,
         },
         "decode": decode_stats,
         "binding": {
@@ -339,6 +410,8 @@ def main(argv=None):
     parser.add_argument("--data-cache", default=None)
     parser.add_argument("--arms", nargs="*", default=None)
     parser.add_argument("--deadline-seconds", type=float, default=5400.0)
+    parser.add_argument("--story-seq-len", type=int, default=256)
+    parser.add_argument("--binding-hard-writes", type=int, default=0)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args(argv)
@@ -364,7 +437,17 @@ def main(argv=None):
         if reports and (time.monotonic() - started) >= args.deadline_seconds:
             deferred.append(arm.name)
             continue
-        reports.append(run_arm(arm, data_root, out_dir, smoke=args.smoke, device=args.device))
+        reports.append(
+            run_arm(
+                arm,
+                data_root,
+                out_dir,
+                smoke=args.smoke,
+                device=args.device,
+                story_seq_len=args.story_seq_len,
+                binding_hard_writes=args.binding_hard_writes,
+            )
+        )
         payload = {
             "status": "running",
             "smoke": args.smoke,

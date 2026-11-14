@@ -78,17 +78,13 @@ def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32):
     tail = (cumulative[:, :, :, -1:] - cumulative).exp()
     bc_tail = bc * tail
     mem_decay = cumulative[:, :, :, -1].exp().unsqueeze(-2)
-    mem_local = torch.einsum("bhctv,bhctk->bhcvk", vc, kc * tail) + torch.einsum("bhctv,bhctk->bhcvk", u_local, bc_tail)
-    state_trans = torch.einsum("bhctm,bhctk->bhcmk", u_state, bc_tail)
+    mem_local = vc.transpose(-1, -2) @ (kc * tail) + u_local.transpose(-1, -2) @ bc_tail
+    state_trans = u_state.transpose(-1, -2) @ bc_tail
 
     outputs = []
     for m in range(n_chunks):
-        outputs.append(kv_local[:, :, m] + torch.einsum("bhvk,bhtk->bhtv", memory, read_proj[:, :, m]))
-        memory = (
-            memory * mem_decay[:, :, m]
-            + mem_local[:, :, m]
-            + torch.einsum("bhvm,bhmk->bhvk", memory, state_trans[:, :, m])
-        )
+        outputs.append(kv_local[:, :, m] + read_proj[:, :, m] @ memory.transpose(-1, -2))
+        memory = memory * mem_decay[:, :, m] + mem_local[:, :, m] + memory @ state_trans[:, :, m]
     out = torch.cat(outputs, dim=-2)
     return (out[:, :, :total_len] if pad else out), memory
 
