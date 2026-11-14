@@ -196,7 +196,7 @@ def test_fractal_delta_binding_recall_learning(tmp_path):
     from llm2.research.binding_data import generate as gen_binding, intervene
     from llm2.research.binding_worker import BindingTrainer
 
-    cfg = _fractal_cfg(tmp_path, tmp_path / "bind", depth=4, shared=True, d_model=48, heads=4, hidden_dim=48, dropout=0.05)
+    cfg = _fractal_cfg(tmp_path, tmp_path / "bind", depth=4, shared=True, d_model=48, heads=2, hidden_dim=48, dropout=0.05)
     cfg.research.memory_dim = 32
     cfg.data.batch_size = 16
     cfg.data.seq_len = 32

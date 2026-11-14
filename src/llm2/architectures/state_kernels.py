@@ -31,12 +31,16 @@ def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32):
     q, k, v, log_w, a, b = (x.float() for x in (q, k, v, log_w, a, b))
     batch, heads, total_len, k_dim = q.shape
     v_dim = v.shape[-1]
+    w_dim = log_w.shape[-1]
+    if w_dim not in (1, k_dim):
+        raise ValueError(f"Expected log_w trailing dim 1 or {k_dim}, got {w_dim}")
     memory = v.new_zeros(batch, heads, v_dim, k_dim) if state is None else state
     pad = (-total_len) % chunk_size
     if pad:
         q, k, v, log_w, a, b = (F.pad(x, (0, 0, 0, pad)) for x in (q, k, v, log_w, a, b))
     n_chunks = q.shape[-2] // chunk_size
-    qc, kc, wc, ac, bc = (x.reshape(batch, heads, n_chunks, chunk_size, k_dim) for x in (q, k, log_w, a, b))
+    qc, kc, ac, bc = (x.reshape(batch, heads, n_chunks, chunk_size, k_dim) for x in (q, k, a, b))
+    wc = log_w.reshape(batch, heads, n_chunks, chunk_size, w_dim)
     vc = v.reshape(batch, heads, n_chunks, chunk_size, v_dim)
 
     cumulative = wc.cumsum(-2)
@@ -44,21 +48,30 @@ def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32):
     index = torch.arange(chunk_size, device=q.device)
     strict = index[:, None] > index[None, :]
     causal = index[:, None] >= index[None, :]
-    # Invalid future differences must be masked BEFORE exp (no inf*0).
-    decay_before = previous.unsqueeze(-2) - cumulative.unsqueeze(-3)
-    decay_before = torch.where(strict[..., None], decay_before, 0.0).exp()
-    rank = (ac.unsqueeze(-2) * bc.unsqueeze(-3) * decay_before).sum(-1).masked_fill(~strict, 0.0)
-    inputs = (ac.unsqueeze(-2) * kc.unsqueeze(-3) * decay_before).sum(-1).masked_fill(~strict, 0.0)
+    if w_dim == 1:
+        cum_s = cumulative.squeeze(-1)
+        prev_s = previous.squeeze(-1)
+        # Invalid future differences must be masked BEFORE exp (no inf*0).
+        decay_before = torch.where(strict, prev_s.unsqueeze(-1) - cum_s.unsqueeze(-2), 0.0).exp().masked_fill(~strict, 0.0)
+        rank = torch.matmul(ac, bc.transpose(-1, -2)) * decay_before
+        inputs = torch.matmul(ac, kc.transpose(-1, -2)) * decay_before
+        decay_after = torch.where(causal, cum_s.unsqueeze(-1) - cum_s.unsqueeze(-2), 0.0).exp().masked_fill(~causal, 0.0)
+        reads_k = torch.matmul(qc, kc.transpose(-1, -2)) * decay_after
+        reads_b = torch.matmul(qc, bc.transpose(-1, -2)) * decay_after
+    else:
+        decay_before = previous.unsqueeze(-2) - cumulative.unsqueeze(-3)
+        decay_before = torch.where(strict[..., None], decay_before, 0.0).exp()
+        rank = (ac.unsqueeze(-2) * bc.unsqueeze(-3) * decay_before).sum(-1).masked_fill(~strict, 0.0)
+        inputs = (ac.unsqueeze(-2) * kc.unsqueeze(-3) * decay_before).sum(-1).masked_fill(~strict, 0.0)
+        decay_after = cumulative.unsqueeze(-2) - cumulative.unsqueeze(-3)
+        decay_after = torch.where(causal[..., None], decay_after, 0.0).exp()
+        reads_k = (qc.unsqueeze(-2) * kc.unsqueeze(-3) * decay_after).sum(-1).masked_fill(~causal, 0.0)
+        reads_b = (qc.unsqueeze(-2) * bc.unsqueeze(-3) * decay_after).sum(-1).masked_fill(~causal, 0.0)
 
     eye = torch.eye(chunk_size, device=q.device, dtype=q.dtype)
     rhs_combined = torch.cat((inputs @ vc, ac * previous.exp()), dim=-1)
     solved = torch.linalg.solve_triangular(eye - rank, rhs_combined, upper=False, unitriangular=True)
     u_local, u_state = solved.split((v_dim, k_dim), dim=-1)
-
-    decay_after = cumulative.unsqueeze(-2) - cumulative.unsqueeze(-3)
-    decay_after = torch.where(causal[..., None], decay_after, 0.0).exp()
-    reads_k = (qc.unsqueeze(-2) * kc.unsqueeze(-3) * decay_after).sum(-1).masked_fill(~causal, 0.0)
-    reads_b = (qc.unsqueeze(-2) * bc.unsqueeze(-3) * decay_after).sum(-1).masked_fill(~causal, 0.0)
 
     kv_local = reads_k @ vc + reads_b @ u_local
     read_proj = qc * cumulative.exp() + reads_b @ u_state
@@ -142,7 +155,7 @@ def memory_rule(rule, q, k, v, gates, state=None, *, execution="chunked", chunk_
     key = F.normalize(k.float(), dim=-1, eps=1e-6)
     query = F.normalize(q.float(), dim=-1, eps=1e-6)
     if rule == "gated_delta":
-        log_w = F.logsigmoid(gates[0].float()).expand_as(key)
+        log_w = F.logsigmoid(gates[0].float())
         beta = gates[1].float().sigmoid()
         a, b, values = -log_w.exp()*beta*key, key, beta*v.float()
     else:

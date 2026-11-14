@@ -161,7 +161,7 @@ class FractalDeltaCell(nn.Module):
             decay_logits = decay_logits + adapter.decay_bias.view(1, self.heads, 1)
             beta_logits = beta_logits + adapter.beta_bias.view(1, self.heads, 1)
 
-        log_w = F.logsigmoid(decay_logits).unsqueeze(-1).expand_as(key)
+        log_w = F.logsigmoid(decay_logits).unsqueeze(-1)
         beta = (self.beta_scale * beta_logits.sigmoid()).unsqueeze(-1)
         w = log_w.exp()
         a = -w * beta * key
@@ -207,6 +207,7 @@ class FractalDeltaMemory(Backbone):
         self.chunk_size = research.state_chunk_size
 
         d = config.d_model
+        self.assoc_val_dim = min(d, 8 if d < 32 else 24)
         self.embedding = nn.Embedding(config.vocab_size, d)
         nn.init.normal_(self.embedding.weight, std=0.02)
 
@@ -216,9 +217,9 @@ class FractalDeltaMemory(Backbone):
         nn.init.normal_(self.local_conv.weight, std=0.02)
         self.local_norm = RMSNorm(d, eps=config.norm_eps)
         self.assoc_address = nn.Linear(d, self.assoc_dim, bias=False)
-        self.assoc_value = nn.Linear(d, d, bias=False)
+        self.assoc_value = nn.Linear(d, self.assoc_val_dim, bias=False)
         self.assoc_write_gate = nn.Linear(d, 1, bias=True)
-        self.assoc_readout = nn.Linear(d, d, bias=False)
+        self.assoc_readout = nn.Linear(self.assoc_val_dim, d, bias=False)
         for layer in (self.assoc_address, self.assoc_value, self.assoc_write_gate, self.assoc_readout):
             nn.init.normal_(layer.weight, std=0.02)
         nn.init.constant_(self.assoc_write_gate.bias, -2.0)
@@ -242,7 +243,7 @@ class FractalDeltaMemory(Backbone):
         mem_shape = (b, self.heads, self.head_dim, self.head_dim)
         tail_shape = (b, d, 3)
         assoc_checks = (
-            (state.assoc_memory, (b, self.assoc_dim, d)),
+            (state.assoc_memory, (b, self.assoc_dim, self.assoc_val_dim)),
             (state.local_tail, (b, d, 2)),
         )
         for tensor, expected in assoc_checks:
@@ -319,7 +320,7 @@ class FractalDeltaMemory(Backbone):
     def state_bytes_per_sequence(self):
         d = self.config.d_model
         levels_floats = self.depth * (self.heads * self.head_dim * self.head_dim + d * 3)
-        assoc_floats = (self.assoc_dim + 2) * d
+        assoc_floats = self.assoc_dim * self.assoc_val_dim + 2 * d
         return (levels_floats + assoc_floats) * 4
 
     def analytical_cost(self, seq_len, *, include_logits=True):
@@ -328,7 +329,12 @@ class FractalDeltaMemory(Backbone):
         dh = self.head_dim
         ff = self.config.hidden_dim
         per_level = seq_len * (10 * d * d + 4 * d * h + 6 * d * ff + 6 * d * dh)
-        assoc_flops = seq_len * (4 * d * self.assoc_dim + 4 * d * d + 6 * d + 4 * self.assoc_dim * d)
+        assoc_flops = seq_len * (
+            4 * d * self.assoc_dim
+            + 4 * d * self.assoc_val_dim
+            + 6 * d
+            + 4 * self.assoc_dim * self.assoc_val_dim
+        )
         forward = (
             self.depth * per_level
             + assoc_flops
@@ -340,7 +346,7 @@ class FractalDeltaMemory(Backbone):
         c = self.config
         d, h, ff, k = c.d_model, self.heads, c.hidden_dim, 4
         embed = c.vocab_size * d
-        assoc_params = d + 3 * d + d + d * self.assoc_dim + d * d + (d + 1) + d * d + d
+        assoc_params = d + 3 * d + d + d * self.assoc_dim + d * self.assoc_val_dim + (d + 1) + self.assoc_val_dim * d + d
         cell = (
             d  # attn_norm
             + d * (k + 1)  # depthwise conv weight + bias
