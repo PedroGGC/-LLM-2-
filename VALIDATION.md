@@ -1365,3 +1365,26 @@ conferida na agregação, sem reconstrução local daquela NLL. Teste reservado 
 Compilação e aquecimento continuam sem medição isolada. Nenhuma fonte de treino mudou.
 Conferidos 86 links locais em cada checkout; artefatos do relatório espelhados,
 ZIP original rehashado e preservado, `git diff --check` limpo.
+
+---
+
+## Campanha 008 — Colab NVIDIA L4 (`BF16` + Estado `FP32`, `fractal_golden_classic_big` vs `fractal_golden_big`, 15/11/2026)
+
+- **Ambiente real verificado via Colab MCP (`https://colaboratory.googleapis.com/mcp`):** `1× NVIDIA L4` (`22,03 GiB`), Python `3.13.16`, PyTorch `2.14.1+cu130`, CUDA `13.0`, cuDNN `92800`, commit `3b178e0c10fe4f1c5508f532114942be2c22c620` (`llm-ideas`).
+- **Testes reais executados:**
+  - Local CPU: `python -m pytest -q tests/test_fractal_delta.py` -> **`29 passed in 54.59s`** (`0` pulados).
+  - Colab GPU L4: `python -m pytest -q tests/test_fractal_delta.py` -> **`29 passed in 56.59s`** (`0` pulados); `python -m pytest -q -m cuda` -> **`55 passed in 131.83s`** (`0` pulados).
+- **Resultados medidos (`--mode unified --precision bf16 --story-seq-len 512 --binding-hard-writes 64 --lr 0.003 --seeds 351`):**
+  - `fractal_golden_big:s351` (`864.869` params, `422.920` B/seq, `635,6s`, `1,72 GB` VRAM):
+    - TinyStories: `val@256 = 0.7895`, `val@512 = 0.7622`, `val@3219 = 0.7465`.
+    - Bandas: `1–256 = 0.6813`, `257–512 = 0.7628`, `513–2048 = 0.7796`, `2049+ = 1.0276`.
+    - Intervenção de prefixo: `Δ Trunc = -0.0021`, `Δ Swap = +0.0082`.
+    - Decode Inductor (CUDA Graph): `2.286,2 B/s` (`parity_max_abs_err = 1,24e-5`).
+    - Byte-Binding-v2: `@256 = 99,8% (99,8% paired)`, `@1024 = 99,8% (99,8% paired)`, `@4096 = 83,5% (72,4% paired)`, `@8192 (w=32) = 60,9% (36,8% paired)`, `@8192 (w=64) = 56,0% (34,0% paired)`.
+  - `fractal_golden_classic_big:s351` (`864.869` params, `422.920` B/seq, `642,6s`, `1,73 GB` VRAM, `fractal_leaky_budget=True`, `fractal_assoc_delta=True`):
+    - TinyStories: `val@256 = 0.7913`, `val@512 = 0.7646`, **`val@3219 = 0.7420`**.
+    - Bandas: `1–256 = 0.6868`, `257–512 = 0.7640`, **`513–2048 = 0.7694`**, **`2049+ = 0.7261`** (`-0,3015` NLL vs baseline).
+    - Intervenção de prefixo: **`Δ Trunc = +0.0053`** (positivo), `Δ Swap = +0.0079`.
+    - Decode Inductor (CUDA Graph): `2.179,5 B/s` (`parity_max_abs_err = 2,86e-5`).
+    - Byte-Binding-v2: `@256 = 99,8% (99,7% paired)`, **`@1024 = 100,0% (100,0% paired)`**, **`@4096 = 99,4% (98,2% paired)`**, **`@8192 (w=32) = 95,1% (90,4% paired)`**, **`@8192 (w=64) = 78,4% (67,9% paired)`**.
+- **Limitações registradas:** comparação em `BF16` na L4 realizada até aqui com 1 semente pareada (`seed=351`); leve trade-off de `+0,0018` em `val@256` em troca da eliminação da deriva em `2049+` (`1.0276 -> 0.7261`) e do salto de `+53,6` pp em `paired_accuracy` em `@8192 (w=32)`. Runtime L4 encerrado (`delete_runtime` + `list_runtimes == {}`) imediatamente após a coleta. Relatório completo em [IA2_CAMPAIGN_008_COLAB_L4.md](docs/results/IA2_CAMPAIGN_008_COLAB_L4.md).

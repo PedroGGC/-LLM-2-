@@ -20,6 +20,10 @@ são das fontes consultadas, não uma atribuição automática de licença ao LL
 | [Adaptive Computation Time](https://arxiv.org/abs/1603.08983) | Referência futura; nenhuma parada aprendida implementada |
 | [Deep Equilibrium Models](https://arxiv.org/abs/1909.01377) | Referência futura; não usamos solução de ponto fixo nem gradiente implícito |
 | [NCM](https://github.com/HazyResearch/ncm), [BLT](https://github.com/facebookresearch/blt), [Engram](https://github.com/deepseek-ai/Engram), [FLA](https://github.com/fla-org/flash-linear-attention) | Arquiteturas externas não reproduzidas; o banco local de protótipos não equivale a um NCM completo ou memória persistente |
+| Kohonen (1972, 1984) *Correlation Matrix Memories* / Widrow-Hoff (1960) / Personnaz et al. (1985) | Fundamentação clássica da regra Delta projetiva ($M_t = w_t(I - g_t k_t k_t^\top)M_{t-1} + g_t k_t v_t^\top$) aplicada ao canal associativo indutivo (`fractal_assoc_delta`) para eliminar crosstalk em chaves repetidas |
+| Hinton & Plaut (1987) *Using Fast Weights to Deblur Old Memories* | Fundamentação de pesos plásticos de decaimento elástico dependente de atividade ($\log w_t = \log(1 - 0{,}01 g_t)$) no canal associativo |
+| Mozer (1991) / El Hihi & Bengio (1995) *Hierarchical Recurrent Neural Networks for Long-Term Dependencies* | Fundamentação do acoplamento inverso entre taxa de escrita ($\beta_l$) e constante de tempo ($\tau_l$) nos níveis lentos da hierarquia fractal (`fractal_leaky_budget`) |
+| [Gated DeltaNet](https://arxiv.org/abs/2412.06464), [DeltaProduct](https://arxiv.org/abs/2502.10297), [Titans](https://arxiv.org/abs/2501.00663), [Huginn Recurrent Depth](https://arxiv.org/abs/2502.05171) | Literatura 2025–2026 de transição Householder/DPLR e profundidade recorrente com adaptadores por nível |
 
 Consultar as licenças completas de código/pesos/datasets novamente antes de qualquer reutilização
 futura. Os resultados publicados por esses projetos pertencem aos seus protocolos; não são

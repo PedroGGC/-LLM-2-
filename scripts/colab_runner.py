@@ -49,7 +49,7 @@ def main(argv=None):
     parser.add_argument("--seeds", nargs="*", type=int, default=[351])
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--story-seq-len", type=int, default=512)
-    parser.add_argument("--binding-hard-writes", type=int, default=96)
+    parser.add_argument("--binding-hard-writes", type=int, default=64)
     parser.add_argument("--deadline-seconds", type=float, default=5400.0)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--smoke", action="store_true")
