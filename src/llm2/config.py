@@ -183,6 +183,8 @@ class ResearchConfig:
     fractal_golden_phase: bool = False
     fractal_free_energy: bool = False
     fractal_weight_mode: str = "dense"
+    fractal_leaky_budget: bool = False
+    fractal_assoc_delta: bool = False
 
     def __post_init__(self):
         _types(self)
@@ -217,6 +219,10 @@ class ResearchConfig:
             raise ValueError("fractal_weight_mode must be dense|ternary|quaternion")
         if self.fractal_weight_mode != "dense" and self.architecture != "fractal_delta":
             raise ValueError("fractal_weight_mode requires fractal_delta")
+        if self.fractal_leaky_budget and self.architecture != "fractal_delta":
+            raise ValueError("fractal_leaky_budget requires fractal_delta")
+        if self.fractal_assoc_delta and self.architecture != "fractal_delta":
+            raise ValueError("fractal_assoc_delta requires fractal_delta")
         if self.associative_levels not in (1, 2):
             raise ValueError("associative_levels must be 1 or 2")
         if self.associative_levels != 1 and self.architecture != "transition_memory":

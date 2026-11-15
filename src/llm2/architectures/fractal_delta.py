@@ -100,48 +100,52 @@ def _init_decay_bias(heads, min_tau=4.0, max_tau=4096.0):
 
 
 def _assoc_sequential(q, k, v, prev_mem=None):
-    b, t, key_dim = q.shape
-    val_dim = v.shape[-1]
-    mem = q.new_zeros(b, key_dim, val_dim) if prev_mem is None else prev_mem
-    outputs = []
-    for idx in range(t):
-        mem = mem + k[:, idx].unsqueeze(2) * v[:, idx].unsqueeze(1)
-        outputs.append(torch.bmm(q[:, idx].unsqueeze(1), mem).squeeze(1))
-    return torch.stack(outputs, dim=1), mem.contiguous()
+    with torch.autocast(device_type=q.device.type, enabled=False):
+        q, k, v = q.float(), k.float(), v.float()
+        b, t, key_dim = q.shape
+        val_dim = v.shape[-1]
+        mem = q.new_zeros(b, key_dim, val_dim) if prev_mem is None else prev_mem.float()
+        outputs = []
+        for idx in range(t):
+            mem = mem + k[:, idx].unsqueeze(2) * v[:, idx].unsqueeze(1)
+            outputs.append(torch.bmm(q[:, idx].unsqueeze(1), mem).squeeze(1))
+        return torch.stack(outputs, dim=1), mem.contiguous()
 
 
 def _assoc_chunked(q, k, v, prev_mem=None, chunk_size=32):
-    b, t, key_dim = q.shape
-    val_dim = v.shape[-1]
-    if t <= 2 or chunk_size <= 1:
-        return _assoc_sequential(q, k, v, prev_mem)
+    with torch.autocast(device_type=q.device.type, enabled=False):
+        q, k, v = q.float(), k.float(), v.float()
+        b, t, key_dim = q.shape
+        val_dim = v.shape[-1]
+        if t <= 2 or chunk_size <= 1:
+            return _assoc_sequential(q, k, v, prev_mem)
 
-    c = min(chunk_size, t)
-    pad = (c - (t % c)) % c
-    qf, kf, vf = q, k, v
-    if pad:
-        qf = F.pad(qf, (0, 0, 0, pad))
-        kf = F.pad(kf, (0, 0, 0, pad))
-        vf = F.pad(vf, (0, 0, 0, pad))
+        c = min(chunk_size, t)
+        pad = (c - (t % c)) % c
+        qf, kf, vf = q, k, v
+        if pad:
+            qf = F.pad(qf, (0, 0, 0, pad))
+            kf = F.pad(kf, (0, 0, 0, pad))
+            vf = F.pad(vf, (0, 0, 0, pad))
 
-    n_chunks = qf.shape[1] // c
-    qc = qf.reshape(b, n_chunks, c, key_dim)
-    kc = kf.reshape(b, n_chunks, c, key_dim)
-    vc = vf.reshape(b, n_chunks, c, val_dim)
+        n_chunks = qf.shape[1] // c
+        qc = qf.reshape(b, n_chunks, c, key_dim)
+        kc = kf.reshape(b, n_chunks, c, key_dim)
+        vc = vf.reshape(b, n_chunks, c, val_dim)
 
-    upper = torch.triu(torch.ones(c, c, device=q.device, dtype=torch.bool), diagonal=1)
-    intra_scores = torch.matmul(qc, kc.transpose(-1, -2)).masked_fill(upper, 0.0)
-    intra_out = torch.matmul(intra_scores, vc)
-    chunk_deltas = torch.matmul(kc.transpose(-1, -2), vc)
+        upper = torch.triu(torch.ones(c, c, device=q.device, dtype=torch.bool), diagonal=1)
+        intra_scores = torch.matmul(qc, kc.transpose(-1, -2)).masked_fill(upper, 0.0)
+        intra_out = torch.matmul(intra_scores, vc)
+        chunk_deltas = torch.matmul(kc.transpose(-1, -2), vc)
 
-    mem = q.new_zeros(b, key_dim, val_dim) if prev_mem is None else prev_mem
-    outputs = []
-    for idx in range(n_chunks):
-        outputs.append(torch.matmul(qc[:, idx], mem) + intra_out[:, idx])
-        mem = mem + chunk_deltas[:, idx]
+        mem = q.new_zeros(b, key_dim, val_dim) if prev_mem is None else prev_mem.float()
+        outputs = []
+        for idx in range(n_chunks):
+            outputs.append(torch.matmul(qc[:, idx], mem) + intra_out[:, idx])
+            mem = mem + chunk_deltas[:, idx]
 
-    out = torch.cat(outputs, dim=1)[:, :t].contiguous()
-    return out, mem.contiguous()
+        out = torch.cat(outputs, dim=1)[:, :t].contiguous()
+        return out, mem.contiguous()
 
 
 @dataclass
@@ -205,60 +209,62 @@ class CausalLocalWindow(nn.Module):
         w_tail = w - 1
         h = self.norm(x)
         q, k, v = self.qkv(h).reshape(b, t, 3, self.heads, self.head_dim).unbind(2)
-        q, k, v = (tensor.transpose(1, 2).float() for tensor in (q, k, v))
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            q, k, v = (tensor.transpose(1, 2).float() for tensor in (q, k, v))
 
-        if state is None:
-            k_tail = q.new_zeros(b, self.heads, w_tail, self.head_dim)
-            v_tail = q.new_zeros(b, self.heads, w_tail, self.head_dim)
-            valid_tail = q.new_zeros(b, w_tail)
-        else:
-            k_tail, v_tail, valid_tail = state.k_tail, state.v_tail, state.valid_tail
+            if state is None:
+                k_tail = q.new_zeros(b, self.heads, w_tail, self.head_dim)
+                v_tail = q.new_zeros(b, self.heads, w_tail, self.head_dim)
+                valid_tail = q.new_zeros(b, w_tail)
+            else:
+                k_tail, v_tail, valid_tail = state.k_tail, state.v_tail, state.valid_tail
 
-        bias = self.rel_bias.float()
-        drop = self.dropout if self.training else 0.0
+            bias = self.rel_bias.float()
+            drop = self.dropout if self.training else 0.0
 
-        if t == 1:
-            k_full = torch.cat((k_tail, k), dim=2)
-            v_full = torch.cat((v_tail, v), dim=2)
-            valid_full = torch.cat((valid_tail, q.new_ones(b, 1)), dim=1)
-            mask = torch.where(valid_full > 0.5, 0.0, float("-inf"))[:, None, None, :] + bias[None, :, None, :]
-            attn = F.scaled_dot_product_attention(q, k_full, v_full, attn_mask=mask, dropout_p=drop)
-            next_state = LocalWindowState(
-                k_full[:, :, 1:].clone(memory_format=torch.contiguous_format),
-                v_full[:, :, 1:].clone(memory_format=torch.contiguous_format),
-                valid_full[:, 1:].clone(memory_format=torch.contiguous_format),
-            )
-            return self.out_proj(attn.transpose(1, 2).reshape(b, 1, self.win_dim).to(x.dtype)), next_state
+            if t == 1:
+                k_full = torch.cat((k_tail, k), dim=2)
+                v_full = torch.cat((v_tail, v), dim=2)
+                valid_full = torch.cat((valid_tail, q.new_ones(b, 1)), dim=1)
+                mask = torch.where(valid_full > 0.5, 0.0, float("-inf"))[:, None, None, :] + bias[None, :, None, :]
+                attn = F.scaled_dot_product_attention(q, k_full, v_full, attn_mask=mask, dropout_p=drop)
+                next_state = LocalWindowState(
+                    k_full[:, :, 1:].clone(memory_format=torch.contiguous_format),
+                    v_full[:, :, 1:].clone(memory_format=torch.contiguous_format),
+                    valid_full[:, 1:].clone(memory_format=torch.contiguous_format),
+                )
+                attn_out = attn.transpose(1, 2).reshape(b, 1, self.win_dim).to(x.dtype)
+                return self.out_proj(attn_out).to(x.dtype), next_state
 
-        chunk = max(w, 64)
-        outputs = []
-        kt, vt, val_t = k_tail, v_tail, valid_tail
-        for start in range(0, t, chunk):
-            end = min(start + chunk, t)
-            clen = end - start
-            kc = k[:, :, start:end]
-            vc = v[:, :, start:end]
-            qc = q[:, :, start:end]
-            k_ctx = torch.cat((kt, kc), dim=2)
-            v_ctx = torch.cat((vt, vc), dim=2)
-            valid_ctx = torch.cat((val_t, q.new_ones(b, clen)), dim=1)
+            chunk = max(w, 64)
+            outputs = []
+            kt, vt, val_t = k_tail, v_tail, valid_tail
+            for start in range(0, t, chunk):
+                end = min(start + chunk, t)
+                clen = end - start
+                kc = k[:, :, start:end]
+                vc = v[:, :, start:end]
+                qc = q[:, :, start:end]
+                k_ctx = torch.cat((kt, kc), dim=2)
+                v_ctx = torch.cat((vt, vc), dim=2)
+                valid_ctx = torch.cat((val_t, q.new_ones(b, clen)), dim=1)
 
-            q_pos = torch.arange(w_tail, w_tail + clen, device=x.device)[:, None]
-            k_pos = torch.arange(w_tail + clen, device=x.device)[None, :]
-            dist = q_pos - k_pos
-            in_win = (dist >= 0) & (dist < w)
-            rel = bias[:, (w - 1) - dist.clamp(0, w - 1)]
-            rel = torch.where(in_win[None, :, :], rel, float("-inf"))
-            valid_mask = torch.where(valid_ctx > 0.5, 0.0, float("-inf"))[:, None, None, :]
-            mask = valid_mask + rel[None, :, :, :]
+                q_pos = torch.arange(w_tail, w_tail + clen, device=x.device)[:, None]
+                k_pos = torch.arange(w_tail + clen, device=x.device)[None, :]
+                dist = q_pos - k_pos
+                in_win = (dist >= 0) & (dist < w)
+                rel = bias[:, (w - 1) - dist.clamp(0, w - 1)]
+                rel = torch.where(in_win[None, :, :], rel, float("-inf"))
+                valid_mask = torch.where(valid_ctx > 0.5, 0.0, float("-inf"))[:, None, None, :]
+                mask = valid_mask + rel[None, :, :, :]
 
-            outputs.append(F.scaled_dot_product_attention(qc, k_ctx, v_ctx, attn_mask=mask, dropout_p=drop))
-            kt = k_ctx[:, :, -w_tail:].clone(memory_format=torch.contiguous_format)
-            vt = v_ctx[:, :, -w_tail:].clone(memory_format=torch.contiguous_format)
-            val_t = valid_ctx[:, -w_tail:].clone(memory_format=torch.contiguous_format)
+                outputs.append(F.scaled_dot_product_attention(qc, k_ctx, v_ctx, attn_mask=mask, dropout_p=drop))
+                kt = k_ctx[:, :, -w_tail:].clone(memory_format=torch.contiguous_format)
+                vt = v_ctx[:, :, -w_tail:].clone(memory_format=torch.contiguous_format)
+                val_t = valid_ctx[:, -w_tail:].clone(memory_format=torch.contiguous_format)
 
-        out = torch.cat(outputs, dim=2).transpose(1, 2).contiguous().reshape(b, t, self.win_dim).to(x.dtype)
-        return self.out_proj(out), LocalWindowState(kt, vt, val_t)
+            out = torch.cat(outputs, dim=2).transpose(1, 2).contiguous().reshape(b, t, self.win_dim).to(x.dtype)
+        return self.out_proj(out).to(x.dtype), LocalWindowState(kt, vt, val_t)
 
     def parameter_count(self, d: int) -> int:
         return d + 3 * d * self.win_dim + self.win_dim * d + self.heads * self.window
@@ -281,6 +287,7 @@ class FractalLevelAdapter(nn.Module):
         value_residual: bool = False,
         golden_phase: bool = False,
         free_energy: bool = False,
+        leaky_budget: bool = False,
     ):
         super().__init__()
         self.attn_scale = nn.Parameter(torch.ones(d_model))
@@ -289,7 +296,8 @@ class FractalLevelAdapter(nn.Module):
         self.ffn_shift = nn.Parameter(torch.zeros(d_model))
         span = (level - 0.5 * (depth - 1)) * 0.5
         self.decay_bias = nn.Parameter(torch.full((heads,), span))
-        self.beta_bias = nn.Parameter(torch.zeros(heads))
+        beta_init = -max(0.0, span) if leaky_budget else 0.0
+        self.beta_bias = nn.Parameter(torch.full((heads,), beta_init))
         self.euler_attn = nn.Parameter(torch.ones(d_model))
         self.euler_ffn = nn.Parameter(torch.ones(d_model))
         self.anchor_gate = nn.Parameter(torch.full((d_model,), -2.0)) if level > 0 else None
@@ -396,55 +404,61 @@ class FractalDeltaCell(nn.Module):
             normed = normed + adapter.fe_err_mix.sigmoid() * err
 
         tail_width = self.conv_kernel - 1
-        norm_f = normed.float().transpose(1, 2)
-        prefix = norm_f.new_zeros(b, d, tail_width) if state is None else state.tail
-        padded = torch.cat((prefix, norm_f), dim=2)
-        new_tail = padded[:, :, -tail_width:].clone()
-        conv_out = F.conv1d(padded, self.conv.weight.float(), self.conv.bias.float(), groups=d).transpose(1, 2)
-        local = (normed.float() + conv_out).to(normed.dtype)
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            norm_f = normed.float().transpose(1, 2)
+            prefix = norm_f.new_zeros(b, d, tail_width) if state is None else state.tail
+            padded = torch.cat((prefix, norm_f), dim=2)
+            new_tail = padded[:, :, -tail_width:].clone()
+            conv_out = F.conv1d(padded, self.conv.weight.float(), self.conv.bias.float(), groups=d).transpose(1, 2)
+            local = (normed.float() + conv_out).to(normed.dtype)
 
         q, k, v = self.qkv(local).reshape(b, t, 3, self.heads, self.head_dim).unbind(2)
         q, k, v = (tensor.transpose(1, 2) for tensor in (q, k, v))
-        key = F.normalize(k.float(), dim=-1, eps=1e-6)
-        query = F.normalize(q.float(), dim=-1, eps=1e-6)
-        if self.golden_phase and self.head_dim >= 2:
-            base_pos = x.new_zeros((b,), dtype=torch.int64) if phase_pos is None else phase_pos
-            pos_steps = (base_pos[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :]).double()
-            freq = self.golden_inv_freq.double().view(1, 1, 1, -1)
-            if adapter is not None and adapter.phase_scale is not None:
-                freq = freq * adapter.phase_scale.double().view(1, self.heads, 1, 1)
-            angles = (pos_steps[:, None, :, None] * freq).remainder(2.0 * math.pi).float()
-            query = _apply_golden_phase(query, angles)
-            key = _apply_golden_phase(key, angles)
-        val_f = v.float()
-        if adapter is not None and adapter.val_mix is not None and v0 is not None:
-            mix = adapter.val_mix.float().sigmoid().view(1, self.heads, 1, 1)
-            val_f = torch.lerp(val_f, v0, mix)
+        decay_raw = self.decay(local).transpose(1, 2)
+        beta_raw = self.beta(local).transpose(1, 2)
 
-        decay_logits = self.decay(local).transpose(1, 2).float()
-        beta_logits = self.beta(local).transpose(1, 2).float()
-        if adapter is not None:
-            decay_logits = decay_logits + adapter.decay_bias.view(1, self.heads, 1)
-            beta_logits = beta_logits + adapter.beta_bias.view(1, self.heads, 1)
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            key = F.normalize(k.float(), dim=-1, eps=1e-6)
+            query = F.normalize(q.float(), dim=-1, eps=1e-6)
+            if self.golden_phase and self.head_dim >= 2:
+                base_pos = x.new_zeros((b,), dtype=torch.int64) if phase_pos is None else phase_pos
+                pos_steps = (base_pos[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :]).double()
+                freq = self.golden_inv_freq.double().view(1, 1, 1, -1)
+                if adapter is not None and adapter.phase_scale is not None:
+                    freq = freq * adapter.phase_scale.double().view(1, self.heads, 1, 1)
+                angles = (pos_steps[:, None, :, None] * freq).remainder(2.0 * math.pi).float()
+                query = _apply_golden_phase(query, angles)
+                key = _apply_golden_phase(key, angles)
+            val_f = v.float()
+            if adapter is not None and adapter.val_mix is not None and v0 is not None:
+                mix = adapter.val_mix.float().sigmoid().view(1, self.heads, 1, 1)
+                val_f = torch.lerp(val_f, v0, mix)
 
-        log_w = F.logsigmoid(decay_logits).unsqueeze(-1)
-        beta = (self.beta_scale * beta_logits.sigmoid()).unsqueeze(-1)
-        w = log_w.exp()
-        a = -w * beta * key
-        values = beta * val_f
+            decay_logits = decay_raw.float()
+            beta_logits = beta_raw.float()
+            if adapter is not None:
+                decay_logits = decay_logits + adapter.decay_bias.float().view(1, self.heads, 1)
+                beta_logits = beta_logits + adapter.beta_bias.float().view(1, self.heads, 1)
 
-        prev_mem = None if state is None else state.memory
-        if self.execution == "sequential" or t == 1:
-            y, new_mem = dplr_sequential(query, key, values, log_w, a, key, prev_mem)
-        else:
-            y, new_mem = dplr_chunked(query, key, values, log_w, a, key, prev_mem, chunk_size=self.chunk_size)
-        new_mem = new_mem.float().contiguous()
+            log_w = F.logsigmoid(decay_logits).unsqueeze(-1)
+            beta = (self.beta_scale * beta_logits.sigmoid()).unsqueeze(-1)
+            w = log_w.exp()
+            a = -w * beta * key
+            values = beta * val_f
 
-        gamma = self.head_gamma.float().view(1, self.heads, 1, self.head_dim)
-        y = y * torch.rsqrt(y.square().mean(-1, keepdim=True) + 1e-6) * gamma
-        y = y.transpose(1, 2).contiguous().reshape(b, t, d).to(x.dtype)
-        gated = y * F.silu(self.out_gate(normed))
-        attn_update = F.dropout(self.out_proj(gated), p=self.dropout, training=self.training)
+            prev_mem = None if state is None else state.memory
+            if self.execution == "sequential" or t == 1:
+                y, new_mem = dplr_sequential(query, key, values, log_w, a, key, prev_mem)
+            else:
+                y, new_mem = dplr_chunked(query, key, values, log_w, a, key, prev_mem, chunk_size=self.chunk_size)
+            new_mem = new_mem.float().contiguous()
+
+            gamma = self.head_gamma.float().view(1, self.heads, 1, self.head_dim)
+            y = y * torch.rsqrt(y.square().mean(-1, keepdim=True) + 1e-6) * gamma
+            y = y.transpose(1, 2).contiguous().reshape(b, t, d).to(x.dtype)
+
+        gated = y * F.silu(self.out_gate(normed)).to(y.dtype)
+        attn_update = F.dropout(self.out_proj(gated).to(x.dtype), p=self.dropout, training=self.training)
         if adapter is not None:
             attn_update = attn_update * adapter.euler_attn
         if surprise is not None:
@@ -454,7 +468,7 @@ class FractalDeltaCell(nn.Module):
         ffn_in = self.ffn_norm(x)
         if adapter is not None:
             ffn_in = ffn_in * adapter.ffn_scale + adapter.ffn_shift
-        ffn_update = F.dropout(self.ffn(ffn_in), p=self.dropout, training=self.training)
+        ffn_update = F.dropout(self.ffn(ffn_in).to(x.dtype), p=self.dropout, training=self.training)
         if adapter is not None:
             ffn_update = ffn_update * adapter.euler_ffn
         if surprise is not None:
@@ -483,6 +497,8 @@ class FractalDeltaMemory(Backbone):
         self.golden_phase = research.fractal_golden_phase
         self.free_energy = research.fractal_free_energy
         self.weight_mode = research.fractal_weight_mode
+        self.leaky_budget = research.fractal_leaky_budget
+        self.assoc_delta = research.fractal_assoc_delta
 
         d = config.d_model
         self.assoc_val_dim = min(d, 8 if d < 32 else 24)
@@ -518,6 +534,7 @@ class FractalDeltaMemory(Backbone):
                         value_residual=self.value_residual,
                         golden_phase=self.golden_phase,
                         free_energy=self.free_energy,
+                        leaky_budget=self.leaky_budget,
                     )
                     for lvl in range(self.depth)
                 ]
@@ -566,34 +583,51 @@ class FractalDeltaMemory(Backbone):
 
     def _run_assoc(self, raw_embed, state=None, *, execution="chunked"):
         b, t, d = raw_embed.shape
-        x_norm = self.input_norm(raw_embed).float()
-        x_norm_t = x_norm.transpose(1, 2)
-        if state is None:
-            local_tail = x_norm_t.new_zeros(b, d, 2)
-            prev_mem = None
-        else:
-            local_tail = state.local_tail
-            prev_mem = state.assoc_memory
+        with torch.autocast(device_type=raw_embed.device.type, enabled=False):
+            x_norm = self.input_norm(raw_embed).float()
+            x_norm_t = x_norm.transpose(1, 2)
+            if state is None:
+                local_tail = x_norm_t.new_zeros(b, d, 2)
+                prev_mem = None
+            else:
+                local_tail = state.local_tail
+                prev_mem = state.assoc_memory
 
-        padded = torch.cat((local_tail, x_norm_t), dim=2)
-        next_local_tail = padded[:, :, -2:].clone()
-        conv_out = F.conv1d(padded, self.local_conv.weight.float(), None, groups=d).transpose(1, 2)
-        local = self.local_norm((x_norm + conv_out).to(raw_embed.dtype)).float()
+            padded = torch.cat((local_tail, x_norm_t), dim=2)
+            next_local_tail = padded[:, :, -2:].clone()
+            conv_out = F.conv1d(padded, self.local_conv.weight.float(), None, groups=d).transpose(1, 2)
+            local = self.local_norm((x_norm + conv_out).to(raw_embed.dtype)).float()
 
-        shifted = padded[:, :, 1:-1].transpose(1, 2)
+            shifted = padded[:, :, 1:-1].transpose(1, 2)
 
-        q = F.normalize(F.linear(x_norm, self.assoc_address.weight.float()), dim=-1, eps=1e-6)
-        k_base = F.normalize(F.linear(shifted, self.assoc_address.weight.float()), dim=-1, eps=1e-6)
-        gate = torch.sigmoid(F.linear(local, self.assoc_write_gate.weight.float(), self.assoc_write_gate.bias.float()))
-        k = k_base * gate
-        v = F.linear(local, self.assoc_value.weight.float())
+            q = F.normalize(F.linear(x_norm, self.assoc_address.weight.float()), dim=-1, eps=1e-6)
+            k_base = F.normalize(F.linear(shifted, self.assoc_address.weight.float()), dim=-1, eps=1e-6)
+            gate = torch.sigmoid(F.linear(local, self.assoc_write_gate.weight.float(), self.assoc_write_gate.bias.float()))
+            v = F.linear(local, self.assoc_value.weight.float())
 
-        if execution == "sequential" or t == 1:
-            read, next_mem = _assoc_sequential(q, k, v, prev_mem)
-        else:
-            read, next_mem = _assoc_chunked(q, k, v, prev_mem, chunk_size=self.chunk_size)
+            if self.assoc_delta:
+                # Kohonen (1984) / Widrow-Hoff Delta projection rule + Hinton & Plaut (1987) elastic retention.
+                q_u = q.unsqueeze(1)
+                k_u = k_base.unsqueeze(1)
+                g_u = gate.unsqueeze(1)
+                v_u = (gate * v).unsqueeze(1)
+                log_w = torch.log1p(-0.01 * g_u)
+                a_u = -(log_w.exp() * g_u) * k_u
+                dplr_prev = None if prev_mem is None else prev_mem.transpose(-1, -2).unsqueeze(1).contiguous()
+                if execution == "sequential" or t == 1:
+                    y_u, next_dplr = dplr_sequential(q_u, k_u, v_u, log_w, a_u, k_u, dplr_prev)
+                else:
+                    y_u, next_dplr = dplr_chunked(q_u, k_u, v_u, log_w, a_u, k_u, dplr_prev, chunk_size=self.chunk_size)
+                read = y_u.squeeze(1)
+                next_mem = next_dplr.squeeze(1).transpose(-1, -2).contiguous()
+            else:
+                k = k_base * gate
+                if execution == "sequential" or t == 1:
+                    read, next_mem = _assoc_sequential(q, k, v, prev_mem)
+                else:
+                    read, next_mem = _assoc_chunked(q, k, v, prev_mem, chunk_size=self.chunk_size)
 
-        assoc_out = self.assoc_readout(read.to(raw_embed.dtype)) * self.assoc_scale
+        assoc_out = self.assoc_readout(read.to(raw_embed.dtype)).to(raw_embed.dtype) * self.assoc_scale
         return assoc_out, next_mem.float().contiguous(), next_local_tail
 
     def forward(self, input_ids, *, state=None, return_logits=True):

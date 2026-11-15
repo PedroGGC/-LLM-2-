@@ -38,6 +38,8 @@ def _fractal_cfg(
     golden_phase=False,
     free_energy=False,
     weight_mode="dense",
+    leaky_budget=False,
+    assoc_delta=False,
 ):
     return ExperimentConfig(
         model=ModelConfig(
@@ -85,26 +87,29 @@ def _fractal_cfg(
             fractal_golden_phase=golden_phase,
             fractal_free_energy=free_energy,
             fractal_weight_mode=weight_mode,
+            fractal_leaky_budget=leaky_budget,
+            fractal_assoc_delta=assoc_delta,
         ),
     )
 
 
 @pytest.mark.parametrize(
-    "shared,depth,window,value_residual,golden_phase,free_energy,weight_mode",
+    "shared,depth,window,value_residual,golden_phase,free_energy,weight_mode,leaky_budget,assoc_delta",
     [
-        (True, 4, 0, False, False, False, "dense"),
-        (False, 2, 0, False, False, False, "dense"),
-        (True, 1, 0, False, False, False, "dense"),
-        (True, 4, 8, False, False, False, "dense"),
-        (True, 4, 0, True, False, False, "dense"),
-        (True, 4, 0, True, True, False, "dense"),
-        (True, 4, 0, True, False, True, "dense"),
-        (True, 4, 0, True, False, False, "ternary"),
-        (True, 4, 0, True, False, False, "quaternion"),
+        (True, 4, 0, False, False, False, "dense", False, False),
+        (False, 2, 0, False, False, False, "dense", False, False),
+        (True, 1, 0, False, False, False, "dense", False, False),
+        (True, 4, 8, False, False, False, "dense", False, False),
+        (True, 4, 0, True, False, False, "dense", False, False),
+        (True, 4, 0, True, True, False, "dense", False, False),
+        (True, 4, 0, True, True, False, "dense", True, True),
+        (True, 4, 0, True, False, True, "dense", False, False),
+        (True, 4, 0, True, False, False, "ternary", False, False),
+        (True, 4, 0, True, False, False, "quaternion", False, False),
     ],
 )
 def test_fractal_delta_causality_streaming_chunked_vs_seq_and_params(
-    tmp_path, shared, depth, window, value_residual, golden_phase, free_energy, weight_mode
+    tmp_path, shared, depth, window, value_residual, golden_phase, free_energy, weight_mode, leaky_budget, assoc_delta
 ):
     cfg = _fractal_cfg(
         tmp_path,
@@ -117,6 +122,8 @@ def test_fractal_delta_causality_streaming_chunked_vs_seq_and_params(
         golden_phase=golden_phase,
         free_energy=free_energy,
         weight_mode=weight_mode,
+        leaky_budget=leaky_budget,
+        assoc_delta=assoc_delta,
     )
     torch.manual_seed(17)
     model = build_backbone(cfg).eval()
@@ -409,4 +416,46 @@ def test_local_transformer_decode_does_not_mutate_model(tmp_path):
     dec = _make_decode_adapter(m, span=8)
     assert type(dec.model.layers[0].attn.kernel).__name__ == "WindowSDPA"
     assert [type(layer.attn.kernel) for layer in m.layers] == orig_types
+
+
+def test_fractal_golden_classic_decode_and_bf16_autocast_invariants(tmp_path):
+    cfg = _fractal_cfg(
+        tmp_path,
+        tmp_path / "classic",
+        depth=6,
+        shared=True,
+        d_model=32,
+        heads=4,
+        hidden_dim=64,
+        value_residual=True,
+        golden_phase=True,
+        leaky_budget=True,
+        assoc_delta=True,
+    )
+    torch.manual_seed(2026)
+    model = build_backbone(cfg).eval()
+    assert model.parameter_formula() == sum(p.numel() for p in model.parameters())
+
+    # Fast levels (0, 1, 2) have beta_bias == 0; slow levels (3, 4, 5) have negative beta_bias
+    for lvl in range(3):
+        assert torch.all(model.adapters[lvl].beta_bias == 0.0)
+    for lvl in range(3, 6):
+        assert torch.all(model.adapters[lvl].beta_bias < 0.0)
+
+    ids = torch.randint(0, 256, (2, 24))
+    decoder = FractalDecode(model)
+    parity = verify_logits(decoder, ids[:, :16], ids[:, 16:])
+    assert parity["max_abs_logit_error"] < 1e-4
+
+    # Under BF16 autocast, state tensors must remain strictly float32 and valid for continuation
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        out1 = model(ids[:, :12])
+        assert out1.state.assoc_memory.dtype == torch.float32
+        assert out1.state.local_tail.dtype == torch.float32
+        for lvl_state in out1.state.levels:
+            assert lvl_state.memory.dtype == torch.float32
+            assert lvl_state.tail.dtype == torch.float32
+        out2 = model(ids[:, 12:], state=out1.state)
+        assert torch.isfinite(out2.logits.float()).all()
+
 

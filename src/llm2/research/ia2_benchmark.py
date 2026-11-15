@@ -46,6 +46,8 @@ class ArmSpec:
     fractal_golden_phase: bool = False
     fractal_free_energy: bool = False
     fractal_weight_mode: str = "dense"
+    fractal_leaky_budget: bool = False
+    fractal_assoc_delta: bool = False
     memory_dim: int = 64
     chunk_size: int = 32
 
@@ -59,6 +61,7 @@ ARMS = (
     ArmSpec("fractal_hybrid_med", "candidate", "fractal_delta", d_model=104, n_layers=4, n_heads=2, hidden_dim=112, shared=True, beta_scale=2.0, fractal_window=32),
     ArmSpec("fractal_pure_med", "candidate", "fractal_delta", d_model=104, n_layers=6, n_heads=2, hidden_dim=176, shared=True, beta_scale=2.0, fractal_value_residual=True),
     ArmSpec("fractal_golden_med", "candidate", "fractal_delta", d_model=104, n_layers=6, n_heads=2, hidden_dim=176, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True),
+    ArmSpec("fractal_golden_classic_med", "candidate", "fractal_delta", d_model=104, n_layers=6, n_heads=2, hidden_dim=176, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True),
     ArmSpec("fractal_free_energy_med", "candidate", "fractal_delta", d_model=104, n_layers=6, n_heads=2, hidden_dim=164, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_free_energy=True),
     ArmSpec("fractal_ternary_med", "candidate", "fractal_delta", d_model=104, n_layers=6, n_heads=2, hidden_dim=176, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_weight_mode="ternary"),
     ArmSpec("fractal_quat_med", "candidate", "fractal_delta", d_model=160, n_layers=6, n_heads=4, hidden_dim=432, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_weight_mode="quaternion"),
@@ -66,6 +69,7 @@ ARMS = (
     ArmSpec("fractal_delta_big", "candidate", "fractal_delta", d_model=256, n_layers=4, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, memory_dim=96, chunk_size=64),
     ArmSpec("fractal_pure_big", "candidate", "fractal_delta", d_model=256, n_layers=6, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, fractal_value_residual=True, memory_dim=96, chunk_size=64),
     ArmSpec("fractal_golden_big", "candidate", "fractal_delta", d_model=256, n_layers=6, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, memory_dim=96, chunk_size=64),
+    ArmSpec("fractal_golden_classic_big", "candidate", "fractal_delta", d_model=256, n_layers=6, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, memory_dim=96, chunk_size=64),
 )
 
 
@@ -93,10 +97,12 @@ def _build_research_config(arm: ArmSpec, *, smoke=False):
         fractal_golden_phase=arm.fractal_golden_phase,
         fractal_free_energy=arm.fractal_free_energy,
         fractal_weight_mode=arm.fractal_weight_mode,
+        fractal_leaky_budget=arm.fractal_leaky_budget,
+        fractal_assoc_delta=arm.fractal_assoc_delta,
     )
 
 
-def make_story_config(arm: ArmSpec, data_root, output_dir, *, seed=341, lr=0.001, smoke=False, device="cuda", calibration=False, story_seq_len=256):
+def make_story_config(arm: ArmSpec, data_root, output_dir, *, seed=341, lr=0.001, smoke=False, device="cuda", calibration=False, story_seq_len=256, precision="fp32"):
     steps = (2 if calibration else 4) if smoke else (400 if calibration else 6000)
     d = 16 if smoke else arm.d_model
     ff = 24 if smoke else arm.hidden_dim
@@ -129,7 +135,7 @@ def make_story_config(arm: ArmSpec, data_root, output_dir, *, seed=341, lr=0.001
         train=TrainConfig(
             seed=931 if calibration else seed,
             device=device,
-            precision="fp32",
+            precision="fp32" if device == "cpu" else precision,
             deterministic=device == "cpu",
             compile=not smoke,
             max_steps=steps,
@@ -146,7 +152,7 @@ def make_story_config(arm: ArmSpec, data_root, output_dir, *, seed=341, lr=0.001
     )
 
 
-def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, lr=0.003, smoke=False, device="cuda"):
+def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, lr=0.003, smoke=False, device="cuda", precision="fp32"):
     steps = 4 if smoke else 3000
     d = 16 if smoke else arm.d_model
     ff = 24 if smoke else arm.hidden_dim
@@ -177,7 +183,7 @@ def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, lr=0.003, smoke=F
         train=TrainConfig(
             seed=seed,
             device=device,
-            precision="fp32",
+            precision="fp32" if device == "cpu" else precision,
             deterministic=device == "cpu",
             compile=not smoke,
             max_steps=steps,
@@ -195,13 +201,13 @@ def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, lr=0.003, smoke=F
     )
 
 
-def select_story_lr(arm: ArmSpec, data_root, cal_root: Path, *, smoke=False, device="cuda", story_seq_len=256):
+def select_story_lr(arm: ArmSpec, data_root, cal_root: Path, *, smoke=False, device="cuda", story_seq_len=256, precision="fp32"):
     selection_file = cal_root / arm.name / "selection.json"
     if selection_file.exists():
         return json.loads(selection_file.read_text(encoding="utf-8"))
     trials = []
     for lr in RATES:
-        cfg = make_story_config(arm, data_root, cal_root / arm.name / str(lr), lr=lr, smoke=smoke, device=device, calibration=True, story_seq_len=story_seq_len)
+        cfg = make_story_config(arm, data_root, cal_root / arm.name / str(lr), lr=lr, smoke=smoke, device=device, calibration=True, story_seq_len=story_seq_len, precision=precision)
         with StoryTrainer(cfg, calibration=True, smoke=smoke) as trainer:
             trainer.fit()
             nll = float(trainer.evaluations[-1]["nll"])
@@ -611,20 +617,21 @@ def run_arm(
     mode="separate",
     seed=341,
     lr_override=None,
+    precision="fp32",
 ):
     arm_label = f"{arm.name}:s{seed}" if (seed != 341 or mode == "unified") else arm.name
-    print(f"\n=== [{arm_label}] ({arm.group}, mode={mode}) starting on {device} ===", flush=True)
+    print(f"\n=== [{arm_label}] ({arm.group}, mode={mode}, precision={precision}) starting on {device} ===", flush=True)
     arm_root = work_root / (f"{arm.name}_s{seed}" if (seed != 341 or mode == "unified") else arm.name)
     arm_root.mkdir(parents=True, exist_ok=True)
     if lr_override is not None:
         cal = {"lr": float(lr_override), "trials": [{"lr": float(lr_override), "nll": None, "source": "cli_override"}]}
     else:
-        cal = select_story_lr(arm, data_root, work_root / "calibration", smoke=smoke, device=device, story_seq_len=story_seq_len)
+        cal = select_story_lr(arm, data_root, work_root / "calibration", smoke=smoke, device=device, story_seq_len=story_seq_len, precision=precision)
     print(f"[{arm_label}] LR = {cal['lr']} (trials={cal['trials']})", flush=True)
 
     if mode == "unified":
         unified_cfg = make_story_config(
-            arm, data_root, arm_root / "unified", seed=seed, lr=cal["lr"], smoke=smoke, device=device, story_seq_len=story_seq_len
+            arm, data_root, arm_root / "unified", seed=seed, lr=cal["lr"], smoke=smoke, device=device, story_seq_len=story_seq_len, precision=precision
         )
         with UnifiedTrainer(unified_cfg, smoke=smoke) as trainer:
             params = trainer.model_parameters
@@ -652,6 +659,7 @@ def run_arm(
             "name": arm.name,
             "seed": seed,
             "mode": mode,
+            "precision": unified_cfg.train.precision,
             "checkpoint_sha256": ckpt_sha,
             "group": arm.group,
             "architecture": arm.architecture,
@@ -680,7 +688,7 @@ def run_arm(
         }
 
     story_cfg = make_story_config(
-        arm, data_root, arm_root / "stories", seed=seed, lr=cal["lr"], smoke=smoke, device=device, story_seq_len=story_seq_len
+        arm, data_root, arm_root / "stories", seed=seed, lr=cal["lr"], smoke=smoke, device=device, story_seq_len=story_seq_len, precision=precision
     )
     with StoryTrainer(story_cfg, smoke=smoke) as trainer:
         params = trainer.model_parameters
@@ -701,7 +709,7 @@ def run_arm(
             arm_label=arm_label,
         )
 
-    bind_cfg = make_binding_config(arm, arm_root / "binding", seed=seed, lr=cal["lr"], smoke=smoke, device=device)
+    bind_cfg = make_binding_config(arm, arm_root / "binding", seed=seed, lr=cal["lr"], smoke=smoke, device=device, precision=precision)
     with BindingTrainer(bind_cfg, smoke=smoke) as btrainer:
         bind_t0 = time.perf_counter()
         if btrainer.device.type == "cuda":
@@ -719,6 +727,7 @@ def run_arm(
         "name": arm.name,
         "seed": seed,
         "mode": mode,
+        "precision": story_cfg.train.precision,
         "checkpoint_sha256": story_ckpt_sha,
         "binding_checkpoint_sha256": bind_ckpt_sha,
         "group": arm.group,
@@ -754,6 +763,7 @@ def main(argv=None):
     parser.add_argument("--data-cache", default=None)
     parser.add_argument("--arms", nargs="*", default=None)
     parser.add_argument("--mode", choices=("separate", "unified"), default="separate")
+    parser.add_argument("--precision", choices=("fp32", "bf16"), default="fp32")
     parser.add_argument("--seeds", nargs="*", type=int, default=[341])
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--deadline-seconds", type=float, default=5400.0)
@@ -783,6 +793,7 @@ def main(argv=None):
     payload = {
         "status": "running",
         "mode": args.mode,
+        "precision": args.precision,
         "smoke": args.smoke,
         "environment": environment(),
         "wall_seconds": 0.0,
@@ -806,11 +817,13 @@ def main(argv=None):
                 mode=args.mode,
                 seed=seed,
                 lr_override=args.lr,
+                precision=args.precision,
             )
         )
         payload = {
             "status": "running",
             "mode": args.mode,
+            "precision": args.precision,
             "smoke": args.smoke,
             "environment": environment(),
             "wall_seconds": time.monotonic() - started,
