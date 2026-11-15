@@ -1388,3 +1388,14 @@ ZIP original rehashado e preservado, `git diff --check` limpo.
     - Decode Inductor (CUDA Graph): `2.179,5 B/s` (`parity_max_abs_err = 2,86e-5`).
     - Byte-Binding-v2: `@256 = 99,8% (99,7% paired)`, **`@1024 = 100,0% (100,0% paired)`**, **`@4096 = 99,4% (98,2% paired)`**, **`@8192 (w=32) = 95,1% (90,4% paired)`**, **`@8192 (w=64) = 78,4% (67,9% paired)`**.
 - **Limitações registradas:** comparação em `BF16` na L4 realizada até aqui com 1 semente pareada (`seed=351`); leve trade-off de `+0,0018` em `val@256` em troca da eliminação da deriva em `2049+` (`1.0276 -> 0.7261`) e do salto de `+53,6` pp em `paired_accuracy` em `@8192 (w=32)`. Runtime L4 encerrado (`delete_runtime` + `list_runtimes == {}`) imediatamente após a coleta. Relatório completo em [IA2_CAMPAIGN_008_COLAB_L4.md](docs/results/IA2_CAMPAIGN_008_COLAB_L4.md).
+
+### Campanha 009 — Fechamento do Passo 2 (`fractal_golden_classic_v2_big` + `--unified-curriculum`, Colab NVIDIA L4)
+- **Alterações validadas (`e1d4cd2` → `bd7bcb9`):**
+  - `fractal_assoc_val_dim` configurável (`ResearchConfig`, `FractalDeltaMemory`), novo braço `fractal_golden_classic_v2_big` (`assoc_val_dim=48`, `877,157` params, `432,136` B/seq), currículo progressivo `--unified-curriculum` (`512×16 → 1024×8 @ 3000 → 2048×4 @ 4500`, `writes=48`, `8,192` tok/step), e especialização `torch.compile(..., dynamic=False)` em `Trainer` para eliminar falha de autotune Triton simbólico no PyTorch `2.14.1+cu130` durante transições de shape (`CUDA_ERROR_ILLEGAL_ADDRESS` observada no passo `3001` antes do fix).
+- **Testes unitários e CUDA executados:**
+  - Local CPU (`tests/test_fractal_delta.py` em `e1d4cd2` e `bd7bcb9`): `exit 0` (`30 passed` na execução `e1d4cd2` e reconfirmado após fix em `bd7bcb9`).
+  - Local CPU (`tests/test_training.py` em `bd7bcb9`): `13 passed, 1 skipped` (1 teste CUDA pulado em ambiente sem GPU local).
+  - Colab `NVIDIA L4` (`pytest -q -m cuda` em `bd7bcb9`): **`55 passed, 765 deselected`** em `695.64s` (`0` falhas, `0` pulados dentro do recorte CUDA).
+- **Campanha pareada 3 seeds na L4 (`bf16`, `--mode unified`, `--unified-curriculum`, `--lr 0.003`, seeds `351, 352, 353`, `2354.5s`):**
+  - `fractal_golden_classic_v2_big`: TinyStories `val@256 = 0.9447 ± 0.0041`, `val@512 = 0.9122 ± 0.0041`, `val@3219 = 0.8823 ± 0.0043`, banda `2049+ = 0.7221 ± 0.0134`, `ΔTrunc = +0.0110 ± 0.0003`, `ΔSwap = +0.0120 ± 0.0003`, `decode_inductor = 2,215.2 ± 27.3 B/s`; Byte-Binding-v2 `8192 w=32 = 99.7% ± 0.3%` (`99.5% ± 0.4% paired`), **`HARD 8192 w=64 = 95.1% ± 1.2%` (`90.9% ± 1.4% paired`)**, peak VRAM `1.73 GB`.
+  - Ver relatório completo em [docs/results/IA2_CAMPAIGN_009_COLAB_L4.md](docs/results/IA2_CAMPAIGN_009_COLAB_L4.md).
