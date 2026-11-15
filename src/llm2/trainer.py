@@ -144,7 +144,8 @@ class Trainer:
             self._rewind_metrics()
         self.logger = MetricLogger(self.output_dir,
                                    purge_step=self.counters["step"] + 1 if resume else None)
-        self.train_model = torch.compile(self.model, backend=cfg.train.compile_backend) if cfg.train.compile else self.model
+        # Specialize discrete shapes (e.g. unified curriculum stages) to avoid PyTorch 2.14 symbolic-shape Triton autotune crashes.
+        self.train_model = torch.compile(self.model, backend=cfg.train.compile_backend, dynamic=False) if cfg.train.compile else self.model
         if self.device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(self.device)
         restore_rng(saved_rng)
