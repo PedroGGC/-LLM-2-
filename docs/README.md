@@ -5,6 +5,7 @@ fractal e a família `FractalDeltaMemory` (`fractal_golden`) estão versionadas 
 
 | Documento | Finalidade |
 |---|---|
+| [IA2 007: Validação Unificada, Bandas e Multi-Seed](results/IA2_CAMPAIGN_007_UNIFIED.md) | Resultados dos Passos 1 e 2 (`5f924e0`, 3 seeds pareadas `golden` vs `pure`, checkpoint único `75%/25%` e intervenção de prefixo distante) |
 | [Fechamento IA2 001–006 e Seleção do `fractal_golden`](results/IA2_CAMPAIGNS_001_006.md) | Resultados finais (~154k e ~865k vs 1,09M), amostras de texto, decisão de parada das comparações e filtro das tecnologias futuras |
 | [Campanha 0036](DECODE_OPTIMIZATION_RUN.md) | Perfil e compilação de um byte, KV local e global, pesos da 0035 |
 | [Campanha 0035](results/CAMPAIGN_0035.md) | Geração incremental em T4, estado/cache, paridade e controle local em histórias completas |

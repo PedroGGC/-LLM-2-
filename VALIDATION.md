@@ -1,5 +1,21 @@
 # Validação vigente — 15/11/2026
 
+## Passo 1 + Passo 2: Validação Unificada `IA2 Campaign 007` (`5f924e0`)
+
+Relatório detalhado em [docs/results/IA2_CAMPAIGN_007_UNIFIED.md](docs/results/IA2_CAMPAIGN_007_UNIFIED.md); artefato completo preservado em `llm2-ia2-campaign-007-results.zip` na raiz do workspace.
+
+Verificações reais executadas na revisão `5f924e02729839227d80cd4b71f0ab0c825a0d7e` (após correção de `phase_pos` para `int64` + redução modular `float64`, isolamento de `TransformerLM` no decode com `copy.deepcopy`, diagnóstico por bandas/intervenção de prefixo e implementação do `UnifiedStream`/`UnifiedTrainer`):
+- **CPU local (Windows, Python 3.12.2, PyTorch 2.14.1+cpu):**
+  - `python -m pytest -q tests/test_fractal_delta.py tests/test_state_recurrent.py tests/test_decode_optimization.py`: **76 passed, 6 skipped em 95,22 s** (os 6 skips são testes exclusivos CUDA, não contados como aprovação GPU local). Inclui testes para `phase_pos >= 2**25`, igualdade bitwise dos pesos compartilhados iniciais `pure` vs `golden`, causalidade e retomada estrita do `UnifiedTrainer` com `dropout=0,2` e `grad_accum_steps=2`, e não-mutação de `TransformerLM`.
+  - Smoke CPU ponta a ponta `python -m llm2.research.ia2_benchmark --smoke --device cpu --mode unified --seeds 351 352 --lr 0.003 --story-seq-len 512 --binding-hard-writes 64 --arms fractal_golden_big fractal_pure_big`: **concluído em 0,5 min** (`exit code 0`, `status="complete"`).
+- **Kaggle 2× NVIDIA Tesla T4 (Linux, Python 3.13.16, PyTorch 2.11.0+cu130, FP32, `79,1 min` totais):**
+  - Preflight pytest na T4: `python -m pytest -q tests/test_fractal_delta.py tests/test_decode_optimization.py tests/test_state_recurrent.py` → **82 passed em 302,16 s** (zero skips); `python -m pytest -q -m cuda tests/test_context_memory.py` → **2 passed, 11 deselected em 66,18 s**.
+  - Execução completa da **IA2 Campaign 007** (`status="complete"`, `deferred=[]`) em `--mode unified --lr 0.003 --story-seq-len 512 --binding-hard-writes 64` nas 3 seeds pareadas (`351`, `352`, `353`) balanceadas entre GPU 0 e GPU 1:
+    - **Comparativo pareado `fractal_golden_big` − `fractal_pure_big` (`n=3`):** TinyStories `@256` **`-0,0045 ± 0,0034`**, `@512` **`-0,0039 ± 0,0034`**, `@3219` **`-0,0034 ± 0,0037`**, banda `257-512` **`-0,0069 ± 0,0019` (3/3)**, banda `513-2048` **`-0,0061 ± 0,0019` (3/3)**, banda `2049+` `-0,0047 ± 0,0242` (NLL entre `1,0277` e `1,1261` em `4.638` B).
+    - **Intervenção causal de prefixo distante (`506` docs, `195.757` bytes em `512+`):** `delta_vs_swapped` positivo em **6/6 execuções** (`+0,0078` a `+0,0086`), enquanto `delta_vs_truncated` foi `-0,0021` a `-0,0035`.
+    - **Checkpoint único (`--mode unified`) no Byte-Binding:** `99,9%–100,0%` em `@1024`, `78,9%–99,7%` em `@4096`, caindo para `51,4%–89,8%` original (`27,4%–80,4%` pareado) em `@8192` sem currículo acima de `512` B; `CompiledDecode @7936` a `1.968,0`–`2.074,1 B/s` (`cudagraph=True`, erro máximo de paridade `1,00e-5`–`2,91e-5`).
+- **Limitações declaradas:** treino ainda em `FP32` e bytes (`257`); `BF16`, tokenização BPE e treino/currículo direto em sequências longas (`4K–8K`) dependem do Passo 3 (Colab L4/A100 em configuração).
+
 ## Campanhas IA2 001–006 e confirmação em escala do `fractal_golden` (`dd6797d`)
 
 Relatório consolidado em [docs/results/IA2_CAMPAIGNS_001_006.md](docs/results/IA2_CAMPAIGNS_001_006.md); artefatos brutos preservados em `llm2-ia2-campaign-001-results.zip` a `006` na raiz do workspace.
