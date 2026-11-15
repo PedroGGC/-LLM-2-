@@ -296,3 +296,40 @@ def test_compile_eager_contract(training_config):
     with Trainer(training_config) as trainer:
         assert math_isfinite(trainer.train_step()["training_loss"])
 
+
+def test_muon_optimizer_exact_resume_and_exclusion(training_config, tmp_path):
+    from llm2.optim import MuonAdamW
+
+    cfg = copy.deepcopy(training_config)
+    cfg.optimizer.kind = "muon"
+    cfg.model.dropout = 0.2
+    cfg.train.grad_accum_steps = 2
+    with Trainer(cfg) as uninterrupted:
+        assert isinstance(uninterrupted.optimizer, MuonAdamW)
+        muon_ids = {id(p) for g in uninterrupted.optimizer.param_groups if g.get("use_muon") for p in g["params"]}
+        assert id(uninterrupted.model.embedding.weight) not in muon_ids
+        assert id(uninterrupted.model.lm_head.weight) not in muon_ids
+        assert len(muon_ids) > 0
+        uninterrupted.fit(until_step=2)
+        ckpt = uninterrupted.last_checkpoint
+        expected_metrics = uninterrupted.train_step()
+        expected = {
+            "model": copy.deepcopy(uninterrupted.model.state_dict()),
+            "optimizer": copy.deepcopy(uninterrupted.optimizer.state_dict()),
+            "scheduler": copy.deepcopy(uninterrupted.scheduler.state_dict()),
+            "rng": capture_rng(),
+        }
+    cfg2 = copy.deepcopy(cfg)
+    cfg2.train.output_dir = str(tmp_path / "muon_resumed")
+    with Trainer(cfg2, resume=ckpt) as resumed:
+        metrics = resumed.train_step()
+        actual = {
+            "model": resumed.model.state_dict(),
+            "optimizer": resumed.optimizer.state_dict(),
+            "scheduler": resumed.scheduler.state_dict(),
+            "rng": capture_rng(),
+        }
+        assert_nested_equal(expected, actual)
+        assert metrics["training_loss"] == expected_metrics["training_loss"]
+
+

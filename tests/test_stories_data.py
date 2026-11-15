@@ -64,3 +64,38 @@ def test_bounded_prefix_download_and_wrong_range(tmp_path,monkeypatch):
     with pytest.raises(ValueError,match='range'):data.download_prefix(tmp_path/'wrong','test.txt',opener=lambda *a,**k:Wrong(raw))
     with pytest.raises(ValueError,match='checksum'):data.download_prefix(tmp_path/'bad','test.txt',opener=lambda *a,**k:Response(b'X'*len(raw)))
     assert not list((tmp_path/'bad').glob('*.part'))
+
+
+def test_bpe_stories_train_only_tokenizer_and_bpb(tmp_path):
+    from llm2.research.stories_worker import score
+    from llm2.config import ExperimentConfig, DataConfig, ModelConfig, ResearchConfig
+    from llm2.research.factory import build_backbone
+
+    splits = {
+        'train': {
+            hashlib.sha256(f'Once upon a time {i}, a little cat played happily. '.encode() * 4).hexdigest():
+            (f'Once upon a time {i}, a little cat played happily. '.encode() * 4)
+            for i in range(6)
+        },
+        'cal_val': {hashlib.sha256(b'A happy fox ran home.').hexdigest(): b'A happy fox ran home.'},
+        'val': {hashlib.sha256(b'xzqwv xzqwv xzqwv xzqwv xzqwv').hexdigest(): b'xzqwv xzqwv xzqwv xzqwv xzqwv'},
+        'test': {hashlib.sha256(b'Another story for reserved test split.').hexdigest(): b'Another story for reserved test split.'},
+    }
+    bpe = data.write_bpe_dataset(tmp_path / 'bpe_data', splits, source_fingerprint='unpinned', vocab_size=320)
+    assert bpe.schema == 'stories-doc-bpe-v1'
+    assert bpe.tokenizer.vocab.get('xzqwv') is None if hasattr(bpe.tokenizer, 'vocab') else True
+    assert bpe.tokenizer.engine.token_to_id('xzqwv') is None
+    with pytest.raises(ValueError, match='pinned'):
+        data.StoriesData(bpe.root, require_pinned=True)
+
+    cfg = ExperimentConfig(
+        model=ModelConfig(vocab_size=bpe.vocab_size, d_model=32, n_layers=2, n_heads=2, hidden_dim=64, max_seq_len=128),
+        data=DataConfig(path=str(bpe.root), seq_len=32, batch_size=2, eval_batch_size=2),
+        research=ResearchConfig(architecture='transformer'),
+    )
+    model = build_backbone(cfg).eval()
+    res = score(model, bpe, 'val', 32, 2, torch.device('cpu'))
+    expected_bytes = bpe.manifest['splits']['val']['bytes']
+    assert res['bytes'] == expected_bytes
+    assert abs(res['bits_per_byte'] - (res['nll'] * res['tokens']) / (expected_bytes * np.log(2.0))) < 1e-6
+

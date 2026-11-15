@@ -46,8 +46,11 @@ def main(argv=None):
     parser.add_argument("--arms", nargs="*", default=None)
     parser.add_argument("--mode", choices=("separate", "unified"), default="unified")
     parser.add_argument("--precision", choices=("fp32", "bf16"), default="bf16")
+    parser.add_argument("--tokenizer", choices=("byte", "bpe"), default="bpe")
+    parser.add_argument("--vocab-size", type=int, default=4096)
     parser.add_argument("--seeds", nargs="*", type=int, default=[351])
     parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--story-seq-len", type=int, default=512)
     parser.add_argument("--binding-hard-writes", type=int, default=64)
     parser.add_argument("--unified-curriculum", action="store_true")
@@ -100,6 +103,10 @@ def main(argv=None):
             args.mode,
             "--precision",
             args.precision,
+            "--tokenizer",
+            args.tokenizer,
+            "--vocab-size",
+            str(args.vocab_size),
             "--story-seq-len",
             str(args.story_seq_len),
             "--binding-hard-writes",
@@ -113,6 +120,8 @@ def main(argv=None):
         ]
         if args.lr is not None:
             cmd += ["--lr", str(args.lr)]
+        if args.steps is not None:
+            cmd += ["--steps", str(args.steps)]
         if args.unified_curriculum:
             cmd.append("--unified-curriculum")
         if args.smoke:

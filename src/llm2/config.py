@@ -55,9 +55,12 @@ class OptimizerConfig:
     eps: float = 1e-8
     warmup_steps: int = 100
     schedule_steps: int = 5000
+    kind: str = "adamw"
 
     def __post_init__(self):
         _types(self)
+        if self.kind not in ("adamw", "muon"):
+            raise ValueError("optimizer.kind must be adamw|muon")
         if self.lr <= 0 or self.eps <= 0 or self.weight_decay < 0:
             raise ValueError("invalid optimizer rates")
         if not (0 <= self.beta1 < 1 and 0 <= self.beta2 < 1 and 0 <= self.min_lr_ratio <= 1):
@@ -186,6 +189,9 @@ class ResearchConfig:
     fractal_leaky_budget: bool = False
     fractal_assoc_delta: bool = False
     fractal_assoc_val_dim: int = 0
+    fractal_prelude_coda: bool = False
+    fractal_kda: bool = False
+    fractal_assoc_multilag: bool = False
 
     def __post_init__(self):
         _types(self)
@@ -226,6 +232,12 @@ class ResearchConfig:
             raise ValueError("fractal_assoc_delta requires fractal_delta")
         if self.fractal_assoc_val_dim != 0 and (self.architecture != "fractal_delta" or self.fractal_assoc_val_dim < 4):
             raise ValueError("fractal_assoc_val_dim must be 0 or >= 4 for fractal_delta")
+        if self.fractal_prelude_coda and (self.architecture != "fractal_delta" or not self.share_scales):
+            raise ValueError("fractal_prelude_coda requires fractal_delta with share_scales=True")
+        if self.fractal_kda and self.architecture != "fractal_delta":
+            raise ValueError("fractal_kda requires fractal_delta")
+        if self.fractal_assoc_multilag and self.architecture != "fractal_delta":
+            raise ValueError("fractal_assoc_multilag requires fractal_delta")
         if self.associative_levels not in (1, 2):
             raise ValueError("associative_levels must be 1 or 2")
         if self.associative_levels != 1 and self.architecture != "transition_memory":
@@ -253,7 +265,8 @@ class ResearchConfig:
         if self.memory_pattern != "none" and (self.architecture != "state_hierarchy" or self.state_readout != "immediate"):
             raise ValueError("episodic memory requires immediate state_hierarchy")
         if (self.architecture.startswith(("state_", "context_")) or self.architecture in ("transition_memory", "fractal_delta")) and (
-            self.jepa_weight or self.mtp_weight or self.intermediate_weight or self.lm_weight != 1
+            self.jepa_weight or (self.mtp_weight and self.architecture != "fractal_delta")
+            or self.intermediate_weight or self.lm_weight != 1
             or self.latent_steps or self.latent_warmup_steps or self.detach_every
             or self.gradient_checkpointing or self.record_states or self.curriculum != "off"
             or self.context_normalization != "none" or self.cache_context_projection or self.paired_common_init
@@ -332,6 +345,8 @@ class ExperimentConfig:
                 raise ValueError("procedural curriculum requires seq_len >= 128 to preserve complete problems")
             if self.research.architecture == "transformer" and self.research.intermediate_weight:
                 raise ValueError("intermediate supervision requires a recursive backbone")
+            if self.research.fractal_prelude_coda and self.model.n_layers < 3:
+                raise ValueError("fractal_prelude_coda requires n_layers >= 3")
 
     def to_dict(self):
         raw = asdict(self)

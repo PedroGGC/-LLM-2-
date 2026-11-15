@@ -330,11 +330,19 @@ class FractalDeltaCell(nn.Module):
         self.weight_mode = research.fractal_weight_mode
         self.golden_phase = research.fractal_golden_phase
         self.free_energy = research.fractal_free_energy
+        self.kda = research.fractal_kda
 
         self.attn_norm = RMSNorm(self.d_model, eps=config.norm_eps)
         self.conv = nn.Conv1d(self.d_model, self.d_model, self.conv_kernel, groups=self.d_model)
         self.qkv = _make_linear(self.d_model, 3 * self.d_model, self.weight_mode)
-        self.decay = nn.Linear(self.d_model, self.heads, bias=True)
+        if self.kda:
+            self.decay_rank = max(16, self.heads)
+            self.decay_down = nn.Linear(self.d_model, self.decay_rank, bias=False)
+            self.decay = nn.Linear(self.decay_rank, self.d_model, bias=True)
+        else:
+            self.decay_rank = 0
+            self.decay_down = None
+            self.decay = nn.Linear(self.d_model, self.heads, bias=True)
         self.beta = nn.Linear(self.d_model, self.heads, bias=True)
         self.out_gate = _make_linear(self.d_model, self.d_model, self.weight_mode)
         self.head_gamma = nn.Parameter(torch.ones(self.d_model))
@@ -365,9 +373,15 @@ class FractalDeltaCell(nn.Module):
         nn.init.normal_(self.conv.weight, std=0.02)
         nn.init.zeros_(self.conv.bias)
         _init_linear_weight(self.qkv, 0.02)
-        nn.init.normal_(self.decay.weight, std=0.02)
-        with torch.no_grad():
-            self.decay.bias.copy_(_init_decay_bias(self.heads))
+        if self.kda:
+            nn.init.normal_(self.decay_down.weight, std=0.02)
+            nn.init.normal_(self.decay.weight, std=0.02)
+            with torch.no_grad():
+                self.decay.bias.copy_(_init_decay_bias(self.heads).repeat_interleave(self.head_dim))
+        else:
+            nn.init.normal_(self.decay.weight, std=0.02)
+            with torch.no_grad():
+                self.decay.bias.copy_(_init_decay_bias(self.heads))
         nn.init.normal_(self.beta.weight, std=0.02)
         nn.init.constant_(self.beta.bias, -1.0)
         _init_linear_weight(self.out_gate, 0.02)
@@ -414,7 +428,10 @@ class FractalDeltaCell(nn.Module):
 
         q, k, v = self.qkv(local).reshape(b, t, 3, self.heads, self.head_dim).unbind(2)
         q, k, v = (tensor.transpose(1, 2) for tensor in (q, k, v))
-        decay_raw = self.decay(local).transpose(1, 2)
+        if self.kda:
+            decay_raw = self.decay(F.silu(self.decay_down(local))).reshape(b, t, self.heads, self.head_dim).permute(0, 2, 1, 3)
+        else:
+            decay_raw = self.decay(local).transpose(1, 2)
         beta_raw = self.beta(local).transpose(1, 2)
 
         with torch.autocast(device_type=x.device.type, enabled=False):
@@ -437,10 +454,11 @@ class FractalDeltaCell(nn.Module):
             decay_logits = decay_raw.float()
             beta_logits = beta_raw.float()
             if adapter is not None:
-                decay_logits = decay_logits + adapter.decay_bias.float().view(1, self.heads, 1)
+                decay_bias = adapter.decay_bias.float().view(1, self.heads, 1, 1) if self.kda else adapter.decay_bias.float().view(1, self.heads, 1)
+                decay_logits = decay_logits + decay_bias
                 beta_logits = beta_logits + adapter.beta_bias.float().view(1, self.heads, 1)
 
-            log_w = F.logsigmoid(decay_logits).unsqueeze(-1)
+            log_w = F.logsigmoid(decay_logits) if self.kda else F.logsigmoid(decay_logits).unsqueeze(-1)
             beta = (self.beta_scale * beta_logits.sigmoid()).unsqueeze(-1)
             w = log_w.exp()
             a = -w * beta * key
@@ -499,6 +517,8 @@ class FractalDeltaMemory(Backbone):
         self.weight_mode = research.fractal_weight_mode
         self.leaky_budget = research.fractal_leaky_budget
         self.assoc_delta = research.fractal_assoc_delta
+        self.prelude_coda = research.fractal_prelude_coda
+        self.assoc_multilag = research.fractal_assoc_multilag
 
         d = config.d_model
         self.assoc_val_dim = min(d, research.fractal_assoc_val_dim) if research.fractal_assoc_val_dim > 0 else min(d, 8 if d < 32 else 24)
@@ -518,10 +538,11 @@ class FractalDeltaMemory(Backbone):
             nn.init.normal_(layer.weight, std=0.02)
         nn.init.constant_(self.assoc_write_gate.bias, -2.0)
         self.assoc_scale = nn.Parameter(torch.ones(d))
+        self.assoc_lag_mix = nn.Parameter(torch.zeros(d)) if self.assoc_multilag else None
 
         self.window_attn = CausalLocalWindow(config, research.fractal_window) if research.fractal_window > 0 else None
 
-        cell_count = 1 if self.shared else self.depth
+        cell_count = 3 if self.prelude_coda else (1 if self.shared else self.depth)
         self.cells = nn.ModuleList([FractalDeltaCell(config, research) for _ in range(cell_count)])
         self.adapters = (
             nn.ModuleList(
@@ -599,6 +620,9 @@ class FractalDeltaMemory(Backbone):
             local = self.local_norm((x_norm + conv_out).to(raw_embed.dtype)).float()
 
             shifted = padded[:, :, 1:-1].transpose(1, 2)
+            if self.assoc_lag_mix is not None:
+                lag2 = padded[:, :, :-2].transpose(1, 2)
+                shifted = torch.lerp(shifted, lag2, self.assoc_lag_mix.float().sigmoid())
 
             q = F.normalize(F.linear(x_norm, self.assoc_address.weight.float()), dim=-1, eps=1e-6)
             k_base = F.normalize(F.linear(shifted, self.assoc_address.weight.float()), dim=-1, eps=1e-6)
@@ -657,7 +681,7 @@ class FractalDeltaMemory(Backbone):
             adapter = self.adapters[level] if self.depth > 1 else None
             if adapter is not None and adapter.anchor_gate is not None:
                 x = x + adapter.anchor_gate.sigmoid() * anchor
-            cell = self.cells[0 if self.shared else level]
+            cell = self.cells[self.cell_index(level)]
             prev = None if state is None else state.levels[level]
             if self.value_residual and level == 0:
                 x, current, v0 = cell(
@@ -688,12 +712,23 @@ class FractalDeltaMemory(Backbone):
         phase_bytes = 8 if self.golden_phase else 0
         return (levels_floats + assoc_floats + win_floats) * 4 + phase_bytes
 
+    def cell_index(self, level: int) -> int:
+        if self.prelude_coda:
+            if level == 0:
+                return 0
+            if level == self.depth - 1:
+                return 2
+            return 1
+        return 0 if self.shared else level
+
     def analytical_cost(self, seq_len, *, include_logits=True):
         d = self.config.d_model
         h = self.heads
         dh = self.head_dim
         ff = self.config.hidden_dim
-        per_level = seq_len * (10 * d * d + 4 * d * h + 6 * d * ff + 6 * d * dh)
+        cell0 = self.cells[0]
+        decay_flops = (2 * d * cell0.decay_rank + 2 * cell0.decay_rank * d) if cell0.kda else 2 * d * h
+        per_level = seq_len * (10 * d * d + 2 * d * h + decay_flops + 6 * d * ff + 6 * d * dh)
         assoc_flops = seq_len * (
             4 * d * self.assoc_dim
             + 4 * d * self.assoc_val_dim
@@ -716,16 +751,18 @@ class FractalDeltaMemory(Backbone):
         c = self.config
         d, h, ff, k = c.d_model, self.heads, c.hidden_dim, 4
         embed = c.vocab_size * d
-        assoc_params = d + 3 * d + d + d * self.assoc_dim + d * self.assoc_val_dim + (d + 1) + self.assoc_val_dim * d + d
+        assoc_params = d + 3 * d + d + d * self.assoc_dim + d * self.assoc_val_dim + (d + 1) + self.assoc_val_dim * d + d + (d if self.assoc_multilag else 0)
         win_params = self.window_attn.parameter_count(d) if self.window_attn is not None else 0
         linear_scale = 4 if self.weight_mode == "quaternion" else 1
         dense_proj = (3 * d * d + 2 * d * d + 3 * d * ff) // linear_scale
-        fe_cell = (d + 2 * d * self.cells[0].fe_rank) if self.free_energy else 0
+        cell0 = self.cells[0]
+        decay_cell = (d * cell0.decay_rank + (cell0.decay_rank + 1) * d) if cell0.kda else (d + 1) * h
+        fe_cell = (d + 2 * d * cell0.fe_rank) if self.free_energy else 0
         cell = (
             d  # attn_norm
             + d * (k + 1)  # depthwise conv weight + bias
             + dense_proj  # qkv, out_gate, out_proj, SwiGLU
-            + (d + 1) * h  # decay
+            + decay_cell  # decay
             + (d + 1) * h  # beta
             + d  # head_gamma
             + d  # ffn_norm
@@ -785,7 +822,7 @@ class FractalDecode:
             adapter = self.model.adapters[level] if self.model.depth > 1 else None
             if adapter is not None and adapter.anchor_gate is not None:
                 x = x + adapter.anchor_gate.sigmoid() * anchor
-            cell = self.step_cells[0 if self.model.shared else level]
+            cell = self.step_cells[self.model.cell_index(level)]
             if self.model.value_residual and level == 0:
                 x, current, v0 = cell(
                     x, prev, adapter=adapter, return_v0=True, phase_pos=cur_phase, anchor=anchor

@@ -3,6 +3,7 @@
 import argparse
 import copy
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -21,7 +22,7 @@ from .binding_data import TASK_ID as BINDING_TASK_ID, generate as generate_bindi
 from .binding_worker import BindingTrainer, score as score_binding
 from .decode_cache import RecurrentDecode, generate, verify_logits
 from .decode_optimization import CompiledDecode, LocalTransformerDecode
-from .stories_data import StoriesData, StoryStream, prepare as prepare_stories, window as story_window
+from .stories_data import StoriesData, StoryStream, _doc_tokens, prepare as prepare_stories, prepare_bpe as prepare_bpe_stories, window as story_window
 from .stories_worker import StoryTrainer, score as score_stories
 
 
@@ -49,6 +50,12 @@ class ArmSpec:
     fractal_leaky_budget: bool = False
     fractal_assoc_delta: bool = False
     fractal_assoc_val_dim: int = 0
+    fractal_prelude_coda: bool = False
+    fractal_kda: bool = False
+    fractal_assoc_multilag: bool = False
+    optimizer_kind: str = "adamw"
+    mtp_tokens: int = 0
+    mtp_weight: float = 0.0
     memory_dim: int = 64
     chunk_size: int = 32
 
@@ -72,6 +79,14 @@ ARMS = (
     ArmSpec("fractal_golden_big", "candidate", "fractal_delta", d_model=256, n_layers=6, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, memory_dim=96, chunk_size=64),
     ArmSpec("fractal_golden_classic_big", "candidate", "fractal_delta", d_model=256, n_layers=6, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, memory_dim=96, chunk_size=64),
     ArmSpec("fractal_golden_classic_v2_big", "candidate", "fractal_delta", d_model=256, n_layers=6, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, memory_dim=96, chunk_size=64),
+    ArmSpec("transformer_bpe_med", "baseline_2x", "transformer", d_model=384, n_layers=8, n_heads=6, hidden_dim=1024),
+    ArmSpec("fractal_classic_bpe", "candidate", "fractal_delta", d_model=384, n_layers=8, n_heads=6, hidden_dim=1024, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, memory_dim=96, chunk_size=32),
+    ArmSpec("fractal_pcc_bpe", "candidate", "fractal_delta", d_model=384, n_layers=8, n_heads=6, hidden_dim=1024, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, fractal_prelude_coda=True, fractal_assoc_multilag=True, memory_dim=96, chunk_size=32),
+    ArmSpec("fractal_pcc_kda_bpe", "candidate", "fractal_delta", d_model=384, n_layers=8, n_heads=6, hidden_dim=1024, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, fractal_prelude_coda=True, fractal_kda=True, fractal_assoc_multilag=True, memory_dim=96, chunk_size=32),
+    ArmSpec("fractal_pcc_mtp_bpe", "candidate", "fractal_delta", d_model=384, n_layers=8, n_heads=6, hidden_dim=1024, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, fractal_prelude_coda=True, fractal_assoc_multilag=True, mtp_tokens=2, mtp_weight=0.25, memory_dim=96, chunk_size=32),
+    ArmSpec("fractal_pcc_muon_bpe", "candidate", "fractal_delta", d_model=384, n_layers=8, n_heads=6, hidden_dim=1024, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, fractal_prelude_coda=True, fractal_assoc_multilag=True, optimizer_kind="muon", memory_dim=96, chunk_size=32),
+    ArmSpec("fractal_pcc_mtp_muon_bpe", "candidate", "fractal_delta", d_model=384, n_layers=8, n_heads=6, hidden_dim=1024, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, fractal_prelude_coda=True, fractal_assoc_multilag=True, optimizer_kind="muon", mtp_tokens=2, mtp_weight=0.25, memory_dim=96, chunk_size=32),
+    ArmSpec("fractal_pcc_full_bpe", "candidate", "fractal_delta", d_model=384, n_layers=8, n_heads=6, hidden_dim=1024, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, fractal_prelude_coda=True, fractal_kda=True, fractal_assoc_multilag=True, optimizer_kind="muon", mtp_tokens=2, mtp_weight=0.25, memory_dim=96, chunk_size=32),
 )
 
 
@@ -102,20 +117,33 @@ def _build_research_config(arm: ArmSpec, *, smoke=False):
         fractal_leaky_budget=arm.fractal_leaky_budget,
         fractal_assoc_delta=arm.fractal_assoc_delta,
         fractal_assoc_val_dim=arm.fractal_assoc_val_dim,
+        fractal_prelude_coda=arm.fractal_prelude_coda,
+        fractal_kda=arm.fractal_kda,
+        fractal_assoc_multilag=arm.fractal_assoc_multilag,
+        mtp_tokens=arm.mtp_tokens,
+        mtp_weight=arm.mtp_weight,
     )
 
 
-def make_story_config(arm: ArmSpec, data_root, output_dir, *, seed=341, lr=0.001, smoke=False, device="cuda", calibration=False, story_seq_len=256, precision="fp32"):
-    steps = (2 if calibration else 4) if smoke else (400 if calibration else 6000)
+def _manifest_vocab_size(data_root, default: int = 257) -> int:
+    manifest = Path(data_root) / "manifest.json"
+    if manifest.is_file():
+        return int(json.loads(manifest.read_text(encoding="utf-8"))["vocab_size"])
+    return int(default)
+
+
+def make_story_config(arm: ArmSpec, data_root, output_dir, *, seed=341, lr=0.001, smoke=False, device="cuda", calibration=False, story_seq_len=256, precision="fp32", vocab_size=None, max_steps=None):
+    steps = (2 if calibration else 4) if smoke else (400 if calibration else (int(max_steps) if max_steps is not None else 6000))
     d = 16 if smoke else arm.d_model
     ff = 24 if smoke else arm.hidden_dim
     heads = 2 if smoke else arm.n_heads
     seq_len = 32 if smoke else story_seq_len
     batch = 2 if smoke else max(1, (256 * 32) // seq_len)
+    resolved_vocab = _manifest_vocab_size(data_root) if vocab_size is None else int(vocab_size)
     research = _build_research_config(arm, smoke=smoke)
     return ExperimentConfig(
         model=ModelConfig(
-            vocab_size=257,
+            vocab_size=resolved_vocab,
             d_model=d,
             n_layers=arm.n_layers,
             n_heads=heads,
@@ -130,6 +158,7 @@ def make_story_config(arm: ArmSpec, data_root, output_dir, *, seed=341, lr=0.001
             eval_batch_size=batch,
         ),
         optimizer=OptimizerConfig(
+            kind=arm.optimizer_kind,
             lr=lr,
             weight_decay=0.01,
             warmup_steps=1 if smoke else (50 if calibration else 100),
@@ -155,7 +184,7 @@ def make_story_config(arm: ArmSpec, data_root, output_dir, *, seed=341, lr=0.001
     )
 
 
-def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, lr=0.003, smoke=False, device="cuda", precision="fp32"):
+def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, lr=0.003, smoke=False, device="cuda", precision="fp32", vocab_size=257):
     steps = 4 if smoke else 3000
     d = 16 if smoke else arm.d_model
     ff = 24 if smoke else arm.hidden_dim
@@ -163,7 +192,7 @@ def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, lr=0.003, smoke=F
     research = _build_research_config(arm, smoke=smoke)
     return ExperimentConfig(
         model=ModelConfig(
-            vocab_size=257,
+            vocab_size=int(vocab_size),
             d_model=d,
             n_layers=arm.n_layers,
             n_heads=heads,
@@ -178,6 +207,7 @@ def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, lr=0.003, smoke=F
             eval_batch_size=1,
         ),
         optimizer=OptimizerConfig(
+            kind=arm.optimizer_kind,
             lr=lr,
             weight_decay=0.01,
             warmup_steps=1 if smoke else 50,
@@ -204,13 +234,13 @@ def make_binding_config(arm: ArmSpec, output_dir, *, seed=311, lr=0.003, smoke=F
     )
 
 
-def select_story_lr(arm: ArmSpec, data_root, cal_root: Path, *, smoke=False, device="cuda", story_seq_len=256, precision="fp32"):
+def select_story_lr(arm: ArmSpec, data_root, cal_root: Path, *, smoke=False, device="cuda", story_seq_len=256, precision="fp32", vocab_size=None):
     selection_file = cal_root / arm.name / "selection.json"
     if selection_file.exists():
         return json.loads(selection_file.read_text(encoding="utf-8"))
     trials = []
     for lr in RATES:
-        cfg = make_story_config(arm, data_root, cal_root / arm.name / str(lr), lr=lr, smoke=smoke, device=device, calibration=True, story_seq_len=story_seq_len, precision=precision)
+        cfg = make_story_config(arm, data_root, cal_root / arm.name / str(lr), lr=lr, smoke=smoke, device=device, calibration=True, story_seq_len=story_seq_len, precision=precision, vocab_size=vocab_size)
         with StoryTrainer(cfg, calibration=True, smoke=smoke) as trainer:
             trainer.fit()
             nll = float(trainer.evaluations[-1]["nll"])
@@ -236,9 +266,9 @@ def _make_decode_adapter(model, span):
     return RecurrentDecode(model)
 
 
-def _collate_padded(pairs, device):
+def _collate_padded(pairs, device, *, bos_id=256):
     width = max(len(x) for x, _ in pairs)
-    bx = np.full((len(pairs), width), 256, dtype=np.int64)
+    bx = np.full((len(pairs), width), bos_id, dtype=np.int64)
     by = np.full((len(pairs), width), -100, dtype=np.int64)
     for row_idx, (x, y) in enumerate(pairs):
         n = len(x)
@@ -258,13 +288,14 @@ def score_stories_bands_and_prefix(model, data, split, device, *, smoke=False):
     band_bytes = {name: 0 for name, _, _ in BANDS}
     try:
         docs = data.docs[split]
+        bos_id = data.bos_id
         with attention_context(device.type == "cpu"):
             for start in range(0, len(docs), batch_docs):
                 pairs = [
-                    story_window(data, split, idx, 0, min(docs[idx]["bytes"], max_len))
+                    story_window(data, split, idx, 0, min(_doc_tokens(docs[idx]), max_len))
                     for idx in range(start, min(start + batch_docs, len(docs)))
                 ]
-                bx, by = _collate_padded(pairs, device)
+                bx, by = _collate_padded(pairs, device, bos_id=bos_id)
                 logits = model(bx).logits.float()
                 loss = torch.nn.functional.cross_entropy(logits.transpose(1, 2), by, ignore_index=-100, reduction="none")
                 valid = by != -100
@@ -274,10 +305,10 @@ def score_stories_bands_and_prefix(model, data, split, device, *, smoke=False):
                     band_nll[name] += float(loss[mask].sum())
                     band_bytes[name] += int(mask.sum())
 
-            min_len = 48 if smoke else 640
-            mid = 12 if smoke else 256
-            eval_start = 24 if smoke else 512
-            eligible = [i for i, r in enumerate(docs) if r["bytes"] >= min_len]
+            min_len = 36 if smoke else (192 if data.vocab_size > 257 else 640)
+            mid = 12 if smoke else (64 if data.vocab_size > 257 else 256)
+            eval_start = 24 if smoke else (128 if data.vocab_size > 257 else 512)
+            eligible = [i for i, r in enumerate(docs) if _doc_tokens(r) >= min_len]
             if len(eligible) < 2:
                 prefix_report = {
                     "eligible_docs": len(eligible),
@@ -296,7 +327,7 @@ def score_stories_bands_and_prefix(model, data, split, device, *, smoke=False):
                 counts = {"full": 0, "truncated": 0, "swapped": 0}
 
                 def _flush(key, batch_pairs):
-                    bx, by = _collate_padded(batch_pairs, device)
+                    bx, by = _collate_padded(batch_pairs, device, bos_id=bos_id)
                     logits = model(bx).logits.float()
                     loss = torch.nn.functional.cross_entropy(
                         logits.transpose(1, 2), by, ignore_index=-100, reduction="none"
@@ -308,11 +339,11 @@ def score_stories_bands_and_prefix(model, data, split, device, *, smoke=False):
                 for pos_i, idx in enumerate(eligible):
                     row = docs[idx]
                     orow = docs[eligible[(pos_i + 1) % len(eligible)]]
-                    L = min(row["bytes"], max_len)
+                    L = min(_doc_tokens(row), max_len)
                     raw = np.asarray(data.arrays[split][row["offset"] : row["offset"] + L], dtype=np.int64)
                     other = np.asarray(data.arrays[split][orow["offset"] : orow["offset"] + mid], dtype=np.int64)
                     x_full = np.empty(L, dtype=np.int64)
-                    x_full[0] = 256
+                    x_full[0] = bos_id
                     x_full[1:] = raw[:-1]
                     y_full = np.full(L, -100, dtype=np.int64)
                     y_full[eval_start:] = raw[eval_start:]
@@ -320,7 +351,7 @@ def score_stories_bands_and_prefix(model, data, split, device, *, smoke=False):
 
                     trunc_len = L - mid
                     x_trunc = np.empty(trunc_len, dtype=np.int64)
-                    x_trunc[0] = 256
+                    x_trunc[0] = bos_id
                     x_trunc[1:] = raw[mid:-1]
                     y_trunc = np.full(trunc_len, -100, dtype=np.int64)
                     y_trunc[eval_start - mid :] = raw[eval_start:]
@@ -470,8 +501,9 @@ class UnifiedTrainer(Trainer):
         super().__init__(cfg, data=data, sampler_factory=lambda d, c: UnifiedStream(d, c, curriculum=unified_curriculum), **kwargs)
 
     def validate(self, max_batches=None):
+        eff_max = 2 if (self.smoke and max_batches is None) else max_batches
         story = score_stories(
-            self.model, self.data, "val", self.config.data.seq_len, self.config.data.eval_batch_size, self.device
+            self.model, self.data, "val", self.config.data.seq_len, self.config.data.eval_batch_size, self.device, max_batches=eff_max
         )
         bind = score_binding(
             self.model,
@@ -489,32 +521,34 @@ class UnifiedTrainer(Trainer):
         point = {
             "step": self.counters["step"],
             "story_nll": story["nll"],
+            "story_bpb": story["bits_per_byte"],
             "binding_acc": bind["accuracy"],
             "binding_paired_acc": bind["paired_accuracy"],
             "training_wall_seconds": self.counters["train_wall_seconds"],
         }
         self.evaluations.append(point)
         print(
-            f"[unified step={point['step']}] story_val={story['nll']:.4f} | "
+            f"[unified step={point['step']}] story_val={story['nll']:.4f} bpb={story['bits_per_byte']:.4f} | "
             f"bind_acc={100*bind['accuracy']:.1f}% | bind_paired={100*bind['paired_accuracy']:.1f}%",
             flush=True,
         )
         return {
             "validation_loss": story["nll"],
+            "bits_per_byte": story["bits_per_byte"],
             "binding_accuracy": bind["accuracy"],
             "paired_accuracy": bind["paired_accuracy"],
         }
 
 
-def benchmark_decode(model, device, *, smoke=False):
+def benchmark_decode(model, device, *, smoke=False, vocab_limit=256):
     was_training = model.training
     model.eval()
     prefix_len = 24 if smoke else 7936
     new_bytes = 8 if smoke else 256
     span = 16 if smoke else 256
     gen = torch.Generator().manual_seed(91127)
-    prefix = torch.randint(0, 256, (1, prefix_len), generator=gen).to(device)
-    cont = torch.randint(0, 256, (1, 12 if smoke else 32), generator=gen).to(device)
+    prefix = torch.randint(0, vocab_limit, (1, prefix_len), generator=gen).to(device)
+    cont = torch.randint(0, vocab_limit, (1, 12 if smoke else 32), generator=gen).to(device)
     try:
         eager = _make_decode_adapter(model, span=span)
         results = {}
@@ -545,12 +579,13 @@ def benchmark_decode(model, device, *, smoke=False):
         model.train(was_training)
 
 
-def sample_story_text(model, device, *, smoke=False, decoder=None):
+def sample_story_text(model, device, *, smoke=False, decoder=None, tokenizer=None):
     prompts = (
         "Once upon a time, a little ",
         "One day, Lily found a shiny ",
     )
-    new_bytes = 16 if smoke else 96
+    is_bpe = tokenizer is not None and tokenizer.kind == "bpe"
+    new_items = (12 if smoke else 64) if is_bpe else (16 if smoke else 96)
     was_training = model.training
     model.eval()
     try:
@@ -559,43 +594,49 @@ def sample_story_text(model, device, *, smoke=False, decoder=None):
         samples = []
         with torch.inference_mode():
             for prompt in prompts:
-                raw = list(prompt.encode("utf-8"))
+                raw = tokenizer.encode(prompt) if is_bpe else list(prompt.encode("utf-8"))
                 prefix = torch.tensor([raw], dtype=torch.long, device=device)
-                logits, state = decoder.prefill(prefix, len(raw) + new_bytes)
+                logits, state = decoder.prefill(prefix, len(raw) + new_items)
                 gen = []
-                for _ in range(new_bytes):
-                    nxt = int(logits[:, -1, :256].argmax(-1).item())
+                for _ in range(new_items):
+                    step_logits = logits[:, -1] if is_bpe else logits[:, -1, :256]
+                    nxt = int(step_logits.argmax(-1).item())
+                    if is_bpe and nxt == tokenizer.eos_id:
+                        break
                     gen.append(nxt)
                     logits, state = decoder.step(torch.tensor([[nxt]], dtype=torch.long, device=device), state)
-                samples.append({"prompt": prompt, "completion": bytes(gen).decode("utf-8", errors="replace")})
+                text = tokenizer.decode(gen) if is_bpe else bytes(gen).decode("utf-8", errors="replace")
+                samples.append({"prompt": prompt, "completion": text})
         return samples
     finally:
         model.train(was_training)
 
 
 def _evaluate_stories_and_decode(model, data, device, *, story_seq_len, eval_batch_size, smoke, arm_label):
-    val_256 = score_stories(model, data, "val", 32 if smoke else 256, 2 if smoke else 32, device)
+    max_b = 2 if smoke else None
+    val_256 = score_stories(model, data, "val", 32 if smoke else 256, 2 if smoke else 32, device, max_batches=max_b)
     val_512 = (
-        score_stories(model, data, "val", 48 if smoke else story_seq_len, 2 if smoke else eval_batch_size, device)
+        score_stories(model, data, "val", 48 if smoke else story_seq_len, 2 if smoke else eval_batch_size, device, max_batches=max_b)
         if story_seq_len != 256
         else None
     )
     long_len = 48 if smoke else 3219
     try:
-        val_long = score_stories(model, data, "val", long_len, 1 if smoke else 4, device)
+        val_long = score_stories(model, data, "val", long_len, 1 if smoke else 4, device, max_batches=max_b)
     except torch.cuda.OutOfMemoryError:
         torch.cuda.empty_cache()
-        val_long = {"nll": None, "error": "CUDA OOM"}
+        val_long = {"nll": None, "bits_per_byte": None, "error": "CUDA OOM"}
     diagnostics = score_stories_bands_and_prefix(model, data, "val", device, smoke=smoke)
-    decode_stats, eager_decoder = benchmark_decode(model, device, smoke=smoke)
-    samples = sample_story_text(model, device, smoke=smoke, decoder=eager_decoder)
+    vocab_limit = 256 if data.schema == "stories-doc-bytes-v1" else data.vocab_size
+    decode_stats, eager_decoder = benchmark_decode(model, device, smoke=smoke, vocab_limit=vocab_limit)
+    samples = sample_story_text(model, device, smoke=smoke, decoder=eager_decoder, tokenizer=data.tokenizer)
     b = diagnostics["bands"]
     p = diagnostics["prefix_intervention"]
     band_str = " ".join(f"{k}={v['nll']:.4f}" if v["nll"] is not None else f"{k}=None" for k, v in b.items())
     print(
-        f"[{arm_label}] TinyStories val@256={val_256['nll']:.4f} | "
-        + (f"val@{story_seq_len}={val_512['nll']:.4f} | " if val_512 else "")
-        + f"val@{long_len}={val_long.get('nll')} | decode_inductor={decode_stats['inductor']['bytes_per_sec']:.1f} B/s",
+        f"[{arm_label}] TinyStories val@256={val_256['nll']:.4f} (bpb={val_256['bits_per_byte']:.4f}) | "
+        + (f"val@{story_seq_len}={val_512['nll']:.4f} (bpb={val_512['bits_per_byte']:.4f}) | " if val_512 else "")
+        + f"val@{long_len}={val_long.get('nll')} | decode_inductor={decode_stats['inductor']['bytes_per_sec']:.1f} tok/s",
         flush=True,
     )
     print(
@@ -666,23 +707,26 @@ def run_arm(
     lr_override=None,
     precision="fp32",
     unified_curriculum=False,
+    max_steps=None,
 ):
     arm_label = f"{arm.name}:s{seed}" if (seed != 341 or mode == "unified") else arm.name
     print(f"\n=== [{arm_label}] ({arm.group}, mode={mode}, precision={precision}, curriculum={unified_curriculum}) starting on {device} ===", flush=True)
     arm_root = work_root / (f"{arm.name}_s{seed}" if (seed != 341 or mode == "unified") else arm.name)
     arm_root.mkdir(parents=True, exist_ok=True)
+    vocab_size = _manifest_vocab_size(data_root)
     if lr_override is not None:
         cal = {"lr": float(lr_override), "trials": [{"lr": float(lr_override), "nll": None, "source": "cli_override"}]}
     else:
-        cal = select_story_lr(arm, data_root, work_root / "calibration", smoke=smoke, device=device, story_seq_len=story_seq_len, precision=precision)
+        cal = select_story_lr(arm, data_root, work_root / "calibration", smoke=smoke, device=device, story_seq_len=story_seq_len, precision=precision, vocab_size=vocab_size)
     print(f"[{arm_label}] LR = {cal['lr']} (trials={cal['trials']})", flush=True)
 
     if mode == "unified":
         unified_cfg = make_story_config(
-            arm, data_root, arm_root / "unified", seed=seed, lr=cal["lr"], smoke=smoke, device=device, story_seq_len=story_seq_len, precision=precision
+            arm, data_root, arm_root / "unified", seed=seed, lr=cal["lr"], smoke=smoke, device=device, story_seq_len=story_seq_len, precision=precision, vocab_size=vocab_size, max_steps=max_steps
         )
         with UnifiedTrainer(unified_cfg, smoke=smoke, unified_curriculum=unified_curriculum) as trainer:
             params = trainer.model_parameters
+            total_params = trainer.total_parameters
             state_bytes = trainer.model.state_bytes_per_sequence() if hasattr(trainer.model, "state_bytes_per_sequence") else None
             t0 = time.perf_counter()
             if trainer.device.type == "cuda":
@@ -708,10 +752,13 @@ def run_arm(
             "seed": seed,
             "mode": mode,
             "precision": unified_cfg.train.precision,
+            "optimizer": arm.optimizer_kind,
+            "vocab_size": vocab_size,
             "checkpoint_sha256": ckpt_sha,
             "group": arm.group,
             "architecture": arm.architecture,
             "parameters": params,
+            "total_parameters": total_params,
             "state_bytes_per_seq": state_bytes,
             "stories": {
                 "lr": cal["lr"],
@@ -720,8 +767,11 @@ def run_arm(
                 "wall_seconds": train_wall,
                 "peak_vram_bytes": train_vram,
                 "val_256_nll": val_256["nll"],
+                "val_256_bpb": val_256["bits_per_byte"],
                 "val_train_len_nll": val_512["nll"] if val_512 else None,
+                "val_train_len_bpb": val_512["bits_per_byte"] if val_512 else None,
                 "val_long_nll": val_long.get("nll"),
+                "val_long_bpb": val_long.get("bits_per_byte"),
                 "val_long_length": long_len,
                 "bands": diagnostics["bands"],
                 "prefix_intervention": diagnostics["prefix_intervention"],
@@ -736,10 +786,11 @@ def run_arm(
         }
 
     story_cfg = make_story_config(
-        arm, data_root, arm_root / "stories", seed=seed, lr=cal["lr"], smoke=smoke, device=device, story_seq_len=story_seq_len, precision=precision
+        arm, data_root, arm_root / "stories", seed=seed, lr=cal["lr"], smoke=smoke, device=device, story_seq_len=story_seq_len, precision=precision, vocab_size=vocab_size, max_steps=max_steps
     )
     with StoryTrainer(story_cfg, smoke=smoke) as trainer:
         params = trainer.model_parameters
+        total_params = trainer.total_parameters
         story_t0 = time.perf_counter()
         if trainer.device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(trainer.device)
@@ -757,7 +808,7 @@ def run_arm(
             arm_label=arm_label,
         )
 
-    bind_cfg = make_binding_config(arm, arm_root / "binding", seed=seed, lr=cal["lr"], smoke=smoke, device=device, precision=precision)
+    bind_cfg = make_binding_config(arm, arm_root / "binding", seed=seed, lr=cal["lr"], smoke=smoke, device=device, precision=precision, vocab_size=vocab_size)
     with BindingTrainer(bind_cfg, smoke=smoke) as btrainer:
         bind_t0 = time.perf_counter()
         if btrainer.device.type == "cuda":
@@ -776,11 +827,14 @@ def run_arm(
         "seed": seed,
         "mode": mode,
         "precision": story_cfg.train.precision,
+        "optimizer": arm.optimizer_kind,
+        "vocab_size": vocab_size,
         "checkpoint_sha256": story_ckpt_sha,
         "binding_checkpoint_sha256": bind_ckpt_sha,
         "group": arm.group,
         "architecture": arm.architecture,
         "parameters": params,
+        "total_parameters": total_params,
         "state_bytes_per_seq": state_bytes,
         "stories": {
             "lr": cal["lr"],
@@ -789,8 +843,11 @@ def run_arm(
             "wall_seconds": story_wall,
             "peak_vram_bytes": story_vram,
             "val_256_nll": val_256["nll"],
+            "val_256_bpb": val_256["bits_per_byte"],
             "val_train_len_nll": val_512["nll"] if val_512 else None,
+            "val_train_len_bpb": val_512["bits_per_byte"] if val_512 else None,
             "val_long_nll": val_long.get("nll"),
+            "val_long_bpb": val_long.get("bits_per_byte"),
             "val_long_length": long_len,
             "bands": diagnostics["bands"],
             "prefix_intervention": diagnostics["prefix_intervention"],
@@ -812,8 +869,11 @@ def main(argv=None):
     parser.add_argument("--arms", nargs="*", default=None)
     parser.add_argument("--mode", choices=("separate", "unified"), default="separate")
     parser.add_argument("--precision", choices=("fp32", "bf16"), default="fp32")
+    parser.add_argument("--tokenizer", choices=("byte", "bpe"), default="byte")
+    parser.add_argument("--vocab-size", type=int, default=4096)
     parser.add_argument("--seeds", nargs="*", type=int, default=[341])
     parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--deadline-seconds", type=float, default=5400.0)
     parser.add_argument("--story-seq-len", type=int, default=256)
     parser.add_argument("--binding-hard-writes", type=int, default=0)
@@ -831,8 +891,21 @@ def main(argv=None):
     if args.data_cache is not None and (Path(args.data_cache) / "manifest.json").exists():
         data_root = Path(args.data_cache)
     elif args.smoke and args.data_cache is None:
-        from tests.test_stories_data import fixture_data
-        data_root = fixture_data(out_dir / "smoke_stories").root
+        from .stories_data import write_bpe_dataset, write_dataset
+        smoke_dir = out_dir / ("smoke_stories_bpe" if args.tokenizer == "bpe" else "smoke_stories")
+        if (smoke_dir / "manifest.json").exists():
+            data_root = smoke_dir
+        else:
+            splits = {}
+            for split in ("train", "cal_val", "val", "test"):
+                docs = [(f"{split}: Once upon a time, a little fox found a red ball. {i}\n").encode() * (i + 1) for i in range(4)]
+                splits[split] = {hashlib.sha256(raw).hexdigest(): raw for raw in docs}
+            if args.tokenizer == "bpe":
+                data_root = write_bpe_dataset(smoke_dir, splits, spec={"smoke": True}, source_fingerprint="smoke", vocab_size=min(args.vocab_size, 512)).root
+            else:
+                data_root = write_dataset(smoke_dir, splits, spec={"engineering_smoke": True}).root
+    elif args.tokenizer == "bpe":
+        data_root = prepare_bpe_stories(Path(args.data_cache or (out_dir / "stories_cache")), vocab_size=args.vocab_size).root
     else:
         data_root = prepare_stories(Path(args.data_cache or (out_dir / "stories_cache"))).root
 
@@ -843,6 +916,7 @@ def main(argv=None):
         "status": "running",
         "mode": args.mode,
         "precision": args.precision,
+        "tokenizer": args.tokenizer,
         "unified_curriculum": args.unified_curriculum,
         "smoke": args.smoke,
         "environment": environment(),
@@ -869,12 +943,14 @@ def main(argv=None):
                 lr_override=args.lr,
                 precision=args.precision,
                 unified_curriculum=args.unified_curriculum,
+                max_steps=args.steps,
             )
         )
         payload = {
             "status": "running",
             "mode": args.mode,
             "precision": args.precision,
+            "tokenizer": args.tokenizer,
             "unified_curriculum": args.unified_curriculum,
             "smoke": args.smoke,
             "environment": environment(),

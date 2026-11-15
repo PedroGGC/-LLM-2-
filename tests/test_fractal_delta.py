@@ -508,3 +508,78 @@ def test_unified_curriculum_and_custom_assoc_val_dim_exact_resume(tmp_path):
         assert res.counters["input_tokens_processed"] == full_counters["input_tokens_processed"]
 
 
+def test_fractal_pcc_kda_multilag_and_mtp(tmp_path):
+    cfg = _fractal_cfg(
+        tmp_path,
+        tmp_path / "pcc_kda",
+        depth=4,
+        d_model=64,
+        heads=4,
+        hidden_dim=128,
+        shared=True,
+        value_residual=True,
+        golden_phase=True,
+        leaky_budget=True,
+        assoc_delta=True,
+    )
+    cfg.research.fractal_prelude_coda = True
+    cfg.research.fractal_kda = True
+    cfg.research.fractal_assoc_multilag = True
+    cfg.research.mtp_tokens = 2
+    cfg.research.mtp_weight = 0.25
+
+    torch.manual_seed(41)
+    model = build_backbone(cfg).eval()
+    assert len(model.cells) == 3
+    assert [model.cell_index(i) for i in range(4)] == [0, 1, 1, 2]
+    assert model.parameter_formula() == sum(p.numel() for p in model.parameters())
+
+    ids = torch.randint(0, 257, (2, 37))
+    out_chunk = model(ids)
+    seq_model = copy.deepcopy(model)
+    for cell in seq_model.cells:
+        cell.execution = "sequential"
+    out_seq = seq_model(ids)
+    torch.testing.assert_close(out_chunk.logits, out_seq.logits, atol=5e-5, rtol=2e-4)
+    out_chunk.logits.square().mean().backward()
+    out_seq.logits.square().mean().backward()
+    for p_c, p_s in zip(model.parameters(), seq_model.parameters(), strict=True):
+        assert p_c.grad is not None and torch.isfinite(p_c.grad).all()
+        torch.testing.assert_close(p_c.grad, p_s.grad, atol=5e-5, rtol=1e-3)
+
+    decoder = FractalDecode(model)
+    parity = verify_logits(decoder, ids[:, :19], ids[:, 19:31])
+    assert parity["max_abs_logit_error"] < 1e-4
+
+    from llm2.research.factory import build_objective
+    obj = build_objective(cfg, model)
+    assert estimate_research_flops(model, obj, 32) is not None
+    batch = {"input_ids": ids[:, :-1], "targets": ids[:, 1:]}
+    obj_out = obj(model, batch)
+    assert torch.isfinite(obj_out.loss)
+    obj_out.loss.backward()
+
+
+def test_ia2_benchmark_bpe_smoke(tmp_path):
+    import json
+    from llm2.research.ia2_benchmark import main as bench_main
+
+    out_dir = tmp_path / "bpe_smoke"
+    bench_main([
+        "--output-dir", str(out_dir),
+        "--arms", "transformer_bpe_med", "fractal_pcc_full_bpe",
+        "--tokenizer", "bpe",
+        "--vocab-size", "320",
+        "--mode", "unified",
+        "--smoke",
+        "--device", "cpu",
+    ])
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["status"] == "complete" and summary["tokenizer"] == "bpe"
+    by_name = {arm["name"]: arm for arm in summary["arms"]}
+    assert set(by_name) == {"transformer_bpe_med", "fractal_pcc_full_bpe"}
+    assert by_name["fractal_pcc_full_bpe"]["optimizer"] == "muon"
+    assert by_name["fractal_pcc_full_bpe"]["stories"]["val_256_bpb"] > 0
+
+
+

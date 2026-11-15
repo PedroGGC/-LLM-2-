@@ -24,7 +24,7 @@ from .state_study import materialize
 
 
 @torch.no_grad()
-def score(model,data,split,length,batch,device):
+def score(model,data,split,length,batch,device,*,max_batches=None):
     was=model.training;model.eval();nll=0.;count=windows=batches=0;started=time.monotonic()
     try:
         with attention_context(device.type=='cpu'):
@@ -32,12 +32,23 @@ def score(model,data,split,length,batch,device):
                 logits=model(pack['input_ids']).logits;targets=pack['targets'];valid=targets!=-100
                 nll+=float(torch.nn.functional.cross_entropy(logits.float().flatten(0,1),targets.flatten(),ignore_index=-100,reduction='sum'))
                 count+=int(valid.sum());windows+=len(targets);batches+=1
+                if max_batches is not None and batches>=max_batches:break
         sync(device)
     finally:model.train(was)
-    if count!=data.manifest['splits'][split]['bytes']:raise ValueError('development coverage differs from full document bytes')
-    return {'split':split,'nll':nll/count,'bits_per_byte':nll/count/math.log(2),'byte_perplexity':math.exp(min(50,nll/count)),
-        'bytes':count,'windows':windows,'batches':batches,'documents':len(data.docs[split]),'wall_seconds':time.monotonic()-started,
-        'scope':'every selected document byte once, tails included, BOS/padding excluded, reset per window'}
+    split_rec=data.manifest['splits'][split]
+    expected_tokens=split_rec.get('tokens',split_rec['bytes'])
+    total_bytes=split_rec['bytes']
+    if max_batches is None:
+        if count!=expected_tokens:raise ValueError('development coverage differs from full document tokens/bytes')
+        eval_bytes=total_bytes
+    else:
+        eval_bytes=max(1,round(total_bytes*(count/max(1,expected_tokens))))
+    token_nll=nll/max(1,count)
+    bpb=nll/(eval_bytes*math.log(2))
+    return {'split':split,'nll':token_nll,'bits_per_byte':bpb,'byte_perplexity':math.exp(min(50,bpb*math.log(2))),
+        'token_perplexity':math.exp(min(50,token_nll)),'tokens':count,'bytes':eval_bytes,'windows':windows,'batches':batches,
+        'documents':len(data.docs[split]),'wall_seconds':time.monotonic()-started,'partial_eval':max_batches is not None,
+        'scope':'every selected document item once, tails included, BOS/padding excluded, reset per window' if max_batches is None else f'partial smoke max_batches={max_batches}'}
 
 
 class StoryTrainer(Trainer):
@@ -46,8 +57,9 @@ class StoryTrainer(Trainer):
         data=StoriesData(cfg.data.path,require_pinned=not smoke)
         super().__init__(cfg,data=data,sampler_factory=lambda d,c:StoryStream(d,c,calibration=calibration),**kwargs)
     def validate(self,max_batches=None):
+        eff_max=2 if (self.smoke and max_batches is None) else max_batches
         value=score(self.model,self.data,'cal_val' if self.calibration else 'val',self.config.data.seq_len,
-                    self.config.data.eval_batch_size,self.device)
+                    self.config.data.eval_batch_size,self.device,max_batches=eff_max)
         cost=self._evaluation_cost()
         if cost is not None:self.counters['validation_flops_estimate']+=cost*value['windows']
         self._update_experiment_wall();self._update_peak_memory()

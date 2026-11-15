@@ -112,29 +112,86 @@ def write_dataset(output,splits,*,spec=SPEC,selection=None):
     return StoriesData(output,require_pinned=False)
 
 
+def _doc_tokens(row):
+    return row.get('length', row['bytes'])
+
+
+def write_bpe_dataset(output,splits,*,spec=SPEC,source_fingerprint=PINNED_FINGERPRINT,selection=None,vocab_size=4096):
+    output=Path(output).resolve()
+    if output.exists():raise FileExistsError('immutable BPE story dataset already exists')
+    output.parent.mkdir(parents=True,exist_ok=True)
+    owners=set()
+    for split,docs in splits.items():
+        if not docs:raise ValueError('empty story split')
+        for key,raw in docs.items():
+            if key!=hashlib.sha256(raw).hexdigest() or key in owners:raise ValueError('story duplicate/leakage or content mismatch')
+            owners.add(key)
+    train_texts=[splits['train'][key].decode('utf-8',errors='strict') for key in sorted(splits['train'])]
+    tokenizer=TextTokenizer.train(train_texts,vocab_size=vocab_size)
+    bpe_spec={'name':'tinystories-bpe-doc-v1','requested_vocab_size':int(vocab_size),'base_spec':spec,'source_fingerprint':source_fingerprint}
+    manifest={'schema':'stories-doc-bpe-v1','spec':bpe_spec,'selection':selection or {},
+        'vocab_size':tokenizer.vocab_size,'bos_id':tokenizer.eos_id,'dtype':'uint32','splits':{},'files':{}}
+    with tempfile.TemporaryDirectory(prefix='.stories-bpe-',dir=output.parent) as staging:
+        stage=Path(staging);tokenizer.save(stage/'tokenizer.json')
+        for split,docs in splits.items():
+            tok_offset=0;byte_total=0;rows=[]
+            with (stage/(split+'.bin')).open('wb') as stream:
+                for key in sorted(docs):
+                    raw=docs[key];text=raw.decode('utf-8',errors='strict')
+                    ids=np.asarray(tokenizer.encode(text),dtype=np.uint32)
+                    if len(ids)<1:raise ValueError('empty BPE encoded document')
+                    stream.write(ids.tobytes())
+                    rows.append({'sha256':key,'offset':tok_offset,'length':int(len(ids)),'bytes':len(raw)})
+                    tok_offset+=int(len(ids));byte_total+=len(raw)
+            manifest['splits'][split]={'bytes':byte_total,'tokens':tok_offset,'documents':rows}
+        manifest['files']={name:sha256_file(stage/name) for name in ['tokenizer.json',*(s+'.bin' for s in splits)]}
+        write_json(stage/'manifest.json',manifest)
+        stage.rename(output)
+    return StoriesData(output,require_pinned=False)
+
+
 class StoriesData:
     def __init__(self,root,*,require_pinned=True):
         self.root=Path(root);self.manifest=json.loads((self.root/'manifest.json').read_text(encoding='utf-8'))
         self.fingerprint=sha256_file(self.root/'manifest.json');m=self.manifest
-        if m['schema']!='stories-doc-bytes-v1' or m['vocab_size']!=257 or m['bos_id']!=256 or m['dtype']!='uint8':raise ValueError('invalid stories schema')
+        schema=m['schema']
+        if schema not in ('stories-doc-bytes-v1','stories-doc-bpe-v1'):raise ValueError('invalid stories schema')
         if set(m['splits'])!={'train','cal_val','val','test'} or set(m['files'])!={'tokenizer.json','train.bin','cal_val.bin','val.bin','test.bin'}:
             raise ValueError('invalid story splits/files')
-        if require_pinned and (m['spec']!=json.loads(json.dumps(SPEC)) or self.fingerprint!=PINNED_FINGERPRINT):
-            raise ValueError('prepared stories do not match pinned content')
         self.tokenizer=TextTokenizer.load(self.root/'tokenizer.json');self.arrays={};self.docs={};owners=set()
-        if self.tokenizer.vocab_size!=257 or self.tokenizer.kind!='byte':raise ValueError('stories tokenizer mismatch')
+        if schema=='stories-doc-bytes-v1':
+            if m['vocab_size']!=257 or m['bos_id']!=256 or m['dtype']!='uint8':raise ValueError('invalid stories schema')
+            if require_pinned and (m['spec']!=json.loads(json.dumps(SPEC)) or self.fingerprint!=PINNED_FINGERPRINT):
+                raise ValueError('prepared stories do not match pinned content')
+            if self.tokenizer.vocab_size!=257 or self.tokenizer.kind!='byte':raise ValueError('stories tokenizer mismatch')
+            np_dtype=np.uint8
+        else:
+            if m['dtype']!='uint32' or m['vocab_size']!=self.tokenizer.vocab_size or m['bos_id']!=self.tokenizer.eos_id or self.tokenizer.kind!='bpe':
+                raise ValueError('invalid BPE stories schema')
+            if require_pinned and (m['spec'].get('base_spec')!=json.loads(json.dumps(SPEC)) or m['spec'].get('source_fingerprint')!=PINNED_FINGERPRINT):
+                raise ValueError('prepared BPE stories do not match pinned content')
+            np_dtype=np.uint32
+        self.schema=schema
+        self.vocab_size=int(m['vocab_size'])
+        self.bos_id=int(m['bos_id'])
         for name,digest in m['files'].items():
             if (self.root/name).is_symlink() or sha256_file(self.root/name)!=digest:raise ValueError('story artifact checksum mismatch')
         for split,record in m['splits'].items():
-            array=np.memmap(self.root/(split+'.bin'),dtype=np.uint8,mode='r')
-            if len(array)!=record['bytes']:raise ValueError('stories length mismatch')
-            offset=0
+            array=np.memmap(self.root/(split+'.bin'),dtype=np_dtype,mode='r')
+            expected_len=record.get('tokens',record['bytes'])
+            if len(array)!=expected_len:raise ValueError('stories length mismatch')
+            offset=0;byte_total=0
             for row in record['documents']:
-                key=row['sha256'];length=row['bytes']
-                if row['offset']!=offset or length<1 or key in owners or hashlib.sha256(array[offset:offset+length].tobytes()).hexdigest()!=key:
+                key=row['sha256'];length=_doc_tokens(row)
+                if row['offset']!=offset or length<1 or row['bytes']<1 or key in owners:
                     raise ValueError('story document leakage/boundary/content mismatch')
-                owners.add(key);offset+=length
-            if offset!=len(array):raise ValueError('story offsets do not cover all bytes')
+                if schema=='stories-doc-bytes-v1':
+                    if hashlib.sha256(array[offset:offset+length].tobytes()).hexdigest()!=key:
+                        raise ValueError('story document leakage/boundary/content mismatch')
+                elif int(array[offset:offset+length].max())>=self.vocab_size:
+                    raise ValueError('BPE token id exceeds vocab size')
+                owners.add(key);offset+=length;byte_total+=row['bytes']
+            if offset!=len(array) or byte_total!=record['bytes']:raise ValueError('story offsets do not cover all items')
             self.arrays[split]=array;self.docs[split]=record['documents']
 
 
@@ -151,13 +208,31 @@ def prepare(cache,*,budget=None):
     return data
 
 
+def prepare_bpe(cache,*,vocab_size=4096,budget=None):
+    cache=Path(cache).resolve();cache.mkdir(parents=True,exist_ok=True)
+    prefix=f'prepared-bpe-v{int(vocab_size)}-{SPEC_ID[:16]}'
+    for path in sorted(cache.glob(prefix+'*')):
+        if path.is_symlink():continue
+        try:
+            loaded=StoriesData(path)
+            if loaded.manifest['spec'].get('requested_vocab_size')==int(vocab_size):return loaded
+        except (OSError,ValueError,KeyError):pass
+    byte_data=prepare(cache,budget=budget)
+    splits={}
+    for split,rows in byte_data.docs.items():
+        arr=byte_data.arrays[split]
+        splits[split]={r['sha256']:arr[r['offset']:r['offset']+r['bytes']].tobytes() for r in rows}
+    return write_bpe_dataset(cache/(prefix+'-'+uuid.uuid4().hex[:8]),splits,source_fingerprint=byte_data.fingerprint,
+        selection=byte_data.manifest.get('selection'),vocab_size=vocab_size)
+
+
 def window(data,split,document,start,length):
-    row=data.docs[split][document];raw=data.arrays[split][row['offset']:row['offset']+row['bytes']]
-    if not 0<=start<len(raw):raise ValueError('invalid story target offset')
-    n=min(length,len(raw)-start);x=np.full(length,256,dtype=np.int64);y=np.full(length,-100,dtype=np.int64)
-    x[0]=256 if start==0 else int(raw[start-1])
-    if n>1:x[1:n]=raw[start:start+n-1]
-    y[:n]=raw[start:start+n]
+    row=data.docs[split][document];toks=data.arrays[split][row['offset']:row['offset']+_doc_tokens(row)]
+    if not 0<=start<len(toks):raise ValueError('invalid story target offset')
+    n=min(length,len(toks)-start);x=np.full(length,data.bos_id,dtype=np.int64);y=np.full(length,-100,dtype=np.int64)
+    x[0]=data.bos_id if start==0 else int(toks[start-1])
+    if n>1:x[1:n]=toks[start:start+n-1]
+    y[:n]=toks[start:start+n]
     return x,y
 
 
@@ -170,7 +245,7 @@ class StoryStream:
             for row in rows:
                 total+=row['bytes'];limit+=1
                 if total>=1024**2:break
-        self.rows=rows[:limit];self.weights=np.array([max(1,r['bytes']-self.length+1) for r in self.rows],dtype=np.int64)
+        self.rows=rows[:limit];self.weights=np.array([max(1,_doc_tokens(r)-self.length+1) for r in self.rows],dtype=np.int64)
         self.cumulative=self.weights.cumsum();self.rng=np.random.default_rng(cfg.train.seed+1);self.draws=0
     def next(self,device):
         numbers=self.rng.integers(0,int(self.cumulative[-1]),size=self.batch);doc=np.searchsorted(self.cumulative,numbers,side='right')
@@ -191,7 +266,7 @@ def evaluation_batches(data,split,length,batch,device):
     if split not in ('val','cal_val'):raise ValueError('reserved test cannot be evaluated in this campaign')
     current=[]
     for i,row in enumerate(data.docs[split]):
-        for start in range(0,row['bytes'],length):
+        for start in range(0,_doc_tokens(row),length):
             current.append(window(data,split,i,start,length))
             if len(current)==batch:
                 yield {'input_ids':torch.from_numpy(np.stack([x for x,y in current])).to(device),
@@ -202,9 +277,11 @@ def evaluation_batches(data,split,length,batch,device):
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--cache',required=True);a=p.parse_args();data=prepare(a.cache)
-    print('DATA',data.root,'FINGERPRINT',data.fingerprint)
-    print({k:(v['bytes'],len(v['documents'])) for k,v in data.manifest['splits'].items()})
+    p=argparse.ArgumentParser();p.add_argument('--cache',required=True);p.add_argument('--tokenizer',default='byte',choices=('byte','bpe'))
+    p.add_argument('--vocab-size',type=int,default=4096);a=p.parse_args()
+    data=prepare_bpe(a.cache,vocab_size=a.vocab_size) if a.tokenizer=='bpe' else prepare(a.cache)
+    print('DATA',data.root,'FINGERPRINT',data.fingerprint,'VOCAB',data.vocab_size)
+    print({k:(v['bytes'],v.get('tokens',v['bytes']),len(v['documents'])) for k,v in data.manifest['splits'].items()})
 
 
 if __name__=='__main__':main()
