@@ -1,6 +1,16 @@
-# Plano vigente — recorrência, hierarquia e contribuição fractal
+# Plano vigente — aperfeiçoamento e escala do `fractal_golden`
 
-Atualizado em31/10/2026. O [plano aprovado](docs/PLAN_RECURRENT_FRACTAL.md) substitui
+Atualizado em 15/11/2026. A fase de triagem e comparação de arquiteturas foi **concluída** nas campanhas **IA2 001 a 006** ([relatório consolidado e filtro tecnológico](docs/results/IA2_CAMPAIGNS_001_006.md)). O modelo **`fractal_golden`** (`FractalDeltaMemory` com 6 níveis compartilhados, `fractal_value_residual=True`, `fractal_golden_phase=True`, canal associativo lag-1 e `dplr_chunked` otimizado) venceu todas as variantes fractais em modelagem de linguagem e extrapolação (`0,7282` vs `1,4256` NLL em `3.219` bytes frente ao `transformer_big` 26% maior), mantendo `100%` (`32w`) / `99,12%` (`64w`) em `Byte-Binding @8192` e decodificação `8,0×` mais rápida (`1.861,6 B/s`).
+
+**Nova prioridade operacional:** encerrar comparações horizontais entre famílias e concentrar o desenvolvimento na melhoria direta do `fractal_golden`:
+1. **Engenharia e escala (Colab L4/A100):** validação de `BF16` com acumuladores FP32 no scan DPLR, tokenizador BPE (`vocab=8192+`), descompartilhamento seletivo (`share_scales` parcial/por blocos) e redução de VRAM de treino.
+2. **Contexto e objetivos:** currículo de comprimento de sequência e Multi-Token Prediction (MTP) sobre a base existente.
+3. **Esforço adaptativo (médio prazo):** profundidade variável ($K$ dinâmico / RINS) seguida de parada aprendida (ACT/PonderNet).
+4. **Condicionais a gargalo de escala:** controle espectral/nGPT (apenas se houver instabilidade em $L \ge 12$ / `BF16`) e Kronecker/Monarch/quantização pós-treino nas camadas densas em escalas $\ge 30\text{M}$ parâmetros.
+
+## Registro anterior — 31/10/2026 (recorrência, hierarquia e contribuição fractal)
+
+O [plano aprovado](docs/PLAN_RECURRENT_FRACTAL.md) substitui
 a prioridade anterior: selecionar uma regra recorrente viável, comparar núcleo
 simples/hierarquia independente/hierarquia compartilhada/Transformer externo.
 Fractal permanece hipótese central de organização. MC/GRM e TTT são candidatos,

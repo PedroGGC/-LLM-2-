@@ -340,7 +340,7 @@ class FractalDeltaCell(nn.Module):
 
         if self.golden_phase:
             rot_pairs = max(1, self.head_dim // 2)
-            exponents = 1.0 + 12.0 * torch.arange(rot_pairs, dtype=torch.float32) / max(1, rot_pairs)
+            exponents = 1.0 + 12.0 * torch.arange(rot_pairs, dtype=torch.float64) / max(1, rot_pairs)
             inv_freq = math.pi / (_GOLDEN_PHI ** exponents)
             self.register_buffer("golden_inv_freq", inv_freq, persistent=False)
 
@@ -408,12 +408,12 @@ class FractalDeltaCell(nn.Module):
         key = F.normalize(k.float(), dim=-1, eps=1e-6)
         query = F.normalize(q.float(), dim=-1, eps=1e-6)
         if self.golden_phase and self.head_dim >= 2:
-            base_pos = x.new_zeros((b,), dtype=torch.float32) if phase_pos is None else phase_pos
-            pos_steps = base_pos[:, None] + torch.arange(t, device=x.device, dtype=torch.float32)[None, :]
-            freq = self.golden_inv_freq.float().view(1, 1, 1, -1)
+            base_pos = x.new_zeros((b,), dtype=torch.int64) if phase_pos is None else phase_pos
+            pos_steps = (base_pos[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :]).double()
+            freq = self.golden_inv_freq.double().view(1, 1, 1, -1)
             if adapter is not None and adapter.phase_scale is not None:
-                freq = freq * adapter.phase_scale.float().view(1, self.heads, 1, 1)
-            angles = pos_steps[:, None, :, None] * freq
+                freq = freq * adapter.phase_scale.double().view(1, self.heads, 1, 1)
+            angles = (pos_steps[:, None, :, None] * freq).remainder(2.0 * math.pi).float()
             query = _apply_golden_phase(query, angles)
             key = _apply_golden_phase(key, angles)
         val_f = v.float()
@@ -557,7 +557,7 @@ class FractalDeltaMemory(Backbone):
             if (
                 state.phase_pos is None
                 or state.phase_pos.shape != (b,)
-                or state.phase_pos.dtype != torch.float32
+                or state.phase_pos.dtype != torch.int64
                 or state.phase_pos.device != x.device
             ):
                 raise ValueError("invalid fractal delta state shape/dtype")
@@ -611,11 +611,11 @@ class FractalDeltaMemory(Backbone):
         next_phase_pos = None
         if self.golden_phase:
             cur_phase = (
-                raw.new_zeros((raw.shape[0],), dtype=torch.float32)
+                raw.new_zeros((raw.shape[0],), dtype=torch.int64)
                 if state is None
                 else state.phase_pos
             )
-            next_phase_pos = (cur_phase + float(raw.shape[1])).contiguous()
+            next_phase_pos = (cur_phase + int(raw.shape[1])).contiguous()
         anchor = x
         next_levels = []
         v0 = None
@@ -651,8 +651,8 @@ class FractalDeltaMemory(Backbone):
         levels_floats = self.depth * (self.heads * self.head_dim * self.head_dim + d * 3)
         assoc_floats = self.assoc_dim * self.assoc_val_dim + 2 * d
         win_floats = self.window_attn.state_floats_per_seq() if self.window_attn is not None else 0
-        phase_floats = 1 if self.golden_phase else 0
-        return (levels_floats + assoc_floats + win_floats + phase_floats) * 4
+        phase_bytes = 8 if self.golden_phase else 0
+        return (levels_floats + assoc_floats + win_floats) * 4 + phase_bytes
 
     def analytical_cost(self, seq_len, *, include_logits=True):
         d = self.config.d_model
@@ -743,7 +743,7 @@ class FractalDecode:
         next_phase_pos = None
         if self.model.golden_phase:
             cur_phase = state.phase_pos
-            next_phase_pos = (cur_phase + 1.0).contiguous()
+            next_phase_pos = (cur_phase + 1).contiguous()
         anchor = x
         next_levels = []
         v0 = None

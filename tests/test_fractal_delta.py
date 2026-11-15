@@ -313,3 +313,100 @@ def test_fractal_delta_binding_recall_learning(tmp_path):
         print(f"UNSEEN_ACC={acc:.4f} PAIRED_ACC={paired:.4f}")
         assert acc >= 0.90 and paired >= 0.85
 
+
+def test_fractal_delta_golden_phase_high_offset_and_shared_init(tmp_path):
+    cfg_pure = _fractal_cfg(tmp_path, tmp_path / "p", depth=4, value_residual=True, golden_phase=False)
+    cfg_gold = _fractal_cfg(tmp_path, tmp_path / "g", depth=4, value_residual=True, golden_phase=True)
+    torch.manual_seed(99)
+    m_pure = build_backbone(cfg_pure).eval()
+    torch.manual_seed(99)
+    m_gold = build_backbone(cfg_gold).eval()
+    sd_p = m_pure.state_dict()
+    sd_g = m_gold.state_dict()
+    extra_keys = set(sd_g) - set(sd_p)
+    assert extra_keys == {f"adapters.{i}.phase_scale" for i in range(4)}
+    assert set(sd_p).issubset(sd_g)
+    for name in sd_p:
+        assert torch.equal(sd_p[name], sd_g[name]), f"mismatch at {name}"
+    assert m_gold.state_bytes_per_sequence() - m_pure.state_bytes_per_sequence() == 8
+
+    x = torch.randint(0, 256, (1, 10))
+    with torch.no_grad():
+        s0 = m_gold(x[:, :4]).state
+        assert s0.phase_pos.dtype == torch.int64 and int(s0.phase_pos.item()) == 4
+        # Force past FP32 exact integer limit (2**24 = 16777216)
+        high_pos = (1 << 25) + 3
+        s_chunk_init = copy.deepcopy(s0)
+        s_chunk_init.phase_pos.fill_(high_pos)
+        s_step_init = copy.deepcopy(s0)
+        s_step_init.phase_pos.fill_(high_pos)
+
+        out_chunk = m_gold(x[:, 4:], state=s_chunk_init)
+        assert int(out_chunk.state.phase_pos.item()) == high_pos + 6
+
+        step_logits = []
+        st = s_step_init
+        for t in range(4, 10):
+            o = m_gold(x[:, t : t + 1], state=st)
+            st = o.state
+            step_logits.append(o.logits)
+        out_step = torch.cat(step_logits, dim=1)
+        assert int(st.phase_pos.item()) == high_pos + 6
+        assert torch.allclose(out_chunk.logits, out_step, atol=1e-5, rtol=1e-5)
+
+
+def test_unified_trainer_causality_and_exact_resume(tmp_path):
+    from llm2.research.ia2_benchmark import ARMS, UnifiedTrainer, make_story_config
+
+    d = fixture_data(tmp_path / "stories")
+    arm = next(a for a in ARMS if a.name == "fractal_golden_big")
+
+    def _cfg(out_dir):
+        cfg = make_story_config(arm, d.root, out_dir, seed=351, lr=0.003, smoke=True, device="cpu")
+        cfg.model.dropout = 0.2
+        cfg.data.batch_size = 4
+        cfg.data.eval_batch_size = 2
+        cfg.train.max_steps = 2
+        cfg.train.checkpoint_interval = 1
+        cfg.train.eval_interval = 10
+        cfg.train.grad_accum_steps = 2
+        cfg.train.deterministic = True
+        return cfg
+
+    with UnifiedTrainer(_cfg(tmp_path / "run_full"), smoke=True) as full:
+        b0 = full.sampler.next("cpu")
+        assert b0["input_ids"].shape == (4, 32)
+        # First 3 rows are stories (dense targets), last row is binding (sparse targets with -100)
+        assert (b0["targets"][:3] != -100).any()
+        assert (b0["targets"][3] == -100).any() and (b0["targets"][3] != -100).any()
+        # Reset sampler by constructing clean full run
+    with UnifiedTrainer(_cfg(tmp_path / "full_clean"), smoke=True) as full:
+        full.fit()
+        full_state = {k: v.clone() for k, v in full.model.state_dict().items()}
+        full_sched = copy.deepcopy(full.scheduler.state_dict())
+        full_counters = dict(full.counters)
+
+    cfg_part = _cfg(tmp_path / "part")
+    cfg_part.train.max_steps = 1
+    with UnifiedTrainer(cfg_part, smoke=True) as part:
+        part.fit()
+        ckpt1 = part.last_checkpoint
+    with UnifiedTrainer(_cfg(tmp_path / "resumed"), smoke=True, resume=ckpt1) as res:
+        res.fit()
+        assert_nested_equal(full_state, res.model.state_dict())
+        assert_nested_equal(full_sched, res.scheduler.state_dict())
+        assert res.counters["step"] == full_counters["step"] == 2
+        assert res.counters["tokens_processed"] == full_counters["tokens_processed"]
+
+
+def test_local_transformer_decode_does_not_mutate_model(tmp_path):
+    from llm2.model import TransformerLM
+    from llm2.research.ia2_benchmark import _make_decode_adapter
+
+    cfg = _fractal_cfg(tmp_path, tmp_path / "tr", depth=2, d_model=16, heads=2, hidden_dim=32)
+    m = TransformerLM(cfg.model).eval()
+    orig_types = [type(layer.attn.kernel) for layer in m.layers]
+    dec = _make_decode_adapter(m, span=8)
+    assert type(dec.model.layers[0].attn.kernel).__name__ == "WindowSDPA"
+    assert [type(layer.attn.kernel) for layer in m.layers] == orig_types
+

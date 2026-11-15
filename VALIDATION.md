@@ -1,4 +1,21 @@
-# Validação vigente — 11/11/2026
+# Validação vigente — 15/11/2026
+
+## Campanhas IA2 001–006 e confirmação em escala do `fractal_golden` (`dd6797d`)
+
+Relatório consolidado em [docs/results/IA2_CAMPAIGNS_001_006.md](docs/results/IA2_CAMPAIGNS_001_006.md); artefatos brutos preservados em `llm2-ia2-campaign-001-results.zip` a `006` na raiz do workspace.
+
+Verificações reais executadas na revisão `dd6797d62083fdac801557149315c2270b54cb8f`:
+- **CPU local (Windows, Python 3.12.2, PyTorch 2.14.1+cpu):**
+  - `python -m pytest -q tests/test_state_recurrent.py tests/test_fractal_delta.py`: **60 passed, 6 skipped em 67,14 s** (os 6 skips são testes exclusivos CUDA, não contados como aprovação GPU local).
+  - Smoke ponta a ponta `python -m llm2.research.ia2_benchmark --smoke --device cpu --story-seq-len 512 --binding-hard-writes 64 --arms transformer_big fractal_delta_big fractal_pure_big fractal_golden_big`: **concluído em 49,5 s** (`exit code 0`, `status="complete"`), paridade de logits Inductor/eager entre `5,96e-8` e `8,94e-8`.
+- **Kaggle 2× NVIDIA Tesla T4 (Linux, Python 3.13.16, PyTorch 2.11.0+cu130, FP32):**
+  - Preflight pytest na T4: `python -m pytest -q tests/test_fractal_delta.py tests/test_decode_optimization.py tests/test_state_recurrent.py` → **79 passed em 304,85 s** (zero skips); `python -m pytest -q -m cuda tests/test_context_memory.py` → **2 passed, 11 deselected em 71,30 s**.
+  - Execução completa da **IA2 Campaign 006** nas duas T4 com caches Inductor/Triton isolados por GPU (`61,8 min` totais; GPU 0 em `45,3 min`, GPU 1 em `61,8 min`, `deferred_arms=[]`):
+    - `transformer_big` (`1.091.328` params): TinyStories `@256=0,7680`, `@512=0,7400`, `@3219=1,4256`; Binding `@8192` `2,5%/0,0%` (`32w`) e `1,1%/0,0%` (`64w`); Decode `@7936` `231,7 B/s` (`parity_max_abs_err=9,54e-6`).
+    - `fractal_golden_big` (`864.869` params): TinyStories `@256=0,7707`, `@512=0,7437`, `@3219=0,7282`; Binding `@8192` `100,0%/100,0%` (`32w`) e `99,51%/99,12%` (`64w`); Decode `@7936` `1.861,6 B/s` (`cudagraph=True`, `parity_max_abs_err=1,48e-5`).
+    - `fractal_pure_big` (`864.845` params): TinyStories `@256=0,7791`, `@512=0,7517`, `@3219=0,7359`; Binding `@8192` `100,0%/100,0%` (`32w`) e `99,80%/99,61%` (`64w`); Decode `@7936` `1.926,2 B/s` (`cudagraph=True`, `parity_max_abs_err=9,54e-6`).
+    - `fractal_delta_big` (`861.225` params): TinyStories `@256=0,7822`, `@512=0,7543`, `@3219=0,7375`; Binding `@8192` `100,0%/100,0%` (`32w`) e `100,0%/99,90%` (`64w`); Decode `@7936` `2.474,8 B/s` (`cudagraph=True`, `parity_max_abs_err=2,00e-5`).
+- **Limitações declaradas:** todos os treinos das campanhas IA2 001–006 usaram precisão `FP32` e vocabulário byte-level (`257`); o suporte a `BF16` nativo em L4/A100 e tokenização BPE no `fractal_golden` ainda será validado na próxima etapa.
 
 ## Compilação do passo incremental — antes da 0036
 

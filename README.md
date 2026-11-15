@@ -23,7 +23,15 @@ Este checkout contém a pesquisa fractal: **`experiment/fractal-lrm`**.
 A implementação fractal permanece isolada. O identificador `fractal` em uma configuração
 não instala esse código na branch comum. Confira `git branch --show-current` antes de trabalhar.
 
-## Estado atual — 11/11/2026
+## Estado atual — 15/11/2026
+
+As campanhas **IA2 001 a 006** concluíram a fase comparativa de arquiteturas nas duas T4 do Kaggle e selecionaram o **`fractal_golden`** (`FractalDeltaMemory` de 6 níveis compartilhados + resíduo de valor $v_0$ + modulação de fase áurea $\phi$) como arquitetura principal para a fase de aperfeiçoamento e escala:
+
+- **Escala média (`~154k` params, IA2 004–005):** `fractal_golden_med` atingiu **`0,9179` NLL** em `@256` e **`0,9126` NLL** em `@3219`, superando `fractal_pure_med` (`0,9256`), `fractal_free_energy_med` (`0,9372`), `fractal_quat_med` (`0,9404`), `fractal_ternary_med` (`1,1788`) e o `transformer_2x` de `190.080` parâmetros (`0,9392` `@256` / `2,7319` `@3219`), com **`100%`** de acerto pareado em `Byte-Binding` até `8.192` bytes.
+- **Confirmação escalada (`~865k` vs `1,09M` params, IA2 006):** com contexto de treino `512`, `fractal_golden_big` (`864.869` params, **20,8% menor** que `transformer_big` de `1.091.328` params) empatou tecnicamente dentro da janela (`0,7707` vs `0,7680` `@256`; `0,7437` vs `0,7400` `@512`), venceu por ampla margem na extrapolação `@3219` (**`0,7282` vs `1,4256`**), manteve **`100,0%` (`32w`) e `99,12%` pareado (`64w`)** em `Byte-Binding @8192` (contra `0,0%` do Transformer) e decodificou **8,0× mais rápido** em `@7936` (`1.861,6 B/s` com `Inductor + CUDAGraph` e estado fixo de `422,9 KiB`, contra `231,7 B/s` e `1,57 MB` do KV local).
+- **Decisão vigente:** encerrar testes de comparação entre candidatos e focar no aperfeiçoamento do `fractal_golden` (suporte a `BF16` em L4/A100, tokenização BPE, descompartilhamento seletivo por blocos, currículo/MTP e profundidade adaptativa). [Relatório completo e filtro de tecnologias](docs/results/IA2_CAMPAIGNS_001_006.md).
+
+### Registro anterior — até 11/11/2026
 
 A campanha 0033 concluiu 16 treinos em 35 min 34 s antes da exportação.
 Memória contextual com duas passagens independentes atingiu 0,987229 NLL

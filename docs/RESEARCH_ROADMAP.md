@@ -1,6 +1,15 @@
 # Próximas perguntas de pesquisa
 
-## Roteiro vigente — arquitetura própria inspirada em fractais
+## Roteiro vigente (15/11/2026) — evolução focada no `fractal_golden`
+
+Com o fechamento das campanhas **IA2 001 a 006** ([relatório e triagem tecnológica](results/IA2_CAMPAIGNS_001_006.md)), a etapa de comparação entre famílias arquiteturais está concluída. O desenvolvimento passa a focar exclusivamente em aprimorar e escalar o **`fractal_golden`**:
+
+1. **Engenharia de treino e escala em L4/A100 (`BF16` + BPE + `share_scales` parcial):** validar `autocast BF16` preservando acumuladores FP32 em `dplr_chunked`, migrar de byte-level (`vocab=257`) para tokenização BPE (`vocab=8192+`) e avaliar compartilhamento por grupos de níveis para escalar parâmetros sem gargalo de expressividade.
+2. **Horizonte e objetivo de linguagem:** aplicar currículo de contexto progressivo e Multi-Token Prediction (MTP) sobre a base existente (`src/llm2/curriculum/` e `src/llm2/objectives.py`).
+3. **Profundidade variável e esforço adaptativo:** explorar $K$ variável entre os níveis compatíveis do `fractal_golden` (RINS) como pré-requisito para parada aprendida (ACT/PonderNet).
+4. **Intervenções condicionais de grande escala:** controle espectral/nGPT (apenas se surgir instabilidade em $L \ge 12$) e Kronecker/Monarch + quantização pós-treino/destilação em escalas $\ge 30\text{M}$ parâmetros.
+
+## Registro anterior — até 11/11/2026
 
 A 0035 confirmou a vantagem do recorrente no primeiro byte com prefixo
 longo e identificou a decodificação como gargalo de geração. Priorizar

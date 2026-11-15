@@ -356,31 +356,18 @@ Nas hierarquias, verificar também:
 
 
 
-\## 5. Tecnologias condicionais e entregas
+\## 5. Tecnologias condicionais e entregas (Atualizado após IA2 001–006 em 15/11/2026)
 
+Com a conclusão das campanhas **IA2 001 a 006** e a seleção do **`fractal_golden`** como arquitetura base ([ver relatório completo](docs/results/IA2_CAMPAIGNS_001_006.md)), as tecnologias do catálogo foram filtradas conforme sua utilidade para o aperfeiçoamento do modelo escolhido:
 
-
-Continuarão registradas, sem incorporação automática:
-
-
-
-\- \*\*ACT/PonderNet:\*\* esforço adaptativo após demonstrar utilidade da profundidade variável.
-
-\- \*\*DEQ:\*\* equilíbrio, solver e gradientes verificados.
-
-\- \*\*Controle espectral, ortogonalidade e nGPT:\*\* dinâmica ou instabilidade que justifique investigação.
-
-\- \*\*Kronecker/Monarch, MERA e hypernetworks:\*\* gargalos de pesos ou contrações demonstrados.
-
-\- \*\*FiLM, JEPA, NCM, RMS de contexto, Ciclo‑V, MTP e currículo:\*\* preservados e desligados; retorno por pergunta específica.
-
-\- \*\*Fibonacci/φ, lattices, KAN e variantes, Liquid/CfC/LFM2 e L-systems:\*\* baixa prioridade, com hipóteses próprias.
-
-\- \*\*FractalNet, FANN e fractal nodes:\*\* referências de desenho.
-
-\- \*\*Difusão, flow matching, geração em árvore, NCA e inferência ativa:\*\* linhas futuras separadas.
-
-\- \*\*Compilação, AMP, caches, quantização e destilação:\*\* engenharia complementar, com ganhos separados dos ganhos arquiteturais.
+- **Já incorporadas e ativas no `fractal_golden`:** recorrência matricial DPLR por blocos (`chunk_size=64`), compartilhamento fractal de 6 níveis com adaptadores 1D + resíduo de valor ($v_0$), fase posicional quase-periódica Áurea ($\phi$), canal de indução associativa lag-1 e compilação `Inductor + CUDAGraph`.
+- **Fila prioritária para melhorar o `fractal_golden`:**
+  1. **AMP (`BF16`), compilação de treino, BPE e descompartilhamento seletivo (`share_scales` por grupos):** engenharia imediata para Colab (L4/A100) e ganho de capacidade em escala real.
+  2. **Currículo de contexto e MTP (Multi-Token Prediction):** já implementados na base e aplicáveis ao treino BPE de contexto longo.
+  3. **Profundidade variável (RINS) $\to$ ACT/PonderNet:** esforço adaptativo sobre os níveis compatíveis do `fractal_golden` após demonstrar utilidade de $K$ variável.
+  4. **Controle espectral/nGPT e Kronecker/Monarch + quantização pós-treino/destilação:** condicionais a instabilidade em alta profundidade ($L \ge 12$) ou gargalo de parâmetros nas camadas FFN em escalas $\ge 30\text{M}$.
+- **Testadas na IA2 004–005 e suspensas neste regime:** pesos ternários STE no bloco compartilhado (`fractal_ternary_med`, NLL `1,1788`), álgebra de quatérnios (`fractal_quat_med`, `0,9404`), gating preditivo de energia livre (`fractal_free_energy_med`, `0,9372`) e janela híbrida 4L rasa (`fractal_hybrid_med`, `0,9625`).
+- **Mantidas desligadas ou fora do escopo do `fractal_golden`:** DEQ, Disco de Poincaré/MERA, KAN, Liquid/CfC, SNNs, NCA, L-systems, FiLM, JEPA, NCM de protótipos fixos, RMS de contexto, Ciclo-V, difusão discreta, flow matching, geração em árvore e inferência ativa.
 
 
 

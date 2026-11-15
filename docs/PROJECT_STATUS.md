@@ -1,4 +1,12 @@
-# Estado científico e técnico — 11/11/2026
+# Estado científico e técnico — 15/11/2026
+
+As campanhas **IA2 001 a 006** encerraram a fase de comparação de arquiteturas na bancada dupla (TinyStories + Byte-Binding v2 até 8K + decodificação compilada Inductor/CUDAGraph) nas duas T4 do Kaggle e definiram o **`fractal_golden`** (`FractalDeltaMemory` com 6 níveis compartilhados, `fractal_value_residual=True` e `fractal_golden_phase=True`) como modelo único para a fase de aperfeiçoamento e escalonamento. [Relatório consolidado e filtro tecnológico](results/IA2_CAMPAIGNS_001_006.md).
+
+Principais resultados verificados:
+- **IA2 005 (`~154k` params, `seq_len=256`):** `fractal_golden_med` (`153.763` params) alcançou **`0,9179` NLL** (`@256`) e **`0,9126` NLL** (`@3219`), vencendo `fractal_pure_med` (`0,9256`), `fractal_free_energy_med` (`0,9372`), `fractal_quat_med` (`0,9404`), `fractal_ternary_med` (`1,1788`) e `transformer_2x` (`190.080` params, `0,9392` `@256` / `2,7319` `@3219`), com `100%` no `Byte-Binding @8192`.
+- **IA2 006 (`~865k` vs `1,09M` params, `seq_len=512`, `dd6797d`):** `fractal_golden_big` (`864.869` params) obteve `0,7707` `@256`, `0,7437` `@512` e **`0,7282` `@3219`** (contra `0,7680`, `0,7400` e `1,4256` do `transformer_big` de `1.091.328` params), manteve **`100,0%` (`32w`) / `99,12%` pareado (`64w`)** em `Byte-Binding @8192` (contra `0,0%` do Transformer) e decodificou a **`1.861,6 B/s`** com estado constante de `422.916 B` (contra `231,7 B/s` e `1.572.872 B` do Transformer).
+
+## Registro anterior — 11/11/2026
 
 A 0035 recriou os quatro checkpoints e concluiu a geração incremental nas
 duas T4. Após um prefixo de 7.936 bytes, o recorrente chegou ao primeiro
