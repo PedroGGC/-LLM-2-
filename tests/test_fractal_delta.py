@@ -459,3 +459,52 @@ def test_fractal_golden_classic_decode_and_bf16_autocast_invariants(tmp_path):
         assert torch.isfinite(out2.logits.float()).all()
 
 
+def test_unified_curriculum_and_custom_assoc_val_dim_exact_resume(tmp_path):
+    from llm2.research.ia2_benchmark import ARMS, UnifiedTrainer, make_story_config
+
+    d = fixture_data(tmp_path / "stories")
+    arm = next(a for a in ARMS if a.name == "fractal_golden_classic_v2_big")
+    cfg_check = _fractal_cfg(tmp_path, tmp_path / "chk", d_model=64, heads=4, hidden_dim=128, value_residual=True, golden_phase=True, leaky_budget=True, assoc_delta=True)
+    cfg_check.research.fractal_assoc_val_dim = 48
+    m = build_backbone(cfg_check).eval()
+    assert m.assoc_val_dim == 48
+    assert m.parameter_formula() == sum(p.numel() for p in m.parameters())
+
+    def _cfg(out_dir):
+        cfg = make_story_config(arm, d.root, out_dir, seed=352, lr=0.003, smoke=True, device="cpu")
+        cfg.model.dropout = 0.2
+        cfg.data.batch_size = 4
+        cfg.data.eval_batch_size = 2
+        cfg.train.max_steps = 2
+        cfg.train.checkpoint_interval = 1
+        cfg.train.eval_interval = 10
+        cfg.train.grad_accum_steps = 2
+        cfg.train.deterministic = True
+        return cfg
+
+    with UnifiedTrainer(_cfg(tmp_path / "full"), smoke=True, unified_curriculum=True) as full:
+        b_step0 = full.sampler.next("cpu")
+        assert b_step0["input_ids"].shape == (4, 32)
+        _ = full.sampler.next("cpu")  # exhaust step 0 microbatch 2
+        b_step1 = full.sampler.next("cpu")
+        assert b_step1["input_ids"].shape == (2, 64)
+
+    with UnifiedTrainer(_cfg(tmp_path / "full_run"), smoke=True, unified_curriculum=True) as full:
+        full.fit()
+        full_state = {k: v.clone() for k, v in full.model.state_dict().items()}
+        full_sched = copy.deepcopy(full.scheduler.state_dict())
+        full_counters = dict(full.counters)
+
+    cfg_part = _cfg(tmp_path / "part")
+    cfg_part.train.max_steps = 1
+    with UnifiedTrainer(cfg_part, smoke=True, unified_curriculum=True) as part:
+        part.fit()
+        ckpt1 = part.last_checkpoint
+    with UnifiedTrainer(_cfg(tmp_path / "resumed"), smoke=True, unified_curriculum=True, resume=ckpt1) as res:
+        res.fit()
+        assert_nested_equal(full_state, res.model.state_dict())
+        assert_nested_equal(full_sched, res.scheduler.state_dict())
+        assert res.counters["step"] == full_counters["step"] == 2
+        assert res.counters["input_tokens_processed"] == full_counters["input_tokens_processed"]
+
+

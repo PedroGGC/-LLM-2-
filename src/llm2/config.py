@@ -185,6 +185,7 @@ class ResearchConfig:
     fractal_weight_mode: str = "dense"
     fractal_leaky_budget: bool = False
     fractal_assoc_delta: bool = False
+    fractal_assoc_val_dim: int = 0
 
     def __post_init__(self):
         _types(self)
@@ -223,6 +224,8 @@ class ResearchConfig:
             raise ValueError("fractal_leaky_budget requires fractal_delta")
         if self.fractal_assoc_delta and self.architecture != "fractal_delta":
             raise ValueError("fractal_assoc_delta requires fractal_delta")
+        if self.fractal_assoc_val_dim != 0 and (self.architecture != "fractal_delta" or self.fractal_assoc_val_dim < 4):
+            raise ValueError("fractal_assoc_val_dim must be 0 or >= 4 for fractal_delta")
         if self.associative_levels not in (1, 2):
             raise ValueError("associative_levels must be 1 or 2")
         if self.associative_levels != 1 and self.architecture != "transition_memory":

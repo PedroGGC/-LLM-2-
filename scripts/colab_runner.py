@@ -50,6 +50,7 @@ def main(argv=None):
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--story-seq-len", type=int, default=512)
     parser.add_argument("--binding-hard-writes", type=int, default=64)
+    parser.add_argument("--unified-curriculum", action="store_true")
     parser.add_argument("--deadline-seconds", type=float, default=5400.0)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--smoke", action="store_true")
@@ -112,6 +113,8 @@ def main(argv=None):
         ]
         if args.lr is not None:
             cmd += ["--lr", str(args.lr)]
+        if args.unified_curriculum:
+            cmd.append("--unified-curriculum")
         if args.smoke:
             cmd.append("--smoke")
         print("\n--- Launching IA2 Benchmark ---")

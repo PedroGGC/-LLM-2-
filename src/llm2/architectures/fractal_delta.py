@@ -501,7 +501,7 @@ class FractalDeltaMemory(Backbone):
         self.assoc_delta = research.fractal_assoc_delta
 
         d = config.d_model
-        self.assoc_val_dim = min(d, 8 if d < 32 else 24)
+        self.assoc_val_dim = min(d, research.fractal_assoc_val_dim) if research.fractal_assoc_val_dim > 0 else min(d, 8 if d < 32 else 24)
         self.embedding = nn.Embedding(config.vocab_size, d)
         nn.init.normal_(self.embedding.weight, std=0.02)
 

@@ -48,6 +48,7 @@ class ArmSpec:
     fractal_weight_mode: str = "dense"
     fractal_leaky_budget: bool = False
     fractal_assoc_delta: bool = False
+    fractal_assoc_val_dim: int = 0
     memory_dim: int = 64
     chunk_size: int = 32
 
@@ -70,6 +71,7 @@ ARMS = (
     ArmSpec("fractal_pure_big", "candidate", "fractal_delta", d_model=256, n_layers=6, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, fractal_value_residual=True, memory_dim=96, chunk_size=64),
     ArmSpec("fractal_golden_big", "candidate", "fractal_delta", d_model=256, n_layers=6, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, memory_dim=96, chunk_size=64),
     ArmSpec("fractal_golden_classic_big", "candidate", "fractal_delta", d_model=256, n_layers=6, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, memory_dim=96, chunk_size=64),
+    ArmSpec("fractal_golden_classic_v2_big", "candidate", "fractal_delta", d_model=256, n_layers=6, n_heads=4, hidden_dim=544, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, memory_dim=96, chunk_size=64),
 )
 
 
@@ -99,6 +101,7 @@ def _build_research_config(arm: ArmSpec, *, smoke=False):
         fractal_weight_mode=arm.fractal_weight_mode,
         fractal_leaky_budget=arm.fractal_leaky_budget,
         fractal_assoc_delta=arm.fractal_assoc_delta,
+        fractal_assoc_val_dim=arm.fractal_assoc_val_dim,
     )
 
 
@@ -364,12 +367,14 @@ def score_stories_bands_and_prefix(model, data, split, device, *, smoke=False):
 class UnifiedStream:
     """Deterministic 75% TinyStories + 25% Byte-Binding-v2 batch mixer."""
 
-    def __init__(self, data, cfg):
+    def __init__(self, data, cfg, *, curriculum=False):
         self.data = data
         self.length = cfg.data.seq_len
         self.batch = cfg.data.batch_size
+        self.max_seq_len = cfg.model.max_seq_len
         self.accumulation = cfg.train.grad_accum_steps
         self.smoke = self.length < 256
+        self.curriculum = curriculum
         self.bind_batch = max(1, self.batch // 4)
         self.story_batch = self.batch - self.bind_batch
         if self.story_batch < 1:
@@ -377,16 +382,50 @@ class UnifiedStream:
         story_cfg = copy.deepcopy(cfg)
         story_cfg.data.batch_size = self.story_batch
         self.story_stream = StoryStream(data, story_cfg, calibration=False)
+        self.stage_streams = {}
+        if self.curriculum:
+            stages = [(self.length * 2, max(2, self.batch // 2))]
+            if not self.smoke and self.batch >= 4:
+                stages.append((self.length * 4, max(2, self.batch // 4)))
+            for cur_len, cur_batch in stages:
+                if cur_len <= self.max_seq_len and cur_batch >= 2:
+                    scfg = copy.deepcopy(cfg)
+                    scfg.data.seq_len = cur_len
+                    scfg.data.batch_size = cur_batch - max(1, cur_batch // 4)
+                    scfg.train.seed = cfg.train.seed + cur_len
+                    self.stage_streams[cur_len] = StoryStream(data, scfg, calibration=False)
         self.bind_rng = np.random.default_rng(cfg.train.seed + 101)
         self.draws = 0
 
+    def _stage(self, step: int) -> tuple[int, int]:
+        if not self.curriculum:
+            return self.length, self.batch
+        if self.smoke:
+            cur_len = self.length * 2
+            if step >= 1 and cur_len in self.stage_streams:
+                return cur_len, max(2, self.batch // 2)
+            return self.length, self.batch
+        if step >= 4500 and (self.length * 4) in self.stage_streams:
+            return self.length * 4, max(2, self.batch // 4)
+        if step >= 3000 and (self.length * 2) in self.stage_streams:
+            return self.length * 2, max(2, self.batch // 2)
+        return self.length, self.batch
+
     def next(self, device):
-        story = self.story_stream.next(device)
         step = self.draws // self.accumulation
-        writes = 2 if self.smoke else next(w for th, w in reversed(UNIFIED_WRITES) if step >= th)
-        writes = min(writes, self.length // 8)
-        queries = min(16, self.length // 8)
-        bind = generate_binding(self.bind_rng, self.bind_batch, self.length, writes=writes, queries=queries, device=device)
+        cur_len, cur_batch = self._stage(step)
+        cur_bind = max(1, cur_batch // 4)
+        stream = self.story_stream if cur_len == self.length else self.stage_streams[cur_len]
+        story = stream.next(device)
+        if self.smoke:
+            writes = 2
+        elif self.curriculum and step >= 4500 and cur_len >= 2048:
+            writes = 48
+        else:
+            writes = next(w for th, w in reversed(UNIFIED_WRITES) if step >= th)
+        writes = min(writes, cur_len // 8)
+        queries = min(16, cur_len // 8)
+        bind = generate_binding(self.bind_rng, cur_bind, cur_len, writes=writes, queries=queries, device=device)
         self.draws += 1
         return {
             "input_ids": torch.cat((story["input_ids"], bind["input_ids"]), dim=0),
@@ -394,7 +433,7 @@ class UnifiedStream:
         }
 
     def state_dict(self):
-        return {
+        state = {
             "task": f"unified:{BINDING_TASK_ID}",
             "length": self.length,
             "batch": self.batch,
@@ -403,24 +442,32 @@ class UnifiedStream:
             "story": self.story_stream.state_dict(),
             "bind_rng": copy.deepcopy(self.bind_rng.bit_generator.state),
         }
+        if self.curriculum:
+            state["curriculum"] = True
+            state["stages"] = {str(k): s.state_dict() for k, s in self.stage_streams.items()}
+        return state
 
     def load_state_dict(self, state):
         cur = self.state_dict()
-        if any(state[k] != cur[k] for k in ("task", "length", "batch", "accumulation")):
+        if any(state.get(k) != cur.get(k) for k in ("task", "length", "batch", "accumulation", "curriculum")):
             raise ValueError("incompatible unified sampler")
         self.draws = state["draws"]
         self.story_stream.load_state_dict(state["story"])
+        if self.curriculum:
+            for k, stream in self.stage_streams.items():
+                stream.load_state_dict(state["stages"][str(k)])
         self.bind_rng.bit_generator.state = copy.deepcopy(state["bind_rng"])
 
 
 class UnifiedTrainer(Trainer):
     """Single-checkpoint trainer mixing TinyStories and Byte-Binding-v2."""
 
-    def __init__(self, cfg, *, smoke=False, **kwargs):
+    def __init__(self, cfg, *, smoke=False, unified_curriculum=False, **kwargs):
         self.smoke = smoke
+        self.unified_curriculum = unified_curriculum
         self.evaluations = []
         data = StoriesData(cfg.data.path, require_pinned=not smoke)
-        super().__init__(cfg, data=data, sampler_factory=lambda d, c: UnifiedStream(d, c), **kwargs)
+        super().__init__(cfg, data=data, sampler_factory=lambda d, c: UnifiedStream(d, c, curriculum=unified_curriculum), **kwargs)
 
     def validate(self, max_batches=None):
         story = score_stories(
@@ -618,9 +665,10 @@ def run_arm(
     seed=341,
     lr_override=None,
     precision="fp32",
+    unified_curriculum=False,
 ):
     arm_label = f"{arm.name}:s{seed}" if (seed != 341 or mode == "unified") else arm.name
-    print(f"\n=== [{arm_label}] ({arm.group}, mode={mode}, precision={precision}) starting on {device} ===", flush=True)
+    print(f"\n=== [{arm_label}] ({arm.group}, mode={mode}, precision={precision}, curriculum={unified_curriculum}) starting on {device} ===", flush=True)
     arm_root = work_root / (f"{arm.name}_s{seed}" if (seed != 341 or mode == "unified") else arm.name)
     arm_root.mkdir(parents=True, exist_ok=True)
     if lr_override is not None:
@@ -633,7 +681,7 @@ def run_arm(
         unified_cfg = make_story_config(
             arm, data_root, arm_root / "unified", seed=seed, lr=cal["lr"], smoke=smoke, device=device, story_seq_len=story_seq_len, precision=precision
         )
-        with UnifiedTrainer(unified_cfg, smoke=smoke) as trainer:
+        with UnifiedTrainer(unified_cfg, smoke=smoke, unified_curriculum=unified_curriculum) as trainer:
             params = trainer.model_parameters
             state_bytes = trainer.model.state_bytes_per_sequence() if hasattr(trainer.model, "state_bytes_per_sequence") else None
             t0 = time.perf_counter()
@@ -769,6 +817,7 @@ def main(argv=None):
     parser.add_argument("--deadline-seconds", type=float, default=5400.0)
     parser.add_argument("--story-seq-len", type=int, default=256)
     parser.add_argument("--binding-hard-writes", type=int, default=0)
+    parser.add_argument("--unified-curriculum", action="store_true")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args(argv)
@@ -794,6 +843,7 @@ def main(argv=None):
         "status": "running",
         "mode": args.mode,
         "precision": args.precision,
+        "unified_curriculum": args.unified_curriculum,
         "smoke": args.smoke,
         "environment": environment(),
         "wall_seconds": 0.0,
@@ -818,12 +868,14 @@ def main(argv=None):
                 seed=seed,
                 lr_override=args.lr,
                 precision=args.precision,
+                unified_curriculum=args.unified_curriculum,
             )
         )
         payload = {
             "status": "running",
             "mode": args.mode,
             "precision": args.precision,
+            "unified_curriculum": args.unified_curriculum,
             "smoke": args.smoke,
             "environment": environment(),
             "wall_seconds": time.monotonic() - started,
