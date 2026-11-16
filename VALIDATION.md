@@ -1,4 +1,17 @@
-# Validação vigente — 15/11/2026
+# Validação vigente — 16/11/2026
+
+## Roteiro Fase 1: Self-Speculative MTP + Telemetria Real NVML/DVFS + Currículo `512→1024→2048` (`IA2 Campanha 011`, `08fbf1f` + ajuste pós-rodada em `ia2_benchmark.py`)
+
+Relatório detalhado em [docs/results/IA2_CAMPAIGN_011_PHASE1_ENERGY_CURRICULUM.md](docs/results/IA2_CAMPAIGN_011_PHASE1_ENERGY_CURRICULUM.md).
+
+Verificações reais executadas:
+- **CPU local pré-subida (`08fbf1f`, Windows, Python 3.12.2, PyTorch 2.14.1+cpu):**
+  - `python -m pytest -q tests/test_decode_optimization.py tests/test_fractal_delta.py tests/test_state_recurrent.py tests/test_training.py tests/test_stories_data.py tests/test_predictive.py`: **109 passed, 9 skipped em 222,44 s** (skips são testes exclusivos CUDA). Após correção pontual em `ia2_benchmark.py` (`data.arrays["val"]`), `python -m pytest -q tests/test_decode_optimization.py`: **16 passed em 40,82 s**.
+- **Google Colab NVIDIA L4 (`08fbf1f`, Linux, Python 3.13.16, PyTorch 2.14.1+cu130, CUDA 13.0, `BF16`):**
+  - Preflight L4: `pytest -q tests/test_decode_optimization.py tests/test_fractal_delta.py tests/test_predictive.py` → **56 passed em 263,72 s** (`0 failed`, `0 skipped`); `pytest -q -m cuda` → **55 passed, 781 deselected em 695,50 s**.
+  - **Currículo `512→1024→2048` (`fractal_pcc_mtp_muon_bpe:s351`, `3.500` passos, `3,65 GiB` VRAM):** `val@256 = 0,9148 BPB`, `val@512 = 0,9016 BPB`, `val@3219 = 0,8993 BPB` (`2,5080 NLL`), banda `513–2048 = 2,4578 NLL` (vs `3,8526` sem currículo na C010 e `3,2903` no Transformer `15,74M`), `ΔTrunc = +0,0502`, `ΔSwap = +0,1310`, `Binding 8k w=32 = 100,00%`, `HARD w=64 = 99,12%` (`98,73%` pareado).
+  - **Varredura real NVML + `Self-Speculative MTP` + DVFS + L2 Pin (`1.024` tokens em texto `val`, paridade `100%` exata vs `CompiledDecode`):** aceitação MTP real de **`31,1%`** (`1,62 tok/ciclo`); `72W` (`1.666,2` vs `1.157,9 tok/s`, `1,44×`, `31,85` vs `40,77 mJ/tok`), `55W` (`1.646,7 tok/s`, `27,26 mJ/tok`), **`40W` mínimo da L4 (`1.562,6 tok/s`, `1,35×` acima do baseline `72W`, `23,45 mJ/tok` = `-42,5%` energia / `1,74×` `Tokens/J`)**.
+- **Limitações declaradas:** `cudaDeviceSetLimit` para L2 (`7,70 MB`) aceito pelo driver mas sem ganho mensurável (~`0,2%`) porque o modelo de `7,45M` já cabe na L2 de `48 MB` da L4; `watts_mean` instantâneo sofre pequena inércia térmica/boost em janelas de ~`0,6 s` (energia acumulada NVML `mJ/tok` é a medição limpa); o throughput de treino em `2048×4` caiu para `4,87k tok/s` (`45,3 min` totais), motivando a **Fase 2 (Kernel Triton em `state_kernels.py`)**. Runtime L4 encerrado (`list_runtimes() == {}`).
 
 ## Passo 3: BPE `vocab=4096` + Prelude-Core-Coda + Multilag + MTP + Muon vs KDA (`IA2 Campanha 010`, `b7c6461`)
 

@@ -732,9 +732,10 @@ def _evaluate_stories_and_decode(
     diagnostics = score_stories_bands_and_prefix(model, data, "val", device, smoke=smoke)
     vocab_limit = 256 if data.schema == "stories-doc-bytes-v1" else data.vocab_size
     val_prefix = None
-    if getattr(data, "val", None) is not None and len(data.val.tokens) >= (24 if smoke else 256):
+    val_arr = getattr(data, "arrays", {}).get("val") if hasattr(data, "arrays") else None
+    if val_arr is not None and len(val_arr) >= (24 if smoke else 256):
         plen = 24 if smoke else 256
-        val_prefix = torch.tensor(data.val.tokens[:plen], dtype=torch.long).unsqueeze(0)
+        val_prefix = torch.tensor(np.asarray(val_arr[:plen], dtype=np.int64), dtype=torch.long).unsqueeze(0)
     decode_stats, eager_decoder = benchmark_decode(
         model,
         device,
