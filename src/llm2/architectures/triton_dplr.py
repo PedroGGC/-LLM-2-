@@ -243,7 +243,7 @@ def _next_pow2_16(x: int) -> int:
 
 
 def can_use_triton_dplr(chunk_size: int, v_dim: int, k_dim: int, device: torch.device) -> bool:
-    return bool(HAS_TRITON and device.type == "cuda" and max(chunk_size, v_dim, k_dim) <= 128)
+    return bool(HAS_TRITON and device.type == "cuda" and max(chunk_size, v_dim, k_dim) <= 64)
 
 
 def _inter_chunk_scan_pytorch_fwd(

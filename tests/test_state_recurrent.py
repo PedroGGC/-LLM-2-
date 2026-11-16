@@ -201,6 +201,7 @@ def test_dplr_inter_chunk_scan_custom_op_cpu_parity_and_compile(w_dim):
 @pytest.mark.cuda
 @pytest.mark.parametrize("v_dim,k_dim,w_dim,seq_len", [
     (64, 64, 1, 513),
+    (48, 64, 1, 512),
     (48, 96, 1, 512),
     (64, 64, 64, 256),
 ])
