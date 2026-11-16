@@ -178,6 +178,8 @@ class CompiledDecode:
                 return logits, canonical_recurrent_state(current)
             step = recurrent_step
         self._raw_step = step
+        if torch._dynamo.config.cache_size_limit < 64:
+            torch._dynamo.config.cache_size_limit = 64
         self.compiled_step = torch.compile(step, backend=self.backend, fullgraph=True, dynamic=False)
         self.use_cudagraph = bool(self.recurrent and self.backend == "inductor" and device is not None and device.type == "cuda")
         self._graph = None
@@ -497,6 +499,8 @@ class SelfSpeculativeMTPDecode:
             return toks_table, stacked_states
 
         self._verify_raw = verify_raw
+        if torch._dynamo.config.cache_size_limit < 64:
+            torch._dynamo.config.cache_size_limit = 64
         self._verify_fn = (
             verify_raw
             if self.backend is None
