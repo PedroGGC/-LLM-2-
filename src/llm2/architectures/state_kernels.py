@@ -91,7 +91,7 @@ def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32, use_triton=
         mem_local = vc.transpose(-1, -2) @ (kc * tail) + u_local.transpose(-1, -2) @ bc_tail
         state_trans = u_state.transpose(-1, -2) @ bc_tail
 
-        if use_triton and can_use_triton_dplr(chunk_size, v_dim, k_dim, q.device):
+        if use_triton and (q.is_cuda or can_use_triton_dplr(chunk_size, v_dim, k_dim, q.device)):
             out, memory = dplr_inter_chunk_scan(kv_local, read_proj, mem_decay, state_trans, mem_local, memory)
             return (out[:, :, :total_len] if pad else out), memory
 

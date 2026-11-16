@@ -1,5 +1,18 @@
 # Validação vigente — 16/11/2026
 
+## Roteiro Fase 2: Kernel Fused Triton em `state_kernels.py` / `triton_dplr.py` (`IA2 Campanha 012`, `972854a` + ajuste `v2` em `state_kernels.py`)
+
+Relatório detalhado em [docs/results/IA2_CAMPAIGN_012_PHASE2_TRITON.md](docs/results/IA2_CAMPAIGN_012_PHASE2_TRITON.md).
+
+Verificações reais executadas:
+- **CPU local pós-edição (`v2` em `state_kernels.py`, Windows):**
+  - `python -m pytest -q tests/test_state_recurrent.py tests/test_fractal_delta.py tests/test_decode_optimization.py` → **86 passed, 10 skipped em 144,22 s** (os `10 skipped` são exclusivamente os testes `@pytest.mark.cuda`, executados diretamente na L4).
+- **Google Colab NVIDIA L4 (`Triton 3.8.0`, PyTorch `BF16` + `torch.compile`, `fractal_pcc_mtp_muon_bpe:s351`):**
+  - `pytest -q -m cuda tests/test_state_recurrent.py tests/test_fractal_delta.py tests/test_decode_optimization.py` → **10 passed, 86 deselected em 20,20 s** (`forward`, `state` e todos os `7` gradientes em `(64,64,1,513)`, `(48,64,1,512)`, `(48,96,1,512)`, `(64,64,64,256)` + `test_state_cuda_inductor`).
+  - **Benchmark pareado `8.192` tok/step em `seq=2048 × 4`:** PyTorch desenrolado (`use_triton=False`) levou **`804,76 s`** de compilação e **`25.190,1 tok/s`** (`325,21 ms/step`, `3,59 GiB`); **`Triton v2` (`chunk=32`)** caiu para **`118,09 s`** de compile (**`-85,3%` / `6,81×`**) e **`33.170,8 tok/s`** (`+31,7%`); **`Triton v2` (`chunk=64`)** fechou em **`125,83 s`** de compile e **`36.666,0 tok/s`** (`+45,6%` vs PyTorch desenrolado, `1,71×` vs `custom_op` PyTorch `21.436,6 tok/s`, e **`~7,5×` vs janela C011**), mantendo paridade inicial (`loss0 = 10.516880` vs `10.516771`, `3,88 GiB`).
+  - **E2E smoke (`ia2_benchmark --smoke --unified-curriculum --measure-energy --device cuda`):** exit `0` em `71,8 s` (`training_loss 7.1705 -> 6.9205`, `val@256 = 5.5646`, `bpb = 2.5929`, `decode_inductor = 1766,6 tok/s`, `Speculative MTP = 1373,6 tok/s`, `1,24×`).
+- **Limitações declaradas:** L4 SRAM limitou `can_use_triton_dplr` a `max(chunk_size, v_dim, k_dim) <= 64` (célula `assoc` com `K=96, V=48` usa fallback PyTorch dentro do `custom_op` opaco sem desenrolar em `torch.compile`); em contexto curto `seq=512 × 16`, PyTorch BF16 desenrolado (`46.331,7 tok/s`) ainda vence o kernel inter-chunk FP32 `ieee` (`39.699,9 tok/s` em `chunk=64`). Treino full-step (`3.500` passos) em Corpus real `50M–150M+` fica para a etapa seguinte da Fase 2. Runtime L4 encerrado (`list_runtimes() == {}`).
+
 ## Roteiro Fase 1: Self-Speculative MTP + Telemetria Real NVML/DVFS + Currículo `512→1024→2048` (`IA2 Campanha 011`, `08fbf1f` + ajuste pós-rodada em `ia2_benchmark.py`)
 
 Relatório detalhado em [docs/results/IA2_CAMPAIGN_011_PHASE1_ENERGY_CURRICULUM.md](docs/results/IA2_CAMPAIGN_011_PHASE1_ENERGY_CURRICULUM.md).

@@ -658,18 +658,18 @@ O desenvolvimento deste guia e das alavancas propostas respeita integralmente as
 
 ## Parte IV: Roteiro de Implementação e Priorização
 
-### Seção 4.1: Matriz Esforço x Impacto das 9 Alavancas (Estado Atualizado Pós-Campanha 011)
+### Seção 4.1: Matriz Esforço x Impacto das 9 Alavancas (Estado Atualizado Pós-Campanha 012)
 
 Para orientar o roadmap de engenharia das próximas fases do LLM 2, as nove tecnologias investigadas foram classificadas quanto à complexidade, risco, impacto e **status empírico real até o momento**:
 
-| # | Alavanca Técnica | Complexidade | Risco | Impacto Projetado (Teoria) | Status & Resultado Real Medido (até C011) | Prioridade Atual |
+| # | Alavanca Técnica | Complexidade | Risco | Impacto Projetado (Teoria) | Status & Resultado Real Medido (até C012) | Prioridade Atual |
 |---|---|---|---|---|---|---|
 | **1** | **Self-Speculative Decoding (MTP)** | **Muito Baixa** | **Nulo** | $2,04\times$ speedup, $-49,9\%$ J/tok *(assumindo $\alpha=70\%$)* | **`[x]` VALIDADO (L4, `s351`):** paridade **100% exata** (`1.024` toks `val`), aceitação real **`31,1%`** (`1,62 tok/ciclo`), **`1,44×` speedup** (`1.666,2` vs `1.157,9 tok/s` @ `72W`) e **`-21,9%` mJ/tok** (`31,85` vs `40,77`). *(Diferença vs projeção: $\alpha=31,1\%$ com `mtp_weight=0.25` em `7,45M`.)* | **Feito (Melhorar $\alpha$ em escala maior)** |
 | **2** | **Core L2 Weight Pinning** | **Baixa** | **Nulo** | $-83,3\%$ leitura de pesos VRAM | **`[~]` NEUTRO EM `7,45M`:** `cudaDeviceSetLimit(7,70 MB)` aceito (`err=0`), mas ganho de apenas `+0,2%` (`1.666,2` vs `1.662,8 tok/s`), pois `~15 MB` do modelo já cabem passivamente na L2 de `48 MB` da L4. **Pausado até escala `> 48 MB`.** | **Pausado (Reativar se Core > L2)** |
 | **3** | **Power Capping DVFS** | **Muito Baixa** | **Nulo** | $-18^\circ\text{C}$, $+46,9\%$ Tok/J | **`[x]` VALIDADO (L4, `40W` mín. vs `72W`):** combinado ao MTP em `40W`, entregou **`1.562,6 tok/s`** (**`1,35×` acima do baseline `72W`**) com **`23,45 mJ/tok`** (**`-42,5%` energia**, **`+73,9%` Tokens/Joule NVML**). *(Obs.: rajadas de `~0,6s` mantiveram `~60°C` por inércia térmica do dissipador.)* | **Feito** |
-| **4** | **Kernel Fused Triton (`state_kernels.py`)** | **Média** | **Baixo** | $4,53\times$ menos tráfego VRAM no prefill/treino | **`[ ]` PENDENTE — PRIORIDADE MÁXIMA:** em `seq=2048×4` (C011), o treino em PyTorch caiu para `4.869 tok/s` (`45,3 min` totais). Destrava modelos `50M–150M+`. | **P1 (Próximo Passo Imediato)** |
-| **5** | **Profundidade Adaptativa (Early-Exit / ACT)** | **Média** | **Baixo-Médio** | $1,57\times$ speedup no Core | **`[ ]` PENDENTE:** aguarda corpus/modelo maior (`50M+`) onde tokens variem bastante de dificuldade. | **P2 (Pós-Triton)** |
-| **6** | **Rotações Hadamard INT4/W4A8 (QuaRot)** | **Média-Alta** | **Baixo** | $4\times$ compressão em pesos/atenção | **`[ ]` PENDENTE:** aguarda escala $\ge 50\text{M–}150\text{M}$ para medir perda real de `BPB` vs VRAM/Watts sem ruído subcrítico. | **P2 (Escala `50M–150M+`)** |
+| **4** | **Kernel Fused Triton (`state_kernels.py` / `triton_dplr.py`)** | **Média** | **Baixo** | $4,53\times$ menos tráfego VRAM no prefill/treino | **`[x]` VALIDADO NA L4 (C012):** em **`seq=2048×4`**, compilação caiu **`-85,3%`** (`804,76s → 118,09s` em `chunk=32`, `6,81×`) e vazão foi a **`33.170,8 tok/s` (`chunk=32`, `+31,7%`)** e **`36.666,0 tok/s` (`chunk=64`, `+45,6%` vs `25.190,1 tok/s` PyTorch desenrolado e `~7,5×` vs `4,87k` C011)** com paridade `forward/state/7 grads`. *Nota:* `assoc` (`K=96`) usa `custom_op` PyTorch (SRAM L4 limitava `BLOCK_K=128`); em `seq=512×16` curto, PyTorch BF16 (`46,3k`) segue à frente do kernel FP32 (`39,7k`). | **Feito (Destrava `50M–150M+`)** |
+| **5** | **Profundidade Adaptativa (Early-Exit / ACT)** | **Média** | **Baixo-Médio** | $1,57\times$ speedup no Core | **`[ ]` PENDENTE:** aguarda corpus/modelo maior (`50M+`) onde tokens variem bastante de dificuldade. | **P1 (Próximo na Fase 2 / Escala `50M+`)** |
+| **6** | **Rotações Hadamard INT4/W4A8 (QuaRot)** | **Média-Alta** | **Baixo** | $4\times$ compressão em pesos/atenção | **`[ ]` PENDENTE:** aguarda escala $\ge 50\text{M–}150\text{M}$ para medir perda real de `BPB` vs VRAM/Watts sem ruído subcrítico. | **P1 (Próximo na Fase 2 / Escala `50M–150M+`)** |
 | **7** | **Desacoplamento GPU/CPU (Engram)** | **Alta** | **Médio** | Modelos `27B` em `4–6 GB` VRAM | **`[ ]` PENDENTE:** só faz sentido em corpus factual grande (`FineWeb-Edu` / Web + código) em escala `100M+`. | **P3 (`100M–1B`)** |
 | **8** | **Ternary SwiGLU em Modelos $\ge 1$B** | **Alta** | **Alto** | $8\times$ compressão em MLPs | **`[ ]` PENDENTE (`>= 1B`):** ternário em modelo pequeno/compartilhado já falhou na C005 (`0,9256→1,1788 NLL`). | **P3 (Só `>= 500M–1B`)** |
 | **9** | **Kernel Ternário Assembly / BitBLAS** | **Muito Alta** | **Médio** | GEMV sem multiplicações | **`[ ]` PENDENTE:** só entra se #8 passar na validação em escala $\ge 1\text{B}$. | **P4 (Condicional a #8)** |
@@ -684,9 +684,9 @@ Para orientar o roadmap de engenharia das próximas fases do LLM 2, as nove tecn
 3. `[x]` **Power Capping + Telemetria Real NVML (`NVMLPowerMonitor` + `--power-limit-ratio`):** medido `72W / 55W / 40W` na L4 (`-42,5% mJ/token` no piso de `40W`).
 4. `[x]` **Bônus da Fase 1 — Currículo `512→1024→2048` proporcional em `--steps`:** resolveu o gap de `513–2048` da Campanha 010 (`3,8526 → 2,4578 NLL`) com `100%` de retenção em `8K`.
 
-#### Fase 2: Aceleração de Treino (Triton) + Contexto/Escala (`50M–150M+`) — **EM SEQUÊNCIA AGORA**
-1. `[ ]` **Kernel Triton para `state_kernels.py` (`dplr_chunked` em SRAM):** destravar os `4.869 tok/s` em `seq=2048` para viabilizar pré-treino real em corpus web/código.
-2. `[ ]` **Pipeline de Rotação Hadamard / INT4 (`QuaRot`) + `Memory Caching` (`arXiv:2602.24281`) + Early-Exit:** prototipar conforme subirmos para escala `50M–150M+` e contextos `8K–32K+`.
+#### Fase 2: Aceleração de Treino (Triton) + Contexto/Escala (`50M–150M+`) — **CONCLUÍDA PARA TRITON (C012); PRÓXIMO: `50M–150M+` + QUAROT/EARLY-EXIT**
+1. `[x]` **Kernel Triton para `state_kernels.py` / `triton_dplr.py` (`dplr_inter_chunk_scan` em SRAM):** implementado via `torch.library.custom_op`, eliminando o unroll em `assoc` e derrubando compile de `804,76s → 118,09s` (`-85,3%`) e elevando vazão em `seq=2048×4` para `36.666 tok/s` (`chunk=64`, `+45,6%` vs PyTorch desenrolado).
+2. `[ ]` **Pipeline de Rotação Hadamard / INT4 (`QuaRot`) + `Memory Caching` (`arXiv:2602.24281`) + Early-Exit:** prototipar conforme subirmos para escala `50M–150M+` em corpus real e contextos `8K–32K+`.
 
 #### Fase 3: Escala Industrial (`100M–1B+`) & Benchmarks Reais
 1. `[ ]` **Corpus real (`FineWeb-Edu` + código/matemática) e avaliação externa (`HellaSwag`, `PIQA`, `ARC-Easy`, `LAMBADA`, `RULER`)** antes de decidir ativar **Engram (RAM CPU)** ou **Ternary SwiGLU (`>= 1B`)**.
