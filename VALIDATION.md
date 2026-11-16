@@ -1,5 +1,25 @@
 # Validação vigente — 15/11/2026
 
+## Passo 3: BPE `vocab=4096` + Prelude-Core-Coda + Multilag + MTP + Muon vs KDA (`IA2 Campanha 010`, `b7c6461`)
+
+Relatório detalhado em [docs/results/IA2_CAMPAIGN_010_COLAB_L4_BPE.md](docs/results/IA2_CAMPAIGN_010_COLAB_L4_BPE.md).
+
+Verificações reais executadas na revisão `b7c6461` (Etapa 3: `MuonAdamW` com ortogonalização Newton-Schulz, `fractal_prelude_coda` / `cell_index`, `fractal_kda`, `fractal_assoc_multilag`, `prepare_bpe` train-only `uint32` com `bits_per_byte` exato por bytes UTF-8 e 8 braços BPE em `ia2_benchmark.py`):
+- **CPU local (Windows, Python 3.12.2, PyTorch 2.14.1+cpu):**
+  - `python -m pytest -q tests/test_fractal_delta.py tests/test_training.py tests/test_stories_data.py tests/test_predictive.py`: **57 passed, 3 skipped** (os 3 skips são testes exclusivos CUDA, não contados como aprovação GPU). Inclui retomada exata do `MuonAdamW` com exclusão de `embedding`/`lm_head`/`mtp_heads`, equivalência causal/decode/contagem do `PCC+KDA+multilag+MTP`, e isolamento train-only do BPE + cálculo exato de `BPB`.
+  - `python -m pytest -q --ignore=tests/e2e`: **778 passed, 56 skipped, 6 failed** (as 6 falhas são pré-existentes de fixtures CRLF/SHA-256 no Windows em `tests/test_state_b_operator.py` e `tests/test_state_readout_models.py`, sem relação com a Etapa 3).
+- **Google Colab NVIDIA L4 (Linux, Python 3.13.16, PyTorch 2.14.1+cu130, CUDA 13.0, BF16):**
+  - Preflight L4: `pytest -q tests/test_fractal_delta.py tests/test_stories_data.py tests/test_training.py` → **52 passed em 96,86 s**; `pytest -q -m cuda` → **55 passed, 769 deselected em 122,44 s**; smoke `--smoke --tokenizer bpe --vocab-size 4096 --mode unified --precision bf16` (`transformer_bpe_med`, `fractal_pcc_full_bpe`) → **completo em 0,8 min**.
+  - Dataset BPE train-only preparado uma única vez (`prepared-bpe-v4096-96af1443b0104ead-9a961867`, `3,987×`–`4,036×` compressão), `3.500` passos unificados em `seq=512`, `BF16`, `binding_hard_writes=64`:
+    - **Fase 1 + Fase 2 (`seed=351`):** `transformer_bpe_med` (`15,74M`, `1,0373 BPB`, decode `346,0 tok/s`, binding `1,6%–2,1%`), `fractal_classic_bpe` (`3,60M`, `1,0924 BPB`), `fractal_pcc_bpe` (`7,45M`, `1,0345 BPB`), `fractal_pcc_muon_bpe` (`7,45M`, `1,0028 BPB`, mas queda em `8k` `92,8%` e `HARD` `75,5%`), `fractal_pcc_mtp_muon_bpe` (`7,45M` inf / `10,59M` treino, **`0,9980 BPB`**, `8k=100,0%`, `HARD=99,6%`) e `fractal_pcc_full_bpe` (`+KDA`, `1,0047 BPB`, `10,97 GiB` VRAM, `16,9k tok/s`). KDA descartado por piorar `BPB`, elevar VRAM em `2,70×` e reduzir throughput de treino.
+    - **Confirmação multi-seed (`seeds 351, 352, 353`, `status="complete"`):** `fractal_pcc_mtp_muon_bpe` vs `transformer_bpe_med` (`2,11×` maior em inferência): `val@256 = 1,0451 ± 0,0048` vs `1,0688 ± 0,0028` (`-0,0237 BPB`), `val@512 = 1,0018 ± 0,0040` vs `1,0402 ± 0,0025` (`-0,0384 BPB`), `val@3219 = 0,9978 ± 0,0038` vs `1,0361 ± 0,0024` (`-0,0383 BPB`), `ΔSwap = +0,0861` vs `+0,0753`, `Decode Inductor = 1.395,4 ± 6,6 tok/s` vs `341,2 ± 4,5 tok/s` (`4,09×`), estado `844 KB` vs `6,29 MB` (`7,45×` menor), `Binding 8k w=32 = 100,00%` (`99,97%` pareado) vs `1,50%` (`0,07%`), `HARD 8k w=64 = 99,15 ± 0,49%` (`98,54 ± 0,43%`) vs `1,79%` (`0,00%`).
+- **Limitações declaradas:** treino fixo em `seq=512` sem currículo longo manteve banda `513–2048` em `3,8526 ± 0,0762` vs `3,2903 ± 0,1598` do Transformer (alvo de combinação com currículo na Etapa 4); orçamento restrito a `3.500` passos em TinyStories `16,8 MB`, não qualifica modelo fundacional `100M–1B`. Runtime L4 encerrado (`list_runtimes() == {}`).
+
+## Passo 2 (Fechamento): `assoc_val_dim=48` + Currículo `512→1024→2048` na L4 (`IA2 Campanha 009`, `bd7bcb9` / `2baae7c`)
+
+Relatório detalhado em [docs/results/IA2_CAMPAIGN_009_COLAB_L4.md](docs/results/IA2_CAMPAIGN_009_COLAB_L4.md).
+- **NVIDIA L4 (BF16, `torch.compile(..., dynamic=False)`, seeds `351, 352, 353`, `39,2 min`):** `fractal_golden_classic_v2_big` (`877.157` params, `assoc_val_dim=48`) elevou `Binding @8192 w=32` para **`99,7% ± 0,3%` (`99,5%`)** e `HARD @8192 w=64` para **`95,1% ± 1,2%` (`90,9%`)**, levando banda `2049+` para `0,7221 ± 0,0134`; `pytest -q -m cuda` → **55 passed, 765 deselected em 695,64 s**.
+
 ## Passo 1 + Passo 2: Validação Unificada `IA2 Campaign 007` (`5f924e0`)
 
 Relatório detalhado em [docs/results/IA2_CAMPAIGN_007_UNIFIED.md](docs/results/IA2_CAMPAIGN_007_UNIFIED.md); artefato completo preservado em `llm2-ia2-campaign-007-results.zip` na raiz do workspace.
