@@ -658,45 +658,39 @@ O desenvolvimento deste guia e das alavancas propostas respeita integralmente as
 
 ## Parte IV: Roteiro de Implementação e Priorização
 
-### Seção 4.1: Matriz Esforço x Impacto das 9 Alavancas
+### Seção 4.1: Matriz Esforço x Impacto das 9 Alavancas (Estado Atualizado Pós-Campanha 011)
 
-Para orientar o roadmap de engenharia das próximas fases do LLM 2, as nove tecnologias investigadas foram classificadas quanto à complexidade de implementação, risco de regressão algorítmica e retorno prático:
+Para orientar o roadmap de engenharia das próximas fases do LLM 2, as nove tecnologias investigadas foram classificadas quanto à complexidade, risco, impacto e **status empírico real até o momento**:
 
-| # | Alavanca Técnica | Complexidade de Implementação | Risco de Regressão | Impacto em Eficiência / VRAM | Prioridade no Roadmap |
-|---|---|---|---|---|---|
-| **1** | **Self-Speculative Decoding (MTP)** | **Muito Baixa** (Código de inferência puro) | **Nulo** (Equivalência exata garantida) | **Alto** ($2,04\times$ speedup, $-49,9\%$ Joules/tok) | **P1 (Imediata)** |
-| **2** | **Core L2 Weight Pinning** | **Baixa** (Atributos de Stream CUDA Graph) | **Nulo** (Transparente para o modelo) | **Médio-Alto** ($-83,3\%$ leitura de pesos VRAM) | **P1 (Imediata)** |
-| **3** | **Power Capping DVFS (65%)** | **Muito Baixa** (Script infraestrutura / NVML) | **Nulo** (Hardware puro) | **Alto** ($-18^\circ\text{C}$, $+46,9\%$ Tokens/Joule) | **P1 (Imediata)** |
-| **4** | **Kernel Fused Triton (`state_kernels.py`)** | **Média** (Kernel Triton em Linux / Colab) | **Baixo** (Testes de paridade unitários) | **Alto** ($4,53\times$ menos tráfego VRAM no prefill) | **P2 (Curto Prazo)** |
-| **5** | **Profundidade Adaptativa (Early-Exit / ACT)**| **Média** (Calibração de limiar $\tau_H$) | **Baixo-Médio** (Monitorar NLL) | **Médio-Alto** ($1,57\times$ speedup na decodificação) | **P2 (Curto Prazo)** |
-| **6** | **Rotações Hadamard INT4/W4A8 (QuaRot)** | **Média-Alta** (Implementação do FWHT) | **Baixo** (Ortogonalidade exata) | **Muito Alto** ($4\times$ compressão em atenção/pesos)| **P2 (Curto Prazo)** |
-| **7** | **Desacoplamento GPU/CPU (Engram)** | **Alta** (Pipeline assíncrono PCIe + indexador) | **Médio** (Sincronização de streams) | **Extremo** (Modelos 27B em 4-6 GB VRAM) | **P3 (Médio Prazo)** |
-| **8** | **Ternary SwiGLU em Modelos $\ge 1$B** | **Alta** (QAT curricular em escala industrial) | **Alto** (Exige modelo grande e warm-up) | **Extremo** ($8\times$ compressão em MLPs) | **P3 (Médio Prazo)** |
-| **9** | **Kernel Ternário Assembly / BitBLAS** | **Muito Alta** (Micro-otimização de baixo nível) | **Médio** (Dependente de arquitetura GPU) | **Alto** (Aceleração GEMV sem multiplicações) | **P4 (Longo Prazo)** |
+| # | Alavanca Técnica | Complexidade | Risco | Impacto Projetado (Teoria) | Status & Resultado Real Medido (até C011) | Prioridade Atual |
+|---|---|---|---|---|---|---|
+| **1** | **Self-Speculative Decoding (MTP)** | **Muito Baixa** | **Nulo** | $2,04\times$ speedup, $-49,9\%$ J/tok *(assumindo $\alpha=70\%$)* | **`[x]` VALIDADO (L4, `s351`):** paridade **100% exata** (`1.024` toks `val`), aceitação real **`31,1%`** (`1,62 tok/ciclo`), **`1,44×` speedup** (`1.666,2` vs `1.157,9 tok/s` @ `72W`) e **`-21,9%` mJ/tok** (`31,85` vs `40,77`). *(Diferença vs projeção: $\alpha=31,1\%$ com `mtp_weight=0.25` em `7,45M`.)* | **Feito (Melhorar $\alpha$ em escala maior)** |
+| **2** | **Core L2 Weight Pinning** | **Baixa** | **Nulo** | $-83,3\%$ leitura de pesos VRAM | **`[~]` NEUTRO EM `7,45M`:** `cudaDeviceSetLimit(7,70 MB)` aceito (`err=0`), mas ganho de apenas `+0,2%` (`1.666,2` vs `1.662,8 tok/s`), pois `~15 MB` do modelo já cabem passivamente na L2 de `48 MB` da L4. **Pausado até escala `> 48 MB`.** | **Pausado (Reativar se Core > L2)** |
+| **3** | **Power Capping DVFS** | **Muito Baixa** | **Nulo** | $-18^\circ\text{C}$, $+46,9\%$ Tok/J | **`[x]` VALIDADO (L4, `40W` mín. vs `72W`):** combinado ao MTP em `40W`, entregou **`1.562,6 tok/s`** (**`1,35×` acima do baseline `72W`**) com **`23,45 mJ/tok`** (**`-42,5%` energia**, **`+73,9%` Tokens/Joule NVML**). *(Obs.: rajadas de `~0,6s` mantiveram `~60°C` por inércia térmica do dissipador.)* | **Feito** |
+| **4** | **Kernel Fused Triton (`state_kernels.py`)** | **Média** | **Baixo** | $4,53\times$ menos tráfego VRAM no prefill/treino | **`[ ]` PENDENTE — PRIORIDADE MÁXIMA:** em `seq=2048×4` (C011), o treino em PyTorch caiu para `4.869 tok/s` (`45,3 min` totais). Destrava modelos `50M–150M+`. | **P1 (Próximo Passo Imediato)** |
+| **5** | **Profundidade Adaptativa (Early-Exit / ACT)** | **Média** | **Baixo-Médio** | $1,57\times$ speedup no Core | **`[ ]` PENDENTE:** aguarda corpus/modelo maior (`50M+`) onde tokens variem bastante de dificuldade. | **P2 (Pós-Triton)** |
+| **6** | **Rotações Hadamard INT4/W4A8 (QuaRot)** | **Média-Alta** | **Baixo** | $4\times$ compressão em pesos/atenção | **`[ ]` PENDENTE:** aguarda escala $\ge 50\text{M–}150\text{M}$ para medir perda real de `BPB` vs VRAM/Watts sem ruído subcrítico. | **P2 (Escala `50M–150M+`)** |
+| **7** | **Desacoplamento GPU/CPU (Engram)** | **Alta** | **Médio** | Modelos `27B` em `4–6 GB` VRAM | **`[ ]` PENDENTE:** só faz sentido em corpus factual grande (`FineWeb-Edu` / Web + código) em escala `100M+`. | **P3 (`100M–1B`)** |
+| **8** | **Ternary SwiGLU em Modelos $\ge 1$B** | **Alta** | **Alto** | $8\times$ compressão em MLPs | **`[ ]` PENDENTE (`>= 1B`):** ternário em modelo pequeno/compartilhado já falhou na C005 (`0,9256→1,1788 NLL`). | **P3 (Só `>= 500M–1B`)** |
+| **9** | **Kernel Ternário Assembly / BitBLAS** | **Muito Alta** | **Médio** | GEMV sem multiplicações | **`[ ]` PENDENTE:** só entra se #8 passar na validação em escala $\ge 1\text{B}$. | **P4 (Condicional a #8)** |
 
-### Seção 4.2: Etapas de Prototipagem Recomendadas para o Roadmap do LLM 2
+*(Registros extras já fechados no caminho fora da tabela inicial: **[x] Currículo `512→1024→2048`** integrado ao `fractal_pcc_mtp_muon_bpe` na Campanha 011 derrubando `band 513–2048` de `3,8526 → 2,4578 NLL` e fechando `val@3219 = 0,8993 BPB`; **[✗] KDA descartado na Campanha 010** por piorar `BPB` `0,9980→1,0047`, elevar VRAM `2,70×` para `10,97 GiB` e derrubar throughput de treino de `28,5k → 16,9k tok/s`.)*
 
-Com base na matriz de prioridades, estabelece-se o seguinte cronograma de entrega técnica:
+### Seção 4.2: Etapas de Prototipagem — Checklist de Execução Real
 
-#### Fase 1: Ganhos Imediatos sem Alteração de Pesos (Semana 1)
-1. **Ativação do Self-Speculative Decoding:**  
-   Implementar em `src/llm2/research/decode_optimization.py` a classe `SelfSpeculativeDecodeRunner`, conectando as duas cabeças MTP já treinadas do checkpoint `fractal_pcc_mtp_muon_bpe`. Validar amostragem gananciosa exata com assert de paridade em $10.000$ tokens gerados.
-2. **Fixação de L2 Cache via CUDA Graph:**  
-   Configurar `cudaAccessPropertyPersisting` no stream de captura do CUDAGraph de decodificação para o ponteiro de memória de `cells[1]` ($3,67\text{ MB}$).
-3. **Power Capping Operacional:**  
-   Adicionar ao runner de benchmark o parâmetro `--power-limit-ratio 0.65`, ativando o sweet spot de eficiência térmica.
+#### Fase 1: Ganhos Imediatos sem Alteração de Pesos — **CONCLUÍDA (Campanha 011, `658eb54`)**
+1. `[x]` **Self-Speculative Decoding (`SelfSpeculativeMTPDecode`):** implementado em [decode_optimization.py](file:///c:/Users/Lux/Documents/ChatGPT/LLM%202/src/llm2/research/decode_optimization.py) (`step_hidden` com estados intermediários em [fractal_delta.py](file:///c:/Users/Lux/Documents/ChatGPT/LLM%202/src/llm2/architectures/fractal_delta.py) + `state_kernels.py`), validado com **100% de paridade greedy** em `1.024` tokens reais na L4 (`1,44×` speedup).
+2. `[~]` **Fixação de L2 Cache:** testado `try_pin_l2_weights` (`cudaDeviceSetLimit`); neutro em `7,45M` por já caber passivamente na L2 de `48 MB` da L4 (pausado até escalas maiores).
+3. `[x]` **Power Capping + Telemetria Real NVML (`NVMLPowerMonitor` + `--power-limit-ratio`):** medido `72W / 55W / 40W` na L4 (`-42,5% mJ/token` no piso de `40W`).
+4. `[x]` **Bônus da Fase 1 — Currículo `512→1024→2048` proporcional em `--steps`:** resolveu o gap de `513–2048` da Campanha 010 (`3,8526 → 2,4578 NLL`) com `100%` de retenção em `8K`.
 
-#### Fase 2: Otimização de Kernels e Quantização Robusta (Semanas 2–3)
-1. **Kernel Triton `state_kernels_triton.py`:**  
-   Codificar o kernel fundido com retenção de estado em SRAM e testes de paridade bit-a-bit contra o `dplr_chunked` do PyTorch. Executar benchmarks no ambiente Linux com GPU L4.
-2. **Pipeline de Rotação Hadamard (QuaRot Prototype):**  
-   Desenvolver o módulo de rotação offline de pesos e a função `fast_walsh_hadamard_transform` em PyTorch para ativações, avaliando a perda de quantização INT4 nas matrizes de projeção.
+#### Fase 2: Aceleração de Treino (Triton) + Contexto/Escala (`50M–150M+`) — **EM SEQUÊNCIA AGORA**
+1. `[ ]` **Kernel Triton para `state_kernels.py` (`dplr_chunked` em SRAM):** destravar os `4.869 tok/s` em `seq=2048` para viabilizar pré-treino real em corpus web/código.
+2. `[ ]` **Pipeline de Rotação Hadamard / INT4 (`QuaRot`) + `Memory Caching` (`arXiv:2602.24281`) + Early-Exit:** prototipar conforme subirmos para escala `50M–150M+` e contextos `8K–32K+`.
 
-#### Fase 3: Escala Industrial e Desacoplamento de Memória (Semanas 4+)
-1. **Módulo de Memória Factual Desacoplada (Engram Engine):**  
-   Estruturar o carregador de tabelas de embeddings em RAM pinned de host com prefetch assíncrono via stream dedicado de DMA para a fase de Prelude do LLM 2.
-2. **Piloto Curricular de SwiGLU Ternário em Escala $\ge 1$B:**  
-   Em conformidade com a autorização de `AGENTS.md` para a expansão em modelos de grande porte, testar a ternarização restrita a SwiGLU com *group-wise scaling* ($g=128$) utilizando warm-up de $20\%$ dos passos em BF16.
+#### Fase 3: Escala Industrial (`100M–1B+`) & Benchmarks Reais
+1. `[ ]` **Corpus real (`FineWeb-Edu` + código/matemática) e avaliação externa (`HellaSwag`, `PIQA`, `ARC-Easy`, `LAMBADA`, `RULER`)** antes de decidir ativar **Engram (RAM CPU)** ou **Ternary SwiGLU (`>= 1B`)**.
+2. `[ ]` **Atualizar `README.md`** somente ao concluir essa bateria completa de validação do roteiro.
 
 ---
 
