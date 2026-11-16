@@ -12,19 +12,25 @@ from torch.nn import functional as F
 RULES = ("gated_delta", "rwkv7", "mlstm")
 
 
-def dplr_sequential(q, k, v, log_w, a, b, state=None):
+def dplr_sequential(q, k, v, log_w, a, b, state=None, *, return_all_states=False):
     """S_t=S_{t-1}diag(w_t)+(S_{t-1}a_t)b_t^T+v_t k_t^T."""
     with torch.autocast(device_type=q.device.type, enabled=False):
         q, k, v, log_w, a, b = (x.float() for x in (q, k, v, log_w, a, b))
         memory = v.new_zeros(*q.shape[:2], v.shape[-1], q.shape[-1]) if state is None else state.float()
         outputs = []
+        states = [] if return_all_states else None
         for t in range(q.shape[-2]):
             removed = torch.einsum("bhvk,bhk->bhv", memory, a[:, :, t])
             memory = (memory * log_w[:, :, t].exp().unsqueeze(-2)
                       + removed.unsqueeze(-1) * b[:, :, t].unsqueeze(-2)
                       + v[:, :, t].unsqueeze(-1) * k[:, :, t].unsqueeze(-2))
             outputs.append(torch.einsum("bhvk,bhk->bhv", memory, q[:, :, t]))
-        return torch.stack(outputs, -2), memory
+            if states is not None:
+                states.append(memory)
+        out = torch.stack(outputs, -2)
+        if states is not None:
+            return out, memory, torch.stack(states, 0)
+        return out, memory
 
 
 def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32):

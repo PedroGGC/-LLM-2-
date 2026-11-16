@@ -21,7 +21,15 @@ from ..trainer import Trainer
 from .binding_data import TASK_ID as BINDING_TASK_ID, generate as generate_binding
 from .binding_worker import BindingTrainer, score as score_binding
 from .decode_cache import RecurrentDecode, generate, verify_logits
-from .decode_optimization import CompiledDecode, LocalTransformerDecode
+from .decode_optimization import (
+    CompiledDecode,
+    LocalTransformerDecode,
+    NVMLPowerMonitor,
+    SelfSpeculativeMTPDecode,
+    restore_power_limit,
+    try_pin_l2_weights,
+    try_set_power_limit,
+)
 from .stories_data import StoriesData, StoryStream, _doc_tokens, prepare as prepare_stories, prepare_bpe as prepare_bpe_stories, window as story_window
 from .stories_worker import StoryTrainer, score as score_stories
 
@@ -403,6 +411,7 @@ class UnifiedStream:
         self.length = cfg.data.seq_len
         self.batch = cfg.data.batch_size
         self.max_seq_len = cfg.model.max_seq_len
+        self.max_steps = cfg.train.max_steps
         self.accumulation = cfg.train.grad_accum_steps
         self.smoke = self.length < 256
         self.curriculum = curriculum
@@ -436,9 +445,11 @@ class UnifiedStream:
             if step >= 1 and cur_len in self.stage_streams:
                 return cur_len, max(2, self.batch // 2)
             return self.length, self.batch
-        if step >= 4500 and (self.length * 4) in self.stage_streams:
+        stage2 = max(1, self.max_steps // 2)
+        stage3 = max(stage2 + 1, (3 * self.max_steps) // 4)
+        if step >= stage3 and (self.length * 4) in self.stage_streams:
             return self.length * 4, max(2, self.batch // 4)
-        if step >= 3000 and (self.length * 2) in self.stage_streams:
+        if step >= stage2 and (self.length * 2) in self.stage_streams:
             return self.length * 2, max(2, self.batch // 2)
         return self.length, self.batch
 
@@ -448,9 +459,10 @@ class UnifiedStream:
         cur_bind = max(1, cur_batch // 4)
         stream = self.story_stream if cur_len == self.length else self.stage_streams[cur_len]
         story = stream.next(device)
+        stage3 = max(1, (3 * self.max_steps) // 4)
         if self.smoke:
             writes = 2
-        elif self.curriculum and step >= 4500 and cur_len >= 2048:
+        elif self.curriculum and step >= stage3 and cur_len >= 2048:
             writes = 48
         else:
             writes = next(w for th, w in reversed(UNIFIED_WRITES) if step >= th)
@@ -540,7 +552,17 @@ class UnifiedTrainer(Trainer):
         }
 
 
-def benchmark_decode(model, device, *, smoke=False, vocab_limit=256):
+def benchmark_decode(
+    model,
+    device,
+    *,
+    smoke=False,
+    vocab_limit=256,
+    mtp_heads=None,
+    val_prefix=None,
+    measure_energy=False,
+    pin_l2=False,
+):
     was_training = model.training
     model.eval()
     prefix_len = 24 if smoke else 7936
@@ -549,18 +571,40 @@ def benchmark_decode(model, device, *, smoke=False, vocab_limit=256):
     gen = torch.Generator().manual_seed(91127)
     prefix = torch.randint(0, vocab_limit, (1, prefix_len), generator=gen).to(device)
     cont = torch.randint(0, vocab_limit, (1, 12 if smoke else 32), generator=gen).to(device)
+    l2_pin_info = None
+    if pin_l2 and isinstance(model, FractalDeltaMemory):
+        core_idx = 1 if len(model.cells) > 1 else 0
+        l2_pin_info = try_pin_l2_weights(list(model.cells[core_idx].parameters()), device)
     try:
         eager = _make_decode_adapter(model, span=span)
         results = {}
+        if l2_pin_info is not None:
+            results["l2_pin"] = l2_pin_info
+        compiled_decoder = None
         for mode_name, use_compiled in (("eager", False), ("inductor", True)):
             decoder = CompiledDecode(eager, backend="inductor") if use_compiled else eager
+            if use_compiled:
+                compiled_decoder = decoder
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats(device)
             t0 = time.perf_counter()
             parity = verify_logits(decoder, prefix, cont)
             first_step_wall = time.perf_counter() - t0
-            timing, _ = generate(decoder, prefix, new_bytes)
+            monitor = NVMLPowerMonitor(device) if (measure_energy and use_compiled) else None
+            if monitor is not None:
+                with monitor:
+                    timing, _ = generate(decoder, prefix, new_bytes)
+                nvml_stats = monitor.summary
+            else:
+                timing, _ = generate(decoder, prefix, new_bytes)
+                nvml_stats = None
             peak_vram = torch.cuda.max_memory_allocated(device) if device.type == "cuda" else None
+            toks_s = (new_bytes - 1) / max(timing["decode_seconds"], 1e-9)
+            mj_per_tok = (
+                (nvml_stats["energy_joules"] * 1000.0) / max(new_bytes - 1, 1)
+                if nvml_stats is not None and nvml_stats.get("energy_joules") is not None
+                else None
+            )
             results[mode_name] = {
                 "prefix_bytes": prefix_len,
                 "new_bytes": new_bytes,
@@ -568,12 +612,59 @@ def benchmark_decode(model, device, *, smoke=False, vocab_limit=256):
                 "decode_seconds": timing["decode_seconds"],
                 "first_byte_seconds": timing["first_byte_seconds"],
                 "total_seconds": timing["total_seconds"],
-                "bytes_per_sec": (new_bytes - 1) / max(timing["decode_seconds"], 1e-9),
+                "bytes_per_sec": toks_s,
                 "state_bytes": timing["state_bytes"],
                 "peak_vram_bytes": peak_vram,
                 "warmup_parity_seconds": first_step_wall,
                 "cudagraph": getattr(decoder, "use_cudagraph", False),
+                "nvml": nvml_stats,
+                "mj_per_token": mj_per_tok,
             }
+        if mtp_heads is not None and len(mtp_heads) > 0 and isinstance(model, FractalDeltaMemory) and compiled_decoder is not None:
+            real_prefix = val_prefix.to(device) if val_prefix is not None else prefix[:, : (24 if smoke else 256)]
+            spec_n = new_bytes
+            with torch.inference_mode():
+                # Standard greedy baseline on the exact same real validation prefix
+                base_cap = real_prefix.shape[1] + spec_n + 1
+                b_logits, b_state = compiled_decoder.prefill(real_prefix, base_cap)
+                base_tokens = []
+                monitor_b = NVMLPowerMonitor(device) if measure_energy else None
+                t_b0 = time.perf_counter()
+                if monitor_b is not None:
+                    monitor_b.__enter__()
+                try:
+                    for idx in range(spec_n):
+                        tok = int(b_logits[0, -1, :vocab_limit].argmax(dim=-1).item())
+                        base_tokens.append(tok)
+                        if idx + 1 < spec_n:
+                            b_logits, b_state = compiled_decoder.step(torch.tensor([[tok]], dtype=torch.long, device=device), b_state)
+                    if device.type == "cuda":
+                        torch.cuda.synchronize(device)
+                    base_s = max(time.perf_counter() - t_b0, 1e-9)
+                finally:
+                    if monitor_b is not None:
+                        monitor_b.__exit__(None, None, None)
+                spec_dec = SelfSpeculativeMTPDecode(model, mtp_heads, vocab_limit=vocab_limit, backend="inductor")
+                spec_tokens, spec_stats = spec_dec.generate_greedy(real_prefix, spec_n, measure_energy=measure_energy)
+                if spec_tokens != base_tokens:
+                    raise RuntimeError("SelfSpeculativeMTPDecode greedy parity mismatch against standard decode")
+                base_tok_s = spec_n / base_s
+                base_nvml = None if monitor_b is None else monitor_b.summary
+                base_mj = (
+                    (base_nvml["energy_joules"] * 1000.0) / spec_n
+                    if base_nvml is not None and base_nvml.get("energy_joules") is not None
+                    else None
+                )
+                results["speculative_mtp"] = {
+                    **spec_stats,
+                    "prefix_tokens": int(real_prefix.shape[1]),
+                    "greedy_exact_match": True,
+                    "baseline_real_decode_seconds": base_s,
+                    "baseline_real_tokens_per_sec": base_tok_s,
+                    "baseline_real_nvml": base_nvml,
+                    "baseline_real_mj_per_token": base_mj,
+                    "speedup_vs_baseline": spec_stats["tokens_per_sec"] / max(base_tok_s, 1e-9),
+                }
         return results, eager
     finally:
         model.train(was_training)
@@ -612,7 +703,19 @@ def sample_story_text(model, device, *, smoke=False, decoder=None, tokenizer=Non
         model.train(was_training)
 
 
-def _evaluate_stories_and_decode(model, data, device, *, story_seq_len, eval_batch_size, smoke, arm_label):
+def _evaluate_stories_and_decode(
+    model,
+    data,
+    device,
+    *,
+    story_seq_len,
+    eval_batch_size,
+    smoke,
+    arm_label,
+    mtp_heads=None,
+    measure_energy=False,
+    pin_l2=False,
+):
     max_b = 2 if smoke else None
     val_256 = score_stories(model, data, "val", 32 if smoke else 256, 2 if smoke else 32, device, max_batches=max_b)
     val_512 = (
@@ -628,7 +731,20 @@ def _evaluate_stories_and_decode(model, data, device, *, story_seq_len, eval_bat
         val_long = {"nll": None, "bits_per_byte": None, "error": "CUDA OOM"}
     diagnostics = score_stories_bands_and_prefix(model, data, "val", device, smoke=smoke)
     vocab_limit = 256 if data.schema == "stories-doc-bytes-v1" else data.vocab_size
-    decode_stats, eager_decoder = benchmark_decode(model, device, smoke=smoke, vocab_limit=vocab_limit)
+    val_prefix = None
+    if getattr(data, "val", None) is not None and len(data.val.tokens) >= (24 if smoke else 256):
+        plen = 24 if smoke else 256
+        val_prefix = torch.tensor(data.val.tokens[:plen], dtype=torch.long).unsqueeze(0)
+    decode_stats, eager_decoder = benchmark_decode(
+        model,
+        device,
+        smoke=smoke,
+        vocab_limit=vocab_limit,
+        mtp_heads=mtp_heads,
+        val_prefix=val_prefix,
+        measure_energy=measure_energy,
+        pin_l2=pin_l2,
+    )
     samples = sample_story_text(model, device, smoke=smoke, decoder=eager_decoder, tokenizer=data.tokenizer)
     b = diagnostics["bands"]
     p = diagnostics["prefix_intervention"]
@@ -643,6 +759,14 @@ def _evaluate_stories_and_decode(model, data, device, *, story_seq_len, eval_bat
         f"[{arm_label}] Bands: {band_str} | Prefix delta_trunc={p['delta_vs_truncated']} delta_swap={p['delta_vs_swapped']}",
         flush=True,
     )
+    if "speculative_mtp" in decode_stats:
+        sp = decode_stats["speculative_mtp"]
+        print(
+            f"[{arm_label}] Speculative MTP: tok/s={sp['tokens_per_sec']:.1f} (base={sp['baseline_real_tokens_per_sec']:.1f}, "
+            f"speedup={sp['speedup_vs_baseline']:.2f}x, accept={100*sp['draft_acceptance_rate']:.1f}%, "
+            f"tok/cycle={sp['mean_tokens_per_cycle']:.2f}, mj/tok={sp.get('mj_per_token')})",
+            flush=True,
+        )
     return val_256, val_512, val_long, long_len, diagnostics, decode_stats, samples
 
 
@@ -708,6 +832,8 @@ def run_arm(
     precision="fp32",
     unified_curriculum=False,
     max_steps=None,
+    measure_energy=False,
+    pin_l2=False,
 ):
     arm_label = f"{arm.name}:s{seed}" if (seed != 341 or mode == "unified") else arm.name
     print(f"\n=== [{arm_label}] ({arm.group}, mode={mode}, precision={precision}, curriculum={unified_curriculum}) starting on {device} ===", flush=True)
@@ -735,6 +861,7 @@ def run_arm(
             train_wall = time.perf_counter() - t0
             train_vram = torch.cuda.max_memory_allocated(trainer.device) if trainer.device.type == "cuda" else None
             ckpt_sha = sha256_file(Path(trainer.last_checkpoint) / "model.safetensors") if trainer.last_checkpoint else None
+            mtp_heads = getattr(trainer.objective, "mtp_heads", None)
             val_256, val_512, val_long, long_len, diagnostics, decode_stats, samples = _evaluate_stories_and_decode(
                 trainer.model,
                 trainer.data,
@@ -743,6 +870,9 @@ def run_arm(
                 eval_batch_size=unified_cfg.data.eval_batch_size,
                 smoke=smoke,
                 arm_label=arm_label,
+                mtp_heads=mtp_heads if mtp_heads is not None and len(mtp_heads) > 0 else None,
+                measure_energy=measure_energy,
+                pin_l2=pin_l2,
             )
             bind_scores = _evaluate_binding_suite(
                 trainer.model, trainer.device, smoke=smoke, binding_hard_writes=binding_hard_writes, arm_label=arm_label
@@ -798,6 +928,7 @@ def run_arm(
         story_wall = time.perf_counter() - story_t0
         story_vram = torch.cuda.max_memory_allocated(trainer.device) if trainer.device.type == "cuda" else None
         story_ckpt_sha = sha256_file(Path(trainer.last_checkpoint) / "model.safetensors") if trainer.last_checkpoint else None
+        mtp_heads = getattr(trainer.objective, "mtp_heads", None)
         val_256, val_512, val_long, long_len, diagnostics, decode_stats, samples = _evaluate_stories_and_decode(
             trainer.model,
             trainer.data,
@@ -806,6 +937,9 @@ def run_arm(
             eval_batch_size=story_cfg.data.eval_batch_size,
             smoke=smoke,
             arm_label=arm_label,
+            mtp_heads=mtp_heads if mtp_heads is not None and len(mtp_heads) > 0 else None,
+            measure_energy=measure_energy,
+            pin_l2=pin_l2,
         )
 
     bind_cfg = make_binding_config(arm, arm_root / "binding", seed=seed, lr=cal["lr"], smoke=smoke, device=device, precision=precision, vocab_size=vocab_size)
@@ -878,6 +1012,9 @@ def main(argv=None):
     parser.add_argument("--story-seq-len", type=int, default=256)
     parser.add_argument("--binding-hard-writes", type=int, default=0)
     parser.add_argument("--unified-curriculum", action="store_true")
+    parser.add_argument("--measure-energy", action="store_true")
+    parser.add_argument("--pin-l2", action="store_true")
+    parser.add_argument("--power-limit-ratio", type=float, default=None)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args(argv)
@@ -912,12 +1049,16 @@ def main(argv=None):
     started = time.monotonic()
     reports = []
     deferred = []
+    power_cap = try_set_power_limit(args.device, args.power_limit_ratio) if args.power_limit_ratio is not None else None
     payload = {
         "status": "running",
         "mode": args.mode,
         "precision": args.precision,
         "tokenizer": args.tokenizer,
         "unified_curriculum": args.unified_curriculum,
+        "measure_energy": args.measure_energy,
+        "pin_l2": args.pin_l2,
+        "power_cap": power_cap,
         "smoke": args.smoke,
         "environment": environment(),
         "wall_seconds": 0.0,
@@ -925,40 +1066,48 @@ def main(argv=None):
         "deferred_arms": deferred,
     }
     runs = [(arm, seed) for seed in args.seeds for arm in selected]
-    for arm, seed in runs:
-        if reports and (time.monotonic() - started) >= args.deadline_seconds:
-            deferred.append(f"{arm.name}:s{seed}")
-            continue
-        reports.append(
-            run_arm(
-                arm,
-                data_root,
-                out_dir,
-                smoke=args.smoke,
-                device=args.device,
-                story_seq_len=args.story_seq_len,
-                binding_hard_writes=args.binding_hard_writes,
-                mode=args.mode,
-                seed=seed,
-                lr_override=args.lr,
-                precision=args.precision,
-                unified_curriculum=args.unified_curriculum,
-                max_steps=args.steps,
+    try:
+        for arm, seed in runs:
+            if reports and (time.monotonic() - started) >= args.deadline_seconds:
+                deferred.append(f"{arm.name}:s{seed}")
+                continue
+            reports.append(
+                run_arm(
+                    arm,
+                    data_root,
+                    out_dir,
+                    smoke=args.smoke,
+                    device=args.device,
+                    story_seq_len=args.story_seq_len,
+                    binding_hard_writes=args.binding_hard_writes,
+                    mode=args.mode,
+                    seed=seed,
+                    lr_override=args.lr,
+                    precision=args.precision,
+                    unified_curriculum=args.unified_curriculum,
+                    max_steps=args.steps,
+                    measure_energy=args.measure_energy,
+                    pin_l2=args.pin_l2,
+                )
             )
-        )
-        payload = {
-            "status": "running",
-            "mode": args.mode,
-            "precision": args.precision,
-            "tokenizer": args.tokenizer,
-            "unified_curriculum": args.unified_curriculum,
-            "smoke": args.smoke,
-            "environment": environment(),
-            "wall_seconds": time.monotonic() - started,
-            "arms": reports,
-            "deferred_arms": deferred,
-        }
-        (out_dir / "summary.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            payload = {
+                "status": "running",
+                "mode": args.mode,
+                "precision": args.precision,
+                "tokenizer": args.tokenizer,
+                "unified_curriculum": args.unified_curriculum,
+                "measure_energy": args.measure_energy,
+                "pin_l2": args.pin_l2,
+                "power_cap": power_cap,
+                "smoke": args.smoke,
+                "environment": environment(),
+                "wall_seconds": time.monotonic() - started,
+                "arms": reports,
+                "deferred_arms": deferred,
+            }
+            (out_dir / "summary.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    finally:
+        restore_power_limit(args.device, power_cap)
 
     payload["status"] = "partial_budget" if deferred else "complete"
     payload["wall_seconds"] = time.monotonic() - started

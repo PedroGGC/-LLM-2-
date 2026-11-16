@@ -225,3 +225,140 @@ def test_compiled_recurrent_decode_latency_vs_transformer_kv_cache(tmp_path):
 
     assert 0 < r_step_ms < 50.0
     assert 0 < t_step_ms < 50.0
+
+
+@torch.inference_mode()
+def test_fractal_step_hidden_and_all_states_parity():
+    from llm2.architectures.fractal_delta import FractalDecode, FractalDeltaMemory
+    from llm2.config import ModelConfig, ResearchConfig
+
+    torch.manual_seed(77)
+    cfg = ModelConfig(vocab_size=32, d_model=24, n_layers=4, n_heads=2, hidden_dim=48, max_seq_len=64, dropout=0.0)
+    res = ResearchConfig(
+        architecture="fractal_delta",
+        share_scales=True,
+        scale_conditioning=False,
+        memory_dim=12,
+        state_chunk_size=8,
+        fractal_value_residual=True,
+        fractal_golden_phase=True,
+        fractal_leaky_budget=True,
+        fractal_assoc_delta=True,
+        fractal_assoc_val_dim=12,
+        fractal_prelude_coda=True,
+        fractal_assoc_multilag=True,
+    )
+    model = FractalDeltaMemory(cfg, res).eval()
+    dec = FractalDecode(model)
+
+    prefix = torch.randint(0, 32, (1, 10))
+    block = torch.randint(0, 32, (1, 4))
+    l0, s0 = dec.prefill(prefix, 20)
+
+    # Sequential step-by-step reference
+    seq_logits = []
+    seq_states = []
+    st = s0
+    for idx in range(block.shape[1]):
+        lg, st = dec.step(block[:, idx : idx + 1], st)
+        seq_logits.append(lg)
+        seq_states.append(st)
+    ref_logits = torch.cat(seq_logits, dim=1)
+
+    blk_logits, _, stacked_states = dec.step_hidden(block, s0, return_all_states=True)
+    assert (blk_logits - ref_logits).abs().max().item() < 1e-5
+    for idx, ref_st in enumerate(seq_states):
+        sl = dec.slice_step_state(stacked_states, idx)
+        assert torch.equal(sl.phase_pos, ref_st.phase_pos)
+        assert (sl.assoc_memory - ref_st.assoc_memory).abs().max().item() < 1e-5
+        assert (sl.local_tail - ref_st.local_tail).abs().max().item() < 1e-5
+        for l_a, l_b in zip(sl.levels, ref_st.levels, strict=True):
+            assert (l_a.memory - l_b.memory).abs().max().item() < 1e-5
+            assert (l_a.tail - l_b.tail).abs().max().item() < 1e-5
+
+
+@torch.inference_mode()
+def test_self_speculative_mtp_exact_greedy_parity_and_acceptance():
+    from llm2.architectures.fractal_delta import FractalDecode, FractalDeltaMemory
+    from llm2.config import ModelConfig, ResearchConfig
+    from llm2.research.decode_optimization import SelfSpeculativeMTPDecode
+
+    torch.manual_seed(123)
+    cfg = ModelConfig(vocab_size=24, d_model=24, n_layers=4, n_heads=2, hidden_dim=48, max_seq_len=64, dropout=0.0)
+    res = ResearchConfig(
+        architecture="fractal_delta",
+        share_scales=True,
+        scale_conditioning=False,
+        memory_dim=12,
+        state_chunk_size=8,
+        fractal_value_residual=True,
+        fractal_golden_phase=True,
+        fractal_leaky_budget=True,
+        fractal_assoc_delta=True,
+        fractal_assoc_val_dim=12,
+        fractal_prelude_coda=True,
+        fractal_assoc_multilag=True,
+    )
+    model = FractalDeltaMemory(cfg, res).eval()
+    base_dec = FractalDecode(model)
+    prefix = torch.randint(0, 24, (1, 12))
+    new_tokens = 18
+
+    logits, st = base_dec.prefill(prefix, prefix.shape[1] + new_tokens + 4)
+    ref_tokens = []
+    for i in range(new_tokens):
+        nxt = int(logits[0, -1].argmax(dim=-1).item())
+        ref_tokens.append(nxt)
+        if i + 1 < new_tokens:
+            logits, st = base_dec.step(torch.tensor([[nxt]]), st)
+
+    # Regime 1: random auxiliary heads (tests rejection rollback) across eager and compiled
+    heads = torch.nn.ModuleList([torch.nn.Linear(24, 24, bias=False), torch.nn.Linear(24, 24, bias=False)]).eval()
+    for backend in (None, "aot_eager"):
+        spec = SelfSpeculativeMTPDecode(model, heads, vocab_limit=24, backend=backend)
+        got, stats = spec.generate_greedy(prefix, new_tokens, measure_energy=False)
+        assert got == ref_tokens
+        assert stats["tokens"] == new_tokens
+        assert stats["cycles"] <= new_tokens
+
+    # Regime 2: tie heads[0] to exact next token on constant-hidden fixed point test via matching head[0] == lm_head
+    # (exercises partial match acceptance path when consecutive greedy tokens repeat or coincide with head[0])
+    heads_match0 = torch.nn.ModuleList([torch.nn.Linear(24, 24, bias=False), torch.nn.Linear(24, 24, bias=False)]).eval()
+    heads_match0[0].weight.copy_(model.lm_head.weight)
+    spec_m = SelfSpeculativeMTPDecode(model, heads_match0, vocab_limit=24, backend=None)
+    got_m, _ = spec_m.generate_greedy(prefix, new_tokens)
+    assert got_m == ref_tokens
+
+
+def test_nvml_and_l2_pin_cpu_safe_and_smoke_benchmark(tmp_path):
+    from llm2.research.decode_optimization import NVMLPowerMonitor, try_pin_l2_weights
+    from llm2.research.ia2_benchmark import main as bench_main
+    import json
+
+    t = torch.zeros(4, 4)
+    pin = try_pin_l2_weights([t], torch.device("cpu"))
+    assert pin["supported"] is False
+    assert pin["pinned_bytes"] == 0
+    with NVMLPowerMonitor(torch.device("cpu")) as mon:
+        _ = t + 1
+    assert mon.summary is None
+
+    out_dir = tmp_path / "bench_smoke_mtp"
+    bench_main([
+        "--output-dir", str(out_dir),
+        "--arms", "fractal_pcc_mtp_muon_bpe",
+        "--mode", "unified",
+        "--tokenizer", "bpe",
+        "--vocab-size", "384",
+        "--measure-energy",
+        "--pin-l2",
+        "--smoke",
+        "--device", "cpu",
+    ])
+    summary = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["status"] == "complete"
+    dec = summary["arms"][0]["decode"]
+    assert dec["l2_pin"]["supported"] is False
+    assert dec["inductor"]["nvml"] is None
+    assert dec["speculative_mtp"]["greedy_exact_match"] is True
+    assert dec["speculative_mtp"]["nvml"] is None
