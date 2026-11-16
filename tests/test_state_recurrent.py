@@ -131,3 +131,106 @@ def test_inference_state_does_not_retain_full_prefix_storage(tiny_config,rule):
     if rule=="mlstm":
         for memory in state.memories:
             assert memory[2].untyped_storage().nbytes()==memory[2].numel()*memory[2].element_size()
+
+
+@pytest.mark.parametrize("w_dim", (1, 12))
+def test_dplr_inter_chunk_scan_custom_op_cpu_parity_and_compile(w_dim):
+    from llm2.architectures.state_kernels import dplr_chunked, dplr_sequential
+    from llm2.architectures.triton_dplr import dplr_inter_chunk_scan
+
+    torch.manual_seed(99)
+    b, h, l, v, k, c = 2, 2, 19, 10, 12, 8
+    inputs = [torch.randn(b, h, l, k) * 0.2, torch.randn(b, h, l, k) * 0.2, torch.randn(b, h, l, v) * 0.2,
+              torch.randn(b, h, l, w_dim) * 0.2 - 0.5, torch.randn(b, h, l, k) * 0.1, torch.randn(b, h, l, k) * 0.1,
+              torch.randn(b, h, v, k) * 0.1]
+
+    refs = []
+    for mode in ("seq", "chunk"):
+        xs = [x.clone().requires_grad_() for x in inputs]
+        q, kk, vv, lw, aa, bb, st = xs
+        if mode == "seq":
+            o, m = dplr_sequential(q, kk, vv, lw, aa, bb, st)
+        else:
+            o, m = dplr_chunked(q, kk, vv, lw, aa, bb, st, chunk_size=c, use_triton=False)
+        (o.square().sum() + 0.05 * m.square().sum()).backward()
+        refs.append((o.detach(), m.detach(), [x.grad.detach() for x in xs]))
+
+    torch.testing.assert_close(refs[0][0], refs[1][0], atol=2e-5, rtol=1e-4)
+    torch.testing.assert_close(refs[0][1], refs[1][1], atol=2e-5, rtol=1e-4)
+
+    # Verify custom_op PyTorch fallback + autograd + torch.compile match loop exact
+    n = 4
+    kv = torch.randn(b, h, n, c, v, requires_grad=True)
+    rp = torch.randn(b, h, n, c, k, requires_grad=True)
+    md = torch.rand(b, h, n, 1, w_dim, requires_grad=True)
+    st_t = torch.randn(b, h, n, k, k) * 0.05
+    st_t.requires_grad_(True)
+    ml = torch.randn(b, h, n, v, k, requires_grad=True)
+    init = torch.randn(b, h, v, k, requires_grad=True)
+
+    o_scan, m_scan = dplr_inter_chunk_scan(kv, rp, md, st_t, ml, init)
+    (o_scan.square().sum() + 0.1 * m_scan.square().sum()).backward()
+    grads_scan = [x.grad.clone() for x in (kv, rp, md, st_t, ml, init)]
+
+    for x in (kv, rp, md, st_t, ml, init):
+        x.grad = None
+    mem = init
+    outs = []
+    for idx in range(n):
+        outs.append(kv[:, :, idx] + rp[:, :, idx] @ mem.transpose(-1, -2))
+        mem = mem * md[:, :, idx] + ml[:, :, idx] + mem @ st_t[:, :, idx]
+    o_loop = torch.cat(outs, dim=-2)
+    (o_loop.square().sum() + 0.1 * mem.square().sum()).backward()
+    torch.testing.assert_close(o_scan, o_loop, atol=5e-5, rtol=3e-4)
+    torch.testing.assert_close(m_scan, mem, atol=5e-5, rtol=3e-4)
+    for g1, x in zip(grads_scan, (kv, rp, md, st_t, ml, init)):
+        torch.testing.assert_close(g1, x.grad, atol=5e-5, rtol=3e-4)
+
+    # Verify custom_op compiles without errors under torch.compile
+    for x in (kv, rp, md, st_t, ml, init):
+        x.grad = None
+    compiled_scan = torch.compile(dplr_inter_chunk_scan, backend="aot_eager")
+    o_comp, m_comp = compiled_scan(kv, rp, md, st_t, ml, init)
+    (o_comp.square().sum() + 0.1 * m_comp.square().sum()).backward()
+    torch.testing.assert_close(o_comp, o_scan, atol=1e-6, rtol=1e-6)
+    torch.testing.assert_close(m_comp, m_scan, atol=1e-6, rtol=1e-6)
+    for g1, x in zip(grads_scan, (kv, rp, md, st_t, ml, init)):
+        torch.testing.assert_close(g1, x.grad, atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.cuda
+@pytest.mark.parametrize("v_dim,k_dim,w_dim,seq_len", [
+    (64, 64, 1, 513),
+    (48, 96, 1, 512),
+    (64, 64, 64, 256),
+])
+def test_triton_dplr_chunked_cuda_forward_backward_parity(v_dim, k_dim, w_dim, seq_len):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA unavailable; not empirical GPU validation")
+    from llm2.architectures.state_kernels import dplr_chunked
+    from llm2.architectures.triton_dplr import HAS_TRITON
+
+    if not HAS_TRITON:
+        pytest.skip("Triton unavailable")
+    torch.manual_seed(321)
+    b, h, c = 2, 2, 32
+    tensors = [
+        torch.randn(b, h, seq_len, k_dim, device="cuda") * 0.15,
+        torch.randn(b, h, seq_len, k_dim, device="cuda") * 0.15,
+        torch.randn(b, h, seq_len, v_dim, device="cuda") * 0.15,
+        torch.randn(b, h, seq_len, w_dim, device="cuda") * 0.2 - 1.0,
+        torch.randn(b, h, seq_len, k_dim, device="cuda") * 0.08,
+        torch.randn(b, h, seq_len, k_dim, device="cuda") * 0.08,
+        torch.randn(b, h, v_dim, k_dim, device="cuda") * 0.08,
+    ]
+    outs = []
+    for flag in (False, True):
+        xs = [t.clone().requires_grad_() for t in tensors]
+        o, m = dplr_chunked(*xs, chunk_size=c, use_triton=flag)
+        (o.square().sum() + 0.05 * m.square().sum()).backward()
+        outs.append((o.detach(), m.detach(), [x.grad.detach() for x in xs]))
+
+    torch.testing.assert_close(outs[0][0], outs[1][0], atol=2e-4, rtol=1e-3)
+    torch.testing.assert_close(outs[0][1], outs[1][1], atol=2e-4, rtol=1e-3)
+    for g_ref, g_tri in zip(outs[0][2], outs[1][2]):
+        torch.testing.assert_close(g_ref, g_tri, atol=3e-4, rtol=2e-3)

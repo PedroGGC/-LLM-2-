@@ -8,6 +8,8 @@ import math
 import torch
 from torch.nn import functional as F
 
+from .triton_dplr import can_use_triton_dplr, dplr_inter_chunk_scan
+
 
 RULES = ("gated_delta", "rwkv7", "mlstm")
 
@@ -33,7 +35,7 @@ def dplr_sequential(q, k, v, log_w, a, b, state=None, *, return_all_states=False
         return out, memory
 
 
-def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32):
+def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32, use_triton=True):
     """Exact DPLR recurrence via batched within-chunk causal triangular systems."""
     with torch.autocast(device_type=q.device.type, enabled=False):
         q, k, v, log_w, a, b = (x.float() for x in (q, k, v, log_w, a, b))
@@ -88,6 +90,10 @@ def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32):
         mem_decay = cumulative[:, :, :, -1].exp().unsqueeze(-2)
         mem_local = vc.transpose(-1, -2) @ (kc * tail) + u_local.transpose(-1, -2) @ bc_tail
         state_trans = u_state.transpose(-1, -2) @ bc_tail
+
+        if use_triton and can_use_triton_dplr(chunk_size, v_dim, k_dim, q.device):
+            out, memory = dplr_inter_chunk_scan(kv_local, read_proj, mem_decay, state_trans, mem_local, memory)
+            return (out[:, :, :total_len] if pad else out), memory
 
         outputs = []
         for m in range(n_chunks):
