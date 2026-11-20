@@ -13,7 +13,7 @@ from torch.nn import functional as F
 from torch.profiler import ProfilerActivity, profile
 
 from llm2.architectures.context_memory import ContextCellState, ContextState
-from llm2.architectures.fractal_delta import FractalDecode
+from llm2.architectures.fractal_delta import FractalDecode, FractalDeltaState, FractalLevelState
 from llm2.research.recall_worker import sync
 
 if __package__:
@@ -474,15 +474,26 @@ def try_pin_l2_weights(tensors, device):
 
 
 class SelfSpeculativeMTPDecode:
-    """Exact greedy self-speculative decoder reusing trained auxiliary MTP heads."""
+    """Exact greedy self-speculative decoder reusing trained auxiliary MTP heads with optional confidence gating."""
 
-    def __init__(self, model, mtp_heads, *, vocab_limit: int, backend: str | None = "inductor"):
+    def __init__(
+        self,
+        model,
+        mtp_heads,
+        *,
+        vocab_limit: int,
+        backend: str | None = "inductor",
+        draft_confidence_threshold: float = 0.0,
+    ):
         self.decoder = FractalDecode(model)
         self.model = model
         self.mtp_heads = nn.ModuleList(list(mtp_heads)).eval()
         self.k_drafts = len(self.mtp_heads)
         if self.k_drafts < 1:
             raise ValueError("SelfSpeculativeMTPDecode requires at least one MTP head")
+        if not 0.0 <= float(draft_confidence_threshold) <= 1.0:
+            raise ValueError("draft_confidence_threshold must be in [0.0, 1.0]")
+        self.draft_confidence_threshold = float(draft_confidence_threshold)
         self.vocab_limit = int(vocab_limit)
         device = next(model.parameters()).device
         self.device = device
@@ -506,12 +517,29 @@ class SelfSpeculativeMTPDecode:
             if self.backend is None
             else torch.compile(verify_raw, backend=self.backend, fullgraph=True, dynamic=False)
         )
-        self.use_cudagraph = bool(self.backend == "inductor" and device.type == "cuda")
+        self.use_cudagraph = bool(self.backend == "inductor" and device.type == "cuda" and self.draft_confidence_threshold == 0.0)
         self._graph = None
         self._graph_key = None
         self._static_block = None
         self._static_in = None
         self._static_out = None
+
+    def _select_drafts_from_hidden(self, last_hidden: torch.Tensor) -> tuple[list[int], int]:
+        """Propose contiguous drafts passing draft_confidence_threshold; returns (drafts, pruned_count)."""
+        drafts: list[int] = []
+        pruned = 0
+        for idx, head in enumerate(self.mtp_heads):
+            d_logits = head(last_hidden)[0, -1, :self.vocab_limit].float()
+            if self.draft_confidence_threshold > 0.0:
+                probs = torch.softmax(d_logits, dim=-1)
+                top_prob, top_tok = probs.max(dim=-1)
+                if float(top_prob.item()) < self.draft_confidence_threshold:
+                    pruned = self.k_drafts - idx
+                    break
+                drafts.append(int(top_tok.item()))
+            else:
+                drafts.append(int(d_logits.argmax(dim=-1).item()))
+        return drafts, pruned
 
     def _capture(self, block_ids, state, key):
         static_block = block_ids.clone()
@@ -568,9 +596,9 @@ class SelfSpeculativeMTPDecode:
         cap = prefix.shape[1] + new_tokens + self.k_drafts + 1
         logits0, hidden0, cur_state = self.decoder.prefill_hidden(prefix, cap)
         next_tok = int(logits0[0, -1, :self.vocab_limit].argmax(dim=-1).item())
-        drafts = [int(h(hidden0)[0, -1, :self.vocab_limit].argmax(dim=-1).item()) for h in self.mtp_heads]
+        drafts, init_pruned = self._select_drafts_from_hidden(hidden0)
         # Warmup verify pass before timing when compiling/capturing CUDAGraph.
-        if self.backend is not None:
+        if self.backend is not None and self.draft_confidence_threshold == 0.0:
             warm_block = torch.tensor([[next_tok, *drafts]], dtype=torch.long, device=self.device)
             self._run_verify(warm_block, cur_state)
 
@@ -578,6 +606,7 @@ class SelfSpeculativeMTPDecode:
         cycles = 0
         accepted_drafts = 0
         proposed_drafts = 0
+        pruned_drafts = init_pruned
         sync(self.device)
         monitor = NVMLPowerMonitor(self.device) if measure_energy else None
         if monitor is not None:
@@ -585,7 +614,36 @@ class SelfSpeculativeMTPDecode:
         t0 = time.perf_counter()
         try:
             while len(emitted) < new_tokens:
+                cur_k = len(drafts)
                 block = torch.tensor([[next_tok, *drafts]], dtype=torch.long, device=self.device)
+                if self.draft_confidence_threshold > 0.0:
+                    logits_b, hidden_b, stacked_states = self.decoder.step_hidden(block, cur_state, return_all_states=True)
+                    main_preds = logits_b[0, :, :self.vocab_limit].argmax(dim=-1).tolist()
+                    cycles += 1
+                    emitted.append(next_tok)
+                    if len(emitted) >= new_tokens:
+                        break
+                    proposed_drafts += cur_k
+                    last_idx = cur_k
+                    for m in range(cur_k):
+                        true_next = int(main_preds[m])
+                        if true_next == drafts[m]:
+                            emitted.append(true_next)
+                            accepted_drafts += 1
+                            if len(emitted) >= new_tokens:
+                                last_idx = m + 1
+                                break
+                        else:
+                            last_idx = m
+                            break
+                    if len(emitted) >= new_tokens:
+                        break
+                    next_tok = int(main_preds[last_idx])
+                    drafts, step_pruned = self._select_drafts_from_hidden(hidden_b[:, last_idx : last_idx + 1])
+                    pruned_drafts += step_pruned
+                    cur_state = self.decoder.slice_step_state(stacked_states, last_idx)
+                    continue
+
                 toks_table, stacked_states = self._run_verify(block, cur_state)
                 rows = toks_table.tolist()
                 cycles += 1
@@ -626,6 +684,8 @@ class SelfSpeculativeMTPDecode:
             "cycles": cycles,
             "proposed_drafts": proposed_drafts,
             "accepted_drafts": accepted_drafts,
+            "pruned_drafts": pruned_drafts,
+            "draft_confidence_threshold": self.draft_confidence_threshold,
             "draft_acceptance_rate": (accepted_drafts / proposed_drafts) if proposed_drafts else 0.0,
             "mean_tokens_per_cycle": len(emitted) / max(cycles, 1),
             "decode_seconds": decode_s,
@@ -635,3 +695,203 @@ class SelfSpeculativeMTPDecode:
             "mj_per_token": mj_per_tok,
         }
         return emitted, stats
+
+
+class AdaptiveEarlyExitDecode:
+    """Adaptive depth (Early-Exit / ACT) decoder for FractalDeltaMemory skipping converged Core iterations."""
+
+    def __init__(
+        self,
+        model,
+        *,
+        confidence_threshold: float = 0.90,
+        delta_threshold: float = 0.0,
+        min_layers: int = 2,
+        vocab_limit: int | None = None,
+    ):
+        self.decoder = FractalDecode(model)
+        self.model = model
+        self.confidence_threshold = float(confidence_threshold)
+        self.delta_threshold = float(delta_threshold)
+        self.min_layers = max(1, min(int(min_layers), model.depth))
+        self.vocab_limit = model.config.vocab_size if vocab_limit is None else int(vocab_limit)
+        self.device = next(model.parameters()).device
+
+    def prefill(self, ids: torch.Tensor, capacity: int):
+        return self.decoder.prefill(ids, capacity)
+
+    def step(self, token: torch.Tensor, state):
+        logits, _, next_state, layers_exec = self.decoder.step_adaptive(
+            token,
+            state,
+            confidence_threshold=self.confidence_threshold,
+            delta_threshold=self.delta_threshold,
+            min_layers=self.min_layers,
+            vocab_limit=self.vocab_limit,
+        )
+        return logits, next_state, layers_exec
+
+    @torch.inference_mode()
+    def generate_greedy(self, prefix: torch.Tensor, new_tokens: int, *, measure_energy: bool = False):
+        if prefix.ndim != 2 or prefix.shape[0] != 1:
+            raise ValueError("AdaptiveEarlyExitDecode requires batch 1")
+        if new_tokens < 1:
+            return [], {"tokens": 0, "mean_layers_executed": 0.0, "layers_saved_ratio": 0.0}
+        cap = prefix.shape[1] + new_tokens + 1
+        logits, state = self.prefill(prefix, cap)
+        next_tok = int(logits[0, -1, :self.vocab_limit].argmax(dim=-1).item())
+        emitted: list[int] = [next_tok]
+        layers_hist: list[int] = []
+        early_exits = 0
+        depth = self.model.depth
+
+        sync(self.device)
+        monitor = NVMLPowerMonitor(self.device) if measure_energy else None
+        if monitor is not None:
+            monitor.__enter__()
+        t0 = time.perf_counter()
+        try:
+            while len(emitted) < new_tokens:
+                tok_tensor = torch.tensor([[next_tok]], dtype=torch.long, device=self.device)
+                logits, state, l_exec = self.step(tok_tensor, state)
+                layers_hist.append(l_exec)
+                if l_exec < depth:
+                    early_exits += 1
+                next_tok = int(logits[0, -1, :self.vocab_limit].argmax(dim=-1).item())
+                emitted.append(next_tok)
+            sync(self.device)
+            decode_s = max(time.perf_counter() - t0, 1e-9)
+        finally:
+            if monitor is not None:
+                monitor.__exit__(None, None, None)
+
+        nvml = None if monitor is None else monitor.summary
+        steps_count = max(len(layers_hist), 1)
+        mean_l = sum(layers_hist) / steps_count if layers_hist else float(depth)
+        saved_ratio = max(0.0, 1.0 - (mean_l / max(depth, 1)))
+        mj_per_tok = (
+            (nvml["energy_joules"] * 1000.0) / len(emitted)
+            if nvml is not None and nvml.get("energy_joules") is not None and emitted
+            else None
+        )
+        stats = {
+            "tokens": len(emitted),
+            "decode_steps": len(layers_hist),
+            "total_depth": depth,
+            "mean_layers_executed": mean_l,
+            "layers_saved_ratio": saved_ratio,
+            "early_exit_steps": early_exits,
+            "early_exit_rate": (early_exits / len(layers_hist)) if layers_hist else 0.0,
+            "decode_seconds": decode_s,
+            "tokens_per_sec": len(emitted) / decode_s,
+            "nvml": nvml,
+            "mj_per_token": mj_per_tok,
+        }
+        return emitted, stats
+
+
+class SegmentMemoryCache:
+    """Prefix state cache & multi-segment memory anchor bank (arXiv:2602.24281 inspiration) for recurrent states."""
+
+    def __init__(self, *, max_entries: int = 32, max_anchors: int = 8):
+        if max_entries < 1 or max_anchors < 1:
+            raise ValueError("max_entries and max_anchors must be positive")
+        self.max_entries = int(max_entries)
+        self.max_anchors = int(max_anchors)
+        self._prefix_cache: dict[tuple[int, ...], tuple[torch.Tensor, object]] = {}
+        self._anchors: list[object] = []
+
+    @staticmethod
+    def clone_state(state):
+        return _map_tensors(state, lambda t: t.detach().clone())
+
+    def clear(self) -> None:
+        self._prefix_cache.clear()
+        self._anchors.clear()
+
+    def put_prefix(self, token_ids_1d: tuple[int, ...], logits: torch.Tensor, state) -> None:
+        if len(self._prefix_cache) >= self.max_entries and token_ids_1d not in self._prefix_cache:
+            oldest = next(iter(self._prefix_cache))
+            self._prefix_cache.pop(oldest, None)
+        self._prefix_cache[token_ids_1d] = (logits.detach().clone(), self.clone_state(state))
+
+    @torch.inference_mode()
+    def prefill_cached(self, decoder, prefix: torch.Tensor, capacity: int):
+        """Reuse longest cached prefix state in O(1), computing only the uncached suffix."""
+        if prefix.ndim != 2 or prefix.shape[0] != 1:
+            raise ValueError("SegmentMemoryCache.prefill_cached requires batch=1")
+        key = tuple(int(x) for x in prefix[0].tolist())
+        if key in self._prefix_cache:
+            logits, st = self._prefix_cache[key]
+            return logits.clone(), self.clone_state(st), {
+                "cache_hit": "exact",
+                "cached_tokens": len(key),
+                "computed_tokens": 0,
+            }
+        best_k = 0
+        best_state = None
+        for k in range(len(key) - 1, 0, -1):
+            sub = key[:k]
+            if sub in self._prefix_cache:
+                best_k = k
+                _, best_state = self._prefix_cache[sub]
+                break
+        if best_state is not None and best_k > 0:
+            cur_state = self.clone_state(best_state)
+            suffix = prefix[:, best_k:]
+            if hasattr(decoder, "step_hidden"):
+                logits, _, cur_state = decoder.step_hidden(suffix, cur_state, return_all_states=False)
+                logits = logits[:, -1:]
+            else:
+                for tok in suffix.split(1, dim=1):
+                    logits, cur_state = decoder.step(tok, cur_state)
+            self.put_prefix(key, logits, cur_state)
+            return logits, cur_state, {
+                "cache_hit": "partial",
+                "cached_tokens": best_k,
+                "computed_tokens": len(key) - best_k,
+            }
+        logits, cur_state = decoder.prefill(prefix, capacity)
+        self.put_prefix(key, logits, cur_state)
+        return logits, cur_state, {
+            "cache_hit": "miss",
+            "cached_tokens": 0,
+            "computed_tokens": len(key),
+        }
+
+    def record_anchor(self, state) -> None:
+        """Store a segment-boundary FractalDeltaState snapshot in the anchor ring buffer."""
+        if len(self._anchors) >= self.max_anchors:
+            self._anchors.pop(0)
+        self._anchors.append(self.clone_state(state))
+
+    def blend_with_anchors(self, state, *, anchor_weight: float = 0.15, decay: float = 0.7):
+        """Blend active FP32 recurrent memory matrices with exponentially weighted segment anchors."""
+        if not 0.0 <= anchor_weight <= 1.0:
+            raise ValueError("anchor_weight must be in [0.0, 1.0]")
+        if not self._anchors or anchor_weight == 0.0:
+            return self.clone_state(state)
+        n = len(self._anchors)
+        raw_w = [decay ** (n - 1 - idx) for idx in range(n)]
+        w_sum = sum(raw_w)
+        weights = [w / w_sum for w in raw_w]
+
+        blended_levels = []
+        for lvl_idx, cur_lvl in enumerate(state.levels):
+            anchor_mem = torch.zeros_like(cur_lvl.memory, dtype=torch.float32)
+            for w, anc in zip(weights, self._anchors):
+                anchor_mem = anchor_mem + float(w) * anc.levels[lvl_idx].memory.float()
+            new_mem = ((1.0 - anchor_weight) * cur_lvl.memory.float() + anchor_weight * anchor_mem).contiguous()
+            blended_levels.append(FractalLevelState(new_mem, cur_lvl.tail.clone()))
+
+        anchor_assoc = torch.zeros_like(state.assoc_memory, dtype=torch.float32)
+        for w, anc in zip(weights, self._anchors):
+            anchor_assoc = anchor_assoc + float(w) * anc.assoc_memory.float()
+        new_assoc = ((1.0 - anchor_weight) * state.assoc_memory.float() + anchor_weight * anchor_assoc).contiguous()
+        return FractalDeltaState(
+            tuple(blended_levels),
+            new_assoc,
+            state.local_tail.clone(),
+            state.window,
+            None if state.phase_pos is None else state.phase_pos.clone(),
+        )

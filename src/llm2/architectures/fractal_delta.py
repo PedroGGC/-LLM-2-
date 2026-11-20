@@ -12,6 +12,7 @@ from torch.nn import functional as F
 
 from ..interfaces import Backbone, ModelOutput
 from ..model import RMSNorm, SwiGLU
+from .quarot import HadamardLinearINT4
 from .state_kernels import dplr_chunked, dplr_sequential
 
 
@@ -70,6 +71,8 @@ def _make_linear(in_features: int, out_features: int, mode: str, *, bias: bool =
         return TernaryLinear(in_features, out_features, bias=bias)
     if mode == "quaternion":
         return QuaternionLinear(in_features, out_features, bias=bias)
+    if mode == "quarot_int4":
+        return HadamardLinearINT4(in_features, out_features, bias=bias, qat=True)
     layer = nn.Linear(in_features, out_features, bias=bias)
     nn.init.normal_(layer.weight, std=0.02)
     return layer
@@ -683,10 +686,26 @@ class FractalDeltaMemory(Backbone):
         assoc_out = self.assoc_readout(read.to(raw_embed.dtype)).to(raw_embed.dtype) * self.assoc_scale
         return assoc_out, next_mem.float().contiguous(), next_local_tail
 
-    def forward(self, input_ids, *, state=None, return_logits=True):
+    def _skip_level_state(self, prev: FractalLevelState | None, x: torch.Tensor) -> FractalLevelState:
+        b, _, d = x.shape
+        tail_width = self.cells[0].conv_kernel - 1
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            norm_f = x.detach().float().transpose(1, 2)
+            if prev is None:
+                mem = norm_f.new_zeros(b, self.heads, self.head_dim, self.head_dim)
+                prefix = norm_f.new_zeros(b, d, tail_width)
+            else:
+                mem = prev.memory
+                prefix = prev.tail
+            padded = torch.cat((prefix, norm_f), dim=2)
+            new_tail = padded[:, :, -tail_width:].clone()
+            return FractalLevelState(mem, new_tail)
+
+    def forward(self, input_ids, *, state=None, return_logits=True, max_levels: int | None = None):
         raw = self.embedding(input_ids)
         if state is not None:
             self._validate_state(state, raw)
+        active_depth = self.depth if max_levels is None else max(1, min(int(max_levels), self.depth))
         exec_mode = self.cells[0].execution
         assoc_out, next_assoc_mem, next_local_tail = self._run_assoc(raw, state, execution=exec_mode)
         x = F.dropout(raw, p=self.config.dropout, training=self.training)
@@ -705,13 +724,19 @@ class FractalDeltaMemory(Backbone):
             next_phase_pos = (cur_phase + int(raw.shape[1])).contiguous()
         anchor = x
         next_levels = []
+        intermediate_states = []
+        collect_inter = bool(getattr(self.research, "intermediate_weight", 0.0) > 0 and self.depth > 1)
+        assoc_drop = F.dropout(assoc_out, p=self.config.dropout, training=self.training)
         v0 = None
         for level in range(self.depth):
+            prev = None if state is None else state.levels[level]
+            if level >= active_depth:
+                next_levels.append(self._skip_level_state(prev, x))
+                continue
             adapter = self.adapters[level] if self.depth > 1 else None
             if adapter is not None and adapter.anchor_gate is not None:
                 x = x + adapter.anchor_gate.sigmoid() * anchor
             cell = self.cells[self.cell_index(level)]
-            prev = None if state is None else state.levels[level]
             if self.value_residual and level == 0:
                 x, current, v0 = cell(
                     x, prev, adapter=adapter, return_v0=True, phase_pos=cur_phase, anchor=anchor
@@ -721,7 +746,9 @@ class FractalDeltaMemory(Backbone):
                     x, prev, adapter=adapter, v0=v0, phase_pos=cur_phase, anchor=anchor
                 )
             next_levels.append(current)
-        x = x + F.dropout(assoc_out, p=self.config.dropout, training=self.training)
+            if collect_inter and level < active_depth - 1:
+                intermediate_states.append(self.norm(x + assoc_drop))
+        x = x + assoc_drop
         hidden = self.norm(x)
         logits = self.lm_head(hidden) if return_logits else None
         next_state = FractalDeltaState(
@@ -731,7 +758,12 @@ class FractalDeltaMemory(Backbone):
             next_window,
             next_phase_pos,
         )
-        return ModelOutput(logits=logits, hidden_states=hidden, state=next_state)
+        return ModelOutput(
+            logits=logits,
+            hidden_states=hidden,
+            state=next_state,
+            intermediate_states=tuple(intermediate_states),
+        )
 
     def state_bytes_per_sequence(self):
         d = self.config.d_model
@@ -846,12 +878,27 @@ class FractalDecode:
         logits, _, state = self.prefill_hidden(ids, capacity)
         return logits, state
 
-    def step_hidden(self, ids, state, *, return_all_states: bool = False):
+    def _skip_decode_level(self, prev: FractalLevelState, x: torch.Tensor, *, return_all_states: bool = False) -> FractalLevelState:
+        t = x.shape[1]
+        tail_width = self.step_cells[0].conv_kernel - 1
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            norm_f = x.detach().float().transpose(1, 2)
+            padded = torch.cat((prev.tail, norm_f), dim=2)
+            if return_all_states:
+                new_tail = torch.stack([padded[:, :, idx + 1 : idx + 1 + tail_width] for idx in range(t)], dim=0).clone()
+                new_mem = prev.memory.unsqueeze(0).expand(t, *prev.memory.shape).clone()
+            else:
+                new_tail = padded[:, :, -tail_width:].clone()
+                new_mem = prev.memory
+            return FractalLevelState(new_mem, new_tail)
+
+    def step_hidden(self, ids, state, *, return_all_states: bool = False, max_levels: int | None = None):
         if ids.ndim != 2 or ids.shape[0] != state.levels[0].memory.shape[0] or ids.shape[1] < 1:
             raise ValueError("fractal recurrent step requires shape (batch, >=1)")
         if return_all_states and self.model.window_attn is not None:
             raise ValueError("return_all_states is not supported with window attention")
         t = ids.shape[1]
+        active_depth = self.model.depth if max_levels is None else max(1, min(int(max_levels), self.model.depth))
         raw = self.model.embedding(ids)
         assoc_out, next_assoc_mem, next_local_tail = self.model._run_assoc(
             raw, state, execution="sequential", return_all_states=return_all_states
@@ -874,6 +921,9 @@ class FractalDecode:
         next_levels = []
         v0 = None
         for level, prev in enumerate(state.levels):
+            if level >= active_depth:
+                next_levels.append(self._skip_decode_level(prev, x, return_all_states=return_all_states))
+                continue
             adapter = self.model.adapters[level] if self.model.depth > 1 else None
             if adapter is not None and adapter.anchor_gate is not None:
                 x = x + adapter.anchor_gate.sigmoid() * anchor
@@ -910,6 +960,84 @@ class FractalDecode:
             next_phase_pos,
         )
         return logits, hidden, next_state
+
+    def step_adaptive(
+        self,
+        ids,
+        state,
+        *,
+        confidence_threshold: float = 0.90,
+        delta_threshold: float = 0.0,
+        min_layers: int = 2,
+        vocab_limit: int | None = None,
+    ):
+        """Adaptive Early-Exit step skipping deeper Core iterations once confidence or latent convergence is met."""
+        if ids.ndim != 2 or ids.shape[0] != state.levels[0].memory.shape[0] or ids.shape[1] < 1:
+            raise ValueError("fractal recurrent step requires shape (batch, >=1)")
+        t = ids.shape[1]
+        depth = self.model.depth
+        min_l = max(1, min(int(min_layers), depth))
+        vlim = self.model.config.vocab_size if vocab_limit is None else int(vocab_limit)
+        raw = self.model.embedding(ids)
+        assoc_out, next_assoc_mem, next_local_tail = self.model._run_assoc(raw, state, execution="sequential")
+        x = raw
+        next_window = None
+        if self.model.window_attn is not None:
+            win_out, next_window = self.model.window_attn(x, state.window)
+            x = x + win_out
+        cur_phase = None
+        next_phase_pos = None
+        if self.model.golden_phase:
+            cur_phase = state.phase_pos
+            next_phase_pos = (cur_phase + t).contiguous()
+        anchor = x
+        next_levels = []
+        v0 = None
+        layers_executed = 0
+        halted = False
+        cached_hidden = None
+        cached_logits = None
+        for level, prev in enumerate(state.levels):
+            if halted:
+                next_levels.append(self._skip_decode_level(prev, x, return_all_states=False))
+                continue
+            prev_x = x
+            adapter = self.model.adapters[level] if depth > 1 else None
+            if adapter is not None and adapter.anchor_gate is not None:
+                x = x + adapter.anchor_gate.sigmoid() * anchor
+            cell = self.step_cells[self.model.cell_index(level)]
+            if self.model.value_residual and level == 0:
+                x, current, v0 = cell(
+                    x, prev, adapter=adapter, return_v0=True, phase_pos=cur_phase, anchor=anchor
+                )
+            else:
+                x, current = cell(
+                    x, prev, adapter=adapter, v0=v0, phase_pos=cur_phase, anchor=anchor
+                )
+            next_levels.append(current)
+            layers_executed += 1
+            if layers_executed >= min_l and level < depth - 1:
+                if delta_threshold > 0.0:
+                    rel_delta = (x - prev_x).float().norm(dim=-1) / (x.float().norm(dim=-1).clamp_min(1e-6))
+                    if float(rel_delta.max().item()) <= delta_threshold:
+                        halted = True
+                if not halted and confidence_threshold < 1.0:
+                    cached_hidden = self.model.norm(x + assoc_out)
+                    cached_logits = self.model.lm_head(cached_hidden)
+                    probs = F.softmax(cached_logits[..., :vlim].float(), dim=-1)
+                    if float(probs.amax(dim=-1).min().item()) >= confidence_threshold:
+                        halted = True
+        if cached_logits is None or not halted:
+            cached_hidden = self.model.norm(x + assoc_out)
+            cached_logits = self.model.lm_head(cached_hidden)
+        next_state = FractalDeltaState(
+            tuple(next_levels),
+            next_assoc_mem,
+            next_local_tail,
+            next_window,
+            next_phase_pos,
+        )
+        return cached_logits, cached_hidden, next_state, layers_executed
 
     def step(self, ids, state):
         if ids.shape != (state.levels[0].memory.shape[0], 1):

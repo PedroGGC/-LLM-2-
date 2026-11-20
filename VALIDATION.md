@@ -1,4 +1,16 @@
-# Validação vigente — 16/11/2026
+# Validação vigente — 19/11/2026
+
+## Roteiro Fase 2B: `#5` Profundidade Adaptativa (`Early-Exit`), `#6` QuaRot Hadamard `INT4/W4A8` + `SegmentMemoryCache` & `Confidence-Gated MTP`
+
+Verificações reais executadas (Windows, Python 3.12.2, PyTorch 2.14.1+cpu):
+- **Suíte dedicada Fase 2B:** `python -m pytest -q tests/test_quarot_early_exit.py` → **6 passed em 3,99 s** (`0 failed`, `0 skipped`).
+- **Suíte combinada de regressão e estresse:** `python -m pytest -q tests/test_quarot_early_exit.py tests/test_decode_optimization.py tests/test_fractal_delta.py tests/test_state_recurrent.py tests/test_predictive.py tests/test_hadamard_stress.py tests/test_fwht_benchmark.py` → **102 passed, 12 skipped em 186,31 s** (os `12 skipped` são exclusivamente testes `@pytest.mark.cuda`).
+- **Métricas reais na topologia campeã `fractal_pcc_mtp_muon_bpe` (`d_model=384, hidden_dim=640, depth=8, vocab=4096`):**
+  - **`#6` QuaRot Hadamard `INT4/W4A8` (`src/llm2/architectures/quarot.py`):** rotação Block-Hadamard randomizada ($B=\gcd(d, 128)$, suportando dimensões compostas `384, 640, 96, 48` e eliminando amplificação de vetores constantes via sinais de Rademacher) + empacotamento `uint8` (`2×INT4`/byte, `group_size=32`, `act_bits=8`). Converteu as **`19` projeções lineares densas** das células (`23.076.864 B` em `FP32` / `11.538.432 B` em `BF16`) para **`3.246.336 B` (`3,10 MiB`)**, atingindo **`3,55×` de compressão sobre `BF16`** e **`7,11×` sobre `FP32`**, preservando `lm_head.weight is embedding.weight` (`shared_embedding_preserved=True`) e reduzindo o MSE sob outliers severos em `> 3×` frente à quantização `INT4/INT8` sem rotação. Suporta também QAT (`fractal_weight_mode="quarot_int4"`).
+  - **`#5` Profundidade Adaptativa / Early-Exit (`FractalDeltaMemory` + `AdaptiveEarlyExitDecode`):** supervisão intermediária (`intermediate_weight > 0`) habilitada em `config.py` / `fractal_delta.py` com `intermediate_loss` finito e backward validado; em decode adaptativo, quando `confidence_threshold > 1.0` reproduz `100%` dos tokens greedy de `FractalDecode`, e com saída precoce em `min_layers=2` economiza **`75,0%`** das camadas do Core (`ee_saved_ratio = 0.75`), acelerando o decode em CPU de `24,4` para **`95,7 tok/s` (`3,92×` speedup)** com propagação zero-FLOP do estado (`prev.memory` mantido e `prev.tail` deslocado em `FP32`).
+  - **Extra A — `SegmentMemoryCache` (`arXiv:2602.24281` Memory Caching & Prefix State Reuse):** reuso exato de prefill em `64` tokens reduziu a latência de `267,20 ms` (miss) para **`0,502 ms` (`531,8×` speedup, `0` tokens recomputados)**, além de suportar reuso parcial de sufixo (`cached_tokens` + `computed_tokens`) e fusão exponencial de estados-âncora (`blend_with_anchors`) em `FP32`.
+  - **Extra B — `Confidence-Gated Self-Speculative MTP` (`draft_confidence_threshold` em `SelfSpeculativeMTPDecode`):** poda dinâmica de rascunhos especulativos de baixa confiança mantendo **`100%` de paridade matemática greedy** (`g0 == g1 == t0`).
+- **Limitações declaradas:** `HadamardLinearINT4` desempacota `uint8 -> float/bf16` em PyTorch antes de `F.linear` (compressão real de bytes em RAM/VRAM já ativa; speedup de compute `W4A8` em Tensor Cores ou dequantização fundida em Triton e avaliação de impacto em `BPB` num treino completo `50M–150M+` dependem da próxima rodada em GPU CUDA).
 
 ## Roteiro Fase 2: Kernel Fused Triton em `state_kernels.py` / `triton_dplr.py` (`IA2 Campanha 012`, `972854a` + ajuste `v2` em `state_kernels.py`)
 

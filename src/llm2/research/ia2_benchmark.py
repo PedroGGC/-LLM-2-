@@ -13,6 +13,7 @@ import numpy as np
 import torch
 
 from ..architectures.fractal_delta import FractalDecode, FractalDeltaMemory
+from ..architectures.quarot import quantize_model_quarot_int4
 from ..checkpoint import read_checkpoint_metadata
 from ..config import DataConfig, ExperimentConfig, ModelConfig, OptimizerConfig, ResearchConfig, TrainConfig
 from ..data import sha256_file
@@ -22,9 +23,11 @@ from .binding_data import TASK_ID as BINDING_TASK_ID, generate as generate_bindi
 from .binding_worker import BindingTrainer, score as score_binding
 from .decode_cache import RecurrentDecode, generate, verify_logits
 from .decode_optimization import (
+    AdaptiveEarlyExitDecode,
     CompiledDecode,
     LocalTransformerDecode,
     NVMLPowerMonitor,
+    SegmentMemoryCache,
     SelfSpeculativeMTPDecode,
     restore_power_limit,
     try_pin_l2_weights,
@@ -665,6 +668,28 @@ def benchmark_decode(
                     "baseline_real_mj_per_token": base_mj,
                     "speedup_vs_baseline": spec_stats["tokens_per_sec"] / max(base_tok_s, 1e-9),
                 }
+        if isinstance(model, FractalDeltaMemory):
+            real_prefix = val_prefix.to(device) if val_prefix is not None else prefix[:, : (24 if smoke else 256)]
+            ee_n = new_bytes
+            with torch.inference_mode():
+                ee_dec = AdaptiveEarlyExitDecode(
+                    model,
+                    confidence_threshold=0.70,
+                    delta_threshold=0.05,
+                    min_layers=2,
+                    vocab_limit=vocab_limit,
+                )
+                _, ee_stats = ee_dec.generate_greedy(real_prefix, ee_n, measure_energy=measure_energy)
+                results["adaptive_early_exit"] = ee_stats
+
+                seg_cache = SegmentMemoryCache(max_entries=16, max_anchors=4)
+                f_dec = FractalDecode(model)
+                _, _, miss_info = seg_cache.prefill_cached(f_dec, real_prefix, real_prefix.shape[1] + ee_n + 1)
+                _, _, hit_info = seg_cache.prefill_cached(f_dec, real_prefix, real_prefix.shape[1] + ee_n + 1)
+                results["segment_memory_cache"] = {"first_lookup": miss_info, "second_lookup": hit_info}
+
+                _, q_report = quantize_model_quarot_int4(model, group_size=32, act_bits=8, inplace=False)
+                results["quarot_int4"] = q_report
         return results, eager
     finally:
         model.train(was_training)

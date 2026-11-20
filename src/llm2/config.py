@@ -222,8 +222,8 @@ class ResearchConfig:
             raise ValueError("fractal_golden_phase requires fractal_delta")
         if self.fractal_free_energy and self.architecture != "fractal_delta":
             raise ValueError("fractal_free_energy requires fractal_delta")
-        if self.fractal_weight_mode not in ("dense", "ternary", "quaternion"):
-            raise ValueError("fractal_weight_mode must be dense|ternary|quaternion")
+        if self.fractal_weight_mode not in ("dense", "ternary", "quaternion", "quarot_int4"):
+            raise ValueError("fractal_weight_mode must be dense|ternary|quaternion|quarot_int4")
         if self.fractal_weight_mode != "dense" and self.architecture != "fractal_delta":
             raise ValueError("fractal_weight_mode requires fractal_delta")
         if self.fractal_leaky_budget and self.architecture != "fractal_delta":
@@ -266,7 +266,7 @@ class ResearchConfig:
             raise ValueError("episodic memory requires immediate state_hierarchy")
         if (self.architecture.startswith(("state_", "context_")) or self.architecture in ("transition_memory", "fractal_delta")) and (
             self.jepa_weight or (self.mtp_weight and self.architecture != "fractal_delta")
-            or self.intermediate_weight or self.lm_weight != 1
+            or (self.intermediate_weight and self.architecture != "fractal_delta") or self.lm_weight != 1
             or self.latent_steps or self.latent_warmup_steps or self.detach_every
             or self.gradient_checkpointing or self.record_states or self.curriculum != "off"
             or self.context_normalization != "none" or self.cache_context_projection or self.paired_common_init
