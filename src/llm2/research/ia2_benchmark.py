@@ -64,6 +64,11 @@ class ArmSpec:
     fractal_prelude_coda: bool = False
     fractal_kda: bool = False
     fractal_assoc_multilag: bool = False
+    fractal_decoupled_gates: bool = False
+    fractal_hybrid_stride: int = 0
+    fractal_exit_gate: bool = False
+    exit_gate_weight: float = 0.0
+    intermediate_weight: float = 0.0
     optimizer_kind: str = "adamw"
     mtp_tokens: int = 0
     mtp_weight: float = 0.0
@@ -98,6 +103,7 @@ ARMS = (
     ArmSpec("fractal_pcc_muon_bpe", "candidate", "fractal_delta", d_model=384, n_layers=8, n_heads=6, hidden_dim=1024, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, fractal_prelude_coda=True, fractal_assoc_multilag=True, optimizer_kind="muon", memory_dim=96, chunk_size=32),
     ArmSpec("fractal_pcc_mtp_muon_bpe", "candidate", "fractal_delta", d_model=384, n_layers=8, n_heads=6, hidden_dim=1024, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, fractal_prelude_coda=True, fractal_assoc_multilag=True, optimizer_kind="muon", mtp_tokens=2, mtp_weight=0.25, memory_dim=96, chunk_size=32),
     ArmSpec("fractal_pcc_full_bpe", "candidate", "fractal_delta", d_model=384, n_layers=8, n_heads=6, hidden_dim=1024, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, fractal_prelude_coda=True, fractal_kda=True, fractal_assoc_multilag=True, optimizer_kind="muon", mtp_tokens=2, mtp_weight=0.25, memory_dim=96, chunk_size=32),
+    ArmSpec("fractal_v2_bpe", "candidate", "fractal_delta", d_model=384, n_layers=8, n_heads=6, hidden_dim=1024, shared=True, beta_scale=2.0, fractal_value_residual=True, fractal_golden_phase=True, fractal_leaky_budget=True, fractal_assoc_delta=True, fractal_assoc_val_dim=48, fractal_prelude_coda=True, fractal_assoc_multilag=True, fractal_decoupled_gates=True, fractal_window=64, fractal_hybrid_stride=4, fractal_exit_gate=True, exit_gate_weight=0.10, intermediate_weight=0.20, optimizer_kind="muon", mtp_tokens=2, mtp_weight=0.25, memory_dim=96, chunk_size=32),
 )
 
 
@@ -131,6 +137,11 @@ def _build_research_config(arm: ArmSpec, *, smoke=False):
         fractal_prelude_coda=arm.fractal_prelude_coda,
         fractal_kda=arm.fractal_kda,
         fractal_assoc_multilag=arm.fractal_assoc_multilag,
+        fractal_decoupled_gates=arm.fractal_decoupled_gates,
+        fractal_hybrid_stride=arm.fractal_hybrid_stride,
+        fractal_exit_gate=arm.fractal_exit_gate,
+        exit_gate_weight=arm.exit_gate_weight,
+        intermediate_weight=arm.intermediate_weight,
         mtp_tokens=arm.mtp_tokens,
         mtp_weight=arm.mtp_weight,
     )

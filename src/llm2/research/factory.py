@@ -42,7 +42,7 @@ def build_backbone(config):
 
 def build_objective(config, model):
     r = config.research
-    if r is not None and (r.jepa_weight or r.mtp_weight or r.intermediate_weight or r.lm_weight != 1):
+    if r is not None and (r.jepa_weight or r.mtp_weight or r.intermediate_weight or r.exit_gate_weight or r.lm_weight != 1):
         from .objectives import PredictiveObjective
         return PredictiveObjective(model, r)
     return CausalLanguageModeling()

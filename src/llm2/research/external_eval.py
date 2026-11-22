@@ -120,8 +120,9 @@ def evaluate_ruler_niah(
     examples_per_len: int = 8,
     seed: int = 2026,
     use_segment_cache: bool = False,
+    use_grm: bool = False,
 ) -> dict:
-    """Synthetic RULER single-needle retrieval across long contexts (with optional SegmentMemoryCache anchor blending)."""
+    """Synthetic RULER single-needle retrieval across long contexts (with optional blind query-dependent GRM)."""
     rng = random.Random(seed)
     filler_sentences = (
         "The weather remained calm across the valley while birds crossed the river. ",
@@ -161,21 +162,32 @@ def evaluate_ruler_niah(
                 # Stream in chunks <= model.config.max_seq_len so 8K–16K works even if max_seq_len=4096
                 chunk_len = min(1024, model.config.max_seq_len)
                 state = None
-                cache = SegmentMemoryCache(max_entries=8, max_anchors=8) if use_segment_cache else None
+                cache = SegmentMemoryCache(max_entries=8, max_anchors=16) if (use_segment_cache or use_grm) else None
                 for start in range(0, len(full_ctx), chunk_len):
                     seg = torch.tensor([full_ctx[start : start + chunk_len]], dtype=torch.long, device=device)
                     out = model(seg, state=state, return_logits=False)
                     state = out.state
-                    if cache is not None and start <= ins_pos < start + chunk_len:
-                        cache.record_anchor(state)
-                if cache is not None and len(cache._anchors) > 0:
+                    if cache is not None:
+                        if use_grm:
+                            cache.record_segment(state, out.hidden_states, tag=f"seg_{start}")
+                        elif start <= ins_pos < start + chunk_len:
+                            cache.record_anchor(state)
+                grm_delta = None
+                if cache is not None and use_grm and len(cache._grm_segments) > 1:
+                    q_slice = out.hidden_states[:, -min(len(query_ids), out.hidden_states.shape[1]) :]
+                    state, _ = cache.retrieve_grm_state(
+                        q_slice, active_state=state, top_k=2, temperature=0.5, grm_weight=0.25
+                    )
+                    grm_delta, _ = cache.query_grm_readout(out.hidden_states[:, -1:], model=model, top_k=2, temperature=0.5)
+                elif cache is not None and len(cache._anchors) > 0:
                     state = cache.blend_with_anchors(state, anchor_weight=0.15)
                 dec = FractalDecode(model)
                 # Score answer tokens incrementally from carried state
                 ans_nll = 0.0
                 exact = True
                 # First answer token is predicted from the last context token already in out.hidden_states
-                first_logits = model.lm_head(out.hidden_states[:, -1:]).float()
+                last_h = out.hidden_states[:, -1:] if grm_delta is None else (out.hidden_states[:, -1:] + 0.25 * grm_delta)
+                first_logits = model.lm_head(last_h).float()
                 for a_idx, target_tok in enumerate(ans_ids):
                     logits_step = first_logits if a_idx == 0 else step_logits.float()
                     ans_nll += float(

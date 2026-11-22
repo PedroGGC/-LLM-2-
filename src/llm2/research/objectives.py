@@ -113,6 +113,27 @@ class PredictiveObjective(Objective):
             intermediate = inter_sum / float(len(output.intermediate_states))
             loss = loss + r.intermediate_weight * intermediate
             metrics["intermediate_loss"] = float(intermediate.detach())
+        if getattr(r, "exit_gate_weight", 0.0) > 0:
+            if not output.exit_logits or not output.intermediate_states:
+                raise ValueError("exit_gate_weight > 0 requires fractal_exit_gate with depth > 1")
+            valid_mask = batch["targets"] != -100
+            if valid_mask.any():
+                with torch.no_grad():
+                    final_pred = output.logits.detach().argmax(dim=-1)
+                gate_losses = []
+                match_rates = []
+                for e_logit, inter_h in zip(output.exit_logits, output.intermediate_states):
+                    with torch.no_grad():
+                        inter_pred = model.lm_head(inter_h.detach()).argmax(dim=-1)
+                        target_halt = (inter_pred == final_pred).float()
+                    e_flat = e_logit.squeeze(-1).float()[valid_mask]
+                    t_flat = target_halt[valid_mask]
+                    gate_losses.append(F.binary_cross_entropy_with_logits(e_flat, t_flat))
+                    match_rates.append(t_flat.mean())
+                exit_loss = torch.stack(gate_losses).mean()
+                loss = loss + r.exit_gate_weight * exit_loss
+                metrics["exit_gate_loss"] = float(exit_loss.detach())
+                metrics["exit_gate_match_rate"] = float(torch.stack(match_rates).mean().detach())
         if output.state is not None and hasattr(output.state, "iterations"):
             metrics["internal_iterations"] = output.state.iterations
         return ObjectiveOutput(loss, int((batch["targets"] != -100).sum()), metrics,

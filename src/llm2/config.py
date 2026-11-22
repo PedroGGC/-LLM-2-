@@ -192,6 +192,10 @@ class ResearchConfig:
     fractal_prelude_coda: bool = False
     fractal_kda: bool = False
     fractal_assoc_multilag: bool = False
+    fractal_decoupled_gates: bool = False
+    fractal_hybrid_stride: int = 0
+    fractal_exit_gate: bool = False
+    exit_gate_weight: float = 0.0
 
     def __post_init__(self):
         _types(self)
@@ -238,6 +242,18 @@ class ResearchConfig:
             raise ValueError("fractal_kda requires fractal_delta")
         if self.fractal_assoc_multilag and self.architecture != "fractal_delta":
             raise ValueError("fractal_assoc_multilag requires fractal_delta")
+        if self.fractal_decoupled_gates and self.architecture != "fractal_delta":
+            raise ValueError("fractal_decoupled_gates requires fractal_delta")
+        if self.fractal_hybrid_stride != 0 and (
+            self.architecture != "fractal_delta" or self.fractal_window < 4 or self.fractal_hybrid_stride < 2
+        ):
+            raise ValueError("fractal_hybrid_stride requires fractal_delta with fractal_window >= 4 and stride >= 2")
+        if self.fractal_exit_gate and self.architecture != "fractal_delta":
+            raise ValueError("fractal_exit_gate requires fractal_delta")
+        if self.exit_gate_weight < 0:
+            raise ValueError("research.exit_gate_weight must be nonnegative")
+        if self.exit_gate_weight > 0 and not self.fractal_exit_gate:
+            raise ValueError("exit_gate_weight > 0 requires fractal_exit_gate=True")
         if self.associative_levels not in (1, 2):
             raise ValueError("associative_levels must be 1 or 2")
         if self.associative_levels != 1 and self.architecture != "transition_memory":

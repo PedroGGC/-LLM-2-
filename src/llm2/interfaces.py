@@ -13,6 +13,7 @@ class ModelOutput:
     hidden_states: Tensor | None = None
     state: Any = None
     intermediate_states: tuple[Tensor, ...] = ()
+    exit_logits: tuple[Tensor, ...] = ()
 
 
 @dataclass

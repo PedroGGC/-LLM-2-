@@ -709,6 +709,7 @@ class AdaptiveEarlyExitDecode:
         *,
         confidence_threshold: float = 0.90,
         delta_threshold: float = 0.0,
+        exit_gate_threshold: float = 0.0,
         min_layers: int = 2,
         vocab_limit: int | None = None,
         backend: str | None = None,
@@ -717,6 +718,7 @@ class AdaptiveEarlyExitDecode:
         self.model = model
         self.confidence_threshold = float(confidence_threshold)
         self.delta_threshold = float(delta_threshold)
+        self.exit_gate_threshold = float(exit_gate_threshold)
         self.min_layers = max(1, min(int(min_layers), model.depth))
         self.vocab_limit = model.config.vocab_size if vocab_limit is None else int(vocab_limit)
         self.device = next(model.parameters()).device
@@ -736,14 +738,14 @@ class AdaptiveEarlyExitDecode:
             def _prefix_raw(tok, st):
                 return dec.step_early_exit_prefix(tok, st, min_layers=min_l, vocab_limit=vlim)
 
-            def _skip_raw(x, st, p_lvls, n_assoc, n_tail, n_win, n_phase):
+            def _skip_raw(x, st, p_lvls, n_assoc, n_tail, n_win, n_phase, p_hw):
                 return dec.step_early_exit_skip(
-                    x, st, p_lvls, n_assoc, n_tail, n_win, n_phase, min_layers=min_l
+                    x, st, p_lvls, n_assoc, n_tail, n_win, n_phase, p_hw, min_layers=min_l
                 )
 
-            def _suffix_raw(x, a_out, v0, anc, c_phase, st, p_lvls, n_assoc, n_tail, n_win, n_phase):
+            def _suffix_raw(x, a_out, v0, anc, c_phase, st, p_lvls, n_assoc, n_tail, n_win, n_phase, p_hw):
                 return dec.step_early_exit_suffix(
-                    x, a_out, v0, anc, c_phase, st, p_lvls, n_assoc, n_tail, n_win, n_phase, min_layers=min_l
+                    x, a_out, v0, anc, c_phase, st, p_lvls, n_assoc, n_tail, n_win, n_phase, p_hw, min_layers=min_l
                 )
 
             p_fn = torch.compile(_prefix_raw, backend=self.backend, fullgraph=True, dynamic=False)
@@ -765,24 +767,26 @@ class AdaptiveEarlyExitDecode:
         if not self._compiled_mode:
             return
         out_p = self._prefix_runner(tok, state)
-        x, a_out, v0, anc, c_phase, p_lvls, n_assoc, n_tail, n_win, n_phase, _, _, _ = out_p
-        _ = self._skip_runner(x, state, p_lvls, n_assoc, n_tail, n_win, n_phase)
-        _ = self._suffix_runner(x, a_out, v0, anc, c_phase, state, p_lvls, n_assoc, n_tail, n_win, n_phase)
+        x, a_out, v0, anc, c_phase, p_lvls, n_assoc, n_tail, n_win, n_phase, p_hw, _, _, _, _ = out_p
+        _ = self._skip_runner(x, state, p_lvls, n_assoc, n_tail, n_win, n_phase, p_hw)
+        _ = self._suffix_runner(x, a_out, v0, anc, c_phase, state, p_lvls, n_assoc, n_tail, n_win, n_phase, p_hw)
 
     def step(self, token: torch.Tensor, state):
         if self._compiled_mode:
             out_p = self._prefix_runner(token, state)
-            x, a_out, v0, anc, c_phase, p_lvls, n_assoc, n_tail, n_win, n_phase, inter_logits, top_prob, rel_delta = out_p
+            x, a_out, v0, anc, c_phase, p_lvls, n_assoc, n_tail, n_win, n_phase, p_hw, inter_logits, top_prob, rel_delta, halt_prob = out_p
             halted = False
-            if self.delta_threshold > 0.0 and float(rel_delta.item()) <= self.delta_threshold:
+            if self.exit_gate_threshold > 0.0 and self.model.exit_gate is not None and float(halt_prob.item()) >= self.exit_gate_threshold:
+                halted = True
+            elif self.delta_threshold > 0.0 and float(rel_delta.item()) <= self.delta_threshold:
                 halted = True
             elif self.confidence_threshold < 1.0 and float(top_prob.item()) >= self.confidence_threshold:
                 halted = True
             if halted:
-                next_state = self._skip_runner(x, state, p_lvls, n_assoc, n_tail, n_win, n_phase)
+                next_state = self._skip_runner(x, state, p_lvls, n_assoc, n_tail, n_win, n_phase, p_hw)
                 return inter_logits, next_state, self.min_layers
             logits, next_state = self._suffix_runner(
-                x, a_out, v0, anc, c_phase, state, p_lvls, n_assoc, n_tail, n_win, n_phase
+                x, a_out, v0, anc, c_phase, state, p_lvls, n_assoc, n_tail, n_win, n_phase, p_hw
             )
             return logits, next_state, self.model.depth
 
@@ -791,6 +795,7 @@ class AdaptiveEarlyExitDecode:
             state,
             confidence_threshold=self.confidence_threshold,
             delta_threshold=self.delta_threshold,
+            exit_gate_threshold=self.exit_gate_threshold,
             min_layers=self.min_layers,
             vocab_limit=self.vocab_limit,
         )
@@ -859,7 +864,7 @@ class AdaptiveEarlyExitDecode:
 
 
 class SegmentMemoryCache:
-    """Prefix state cache & multi-segment memory anchor bank (arXiv:2602.24281 inspiration) for recurrent states."""
+    """Prefix state cache & query-dependent GRM (Gated Residual Memory, arXiv:2602.24281) segment bank."""
 
     def __init__(self, *, max_entries: int = 32, max_anchors: int = 8):
         if max_entries < 1 or max_anchors < 1:
@@ -868,14 +873,27 @@ class SegmentMemoryCache:
         self.max_anchors = int(max_anchors)
         self._prefix_cache: dict[tuple[int, ...], tuple[torch.Tensor, object]] = {}
         self._anchors: list[object] = []
+        self._grm_segments: list[tuple[object, torch.Tensor, str | None]] = []
 
     @staticmethod
     def clone_state(state):
         return _map_tensors(state, lambda t: t.detach().clone())
 
+    @staticmethod
+    def compute_segment_summary(hidden_states: torch.Tensor) -> torch.Tensor:
+        """L2-normalized FP32 mean summary vector (B, D) identifying a cached segment or visual frame."""
+        if hidden_states.ndim == 3:
+            pooled = hidden_states.detach().float().mean(dim=1)
+        elif hidden_states.ndim == 2:
+            pooled = hidden_states.detach().float()
+        else:
+            raise ValueError("hidden_states must have shape (B, T, D) or (B, D)")
+        return F.normalize(pooled, dim=-1, eps=1e-6).contiguous()
+
     def clear(self) -> None:
         self._prefix_cache.clear()
         self._anchors.clear()
+        self._grm_segments.clear()
 
     def put_prefix(self, token_ids_1d: tuple[int, ...], logits: torch.Tensor, state) -> None:
         if len(self._prefix_cache) >= self.max_entries and token_ids_1d not in self._prefix_cache:
@@ -933,6 +951,135 @@ class SegmentMemoryCache:
             self._anchors.pop(0)
         self._anchors.append(self.clone_state(state))
 
+    def record_segment(self, state, summary_key: torch.Tensor, *, tag: str | None = None) -> None:
+        """Record a keyed segment checkpoint (text chapter or <img_end> visual frame) for GRM routing."""
+        key = self.compute_segment_summary(summary_key)
+        if len(self._grm_segments) >= self.max_anchors:
+            self._grm_segments.pop(0)
+        self._grm_segments.append((self.clone_state(state), key, tag))
+
+    def _grm_topk_weights(
+        self,
+        query_hidden: torch.Tensor,
+        *,
+        top_k: int = 2,
+        temperature: float = 1.0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if temperature <= 0:
+            raise ValueError("GRM temperature must be positive")
+        if not self._grm_segments:
+            raise ValueError("no GRM segments recorded")
+        q = self.compute_segment_summary(query_hidden)  # (B, D)
+        keys = torch.stack([seg_key.to(device=q.device, dtype=torch.float32) for _, seg_key, _ in self._grm_segments], dim=1)  # (B, S, D)
+        scores = (q.unsqueeze(1) * keys).sum(dim=-1) / float(temperature)  # (B, S)
+        k = max(1, min(int(top_k), len(self._grm_segments)))
+        top_scores, top_idx = scores.topk(k, dim=-1)
+        weights = F.softmax(top_scores, dim=-1)  # (B, k)
+        return top_idx, weights
+
+    @torch.inference_mode()
+    def query_grm_readout(
+        self,
+        query_hidden: torch.Tensor,
+        *,
+        model,
+        top_k: int = 2,
+        temperature: float = 1.0,
+    ) -> tuple[torch.Tensor, dict]:
+        """True non-collapsing query-dependent GRM readout over Top-k cached associative memories."""
+        if query_hidden.ndim != 3:
+            raise ValueError("query_grm_readout requires query_hidden of shape (B, T, D)")
+        if not self._grm_segments:
+            return torch.zeros_like(query_hidden), {"num_segments": 0, "selected_indices": [], "selected_tags": [], "weights": []}
+        b, t, _ = query_hidden.shape
+        keys = torch.stack(
+            [seg_key.to(device=query_hidden.device, dtype=torch.float32) for _, seg_key, _ in self._grm_segments],
+            dim=1,
+        )  # (B, S, D)
+        q_norm = F.normalize(query_hidden.detach().float(), dim=-1, eps=1e-6)  # (B, T, D)
+        scores = torch.matmul(q_norm, keys.transpose(-1, -2)) / float(temperature)  # (B, T, S)
+        k = max(1, min(int(top_k), len(self._grm_segments)))
+        top_scores, top_idx = scores.topk(k, dim=-1)  # (B, T, k)
+        alphas = F.softmax(top_scores, dim=-1)  # (B, T, k)
+
+        # Read each segment's associative memory independently, then combine readouts by query-dependent alphas.
+        with torch.autocast(device_type=query_hidden.device.type, enabled=False):
+            x_in = model.input_norm(query_hidden).float()
+            q_addr = F.normalize(F.linear(x_in, model.assoc_address.weight.float()), dim=-1, eps=1e-6)  # (B, T, K)
+            mem_bank = torch.stack(
+                [st.assoc_memory.to(device=query_hidden.device, dtype=torch.float32) for st, _, _ in self._grm_segments],
+                dim=1,
+            )  # (B, S, K, V)
+            all_reads = torch.einsum("btk,bskv->btsv", q_addr, mem_bank)  # (B, T, S, V)
+            gather_idx = top_idx.unsqueeze(-1).expand(b, t, k, all_reads.shape[-1])
+            top_reads = torch.gather(all_reads, dim=2, index=gather_idx)  # (B, T, k, V)
+            weighted_read = (alphas.unsqueeze(-1) * top_reads).sum(dim=2)  # (B, T, V)
+
+        grm_out = model.assoc_readout(weighted_read.to(query_hidden.dtype)).to(query_hidden.dtype) * model.assoc_scale
+        last_idx = top_idx[0, -1].tolist()
+        info = {
+            "num_segments": len(self._grm_segments),
+            "selected_indices": last_idx,
+            "selected_tags": [self._grm_segments[i][2] for i in last_idx],
+            "weights": [round(float(w), 4) for w in alphas[0, -1].tolist()],
+        }
+        return grm_out, info
+
+    def retrieve_grm_state(
+        self,
+        query_hidden: torch.Tensor,
+        *,
+        active_state,
+        top_k: int = 2,
+        temperature: float = 1.0,
+        grm_weight: float = 0.25,
+    ):
+        """Query-dependent Top-k GRM state fusion (prevents uniform/static anchor collapse)."""
+        if not 0.0 <= grm_weight <= 1.0:
+            raise ValueError("grm_weight must be in [0.0, 1.0]")
+        if not self._grm_segments or grm_weight == 0.0:
+            return self.clone_state(active_state), {"num_segments": len(self._grm_segments), "selected_indices": [], "weights": []}
+        top_idx, weights = self._grm_topk_weights(query_hidden, top_k=top_k, temperature=temperature)
+        # Support batch=1 cleanly (and per-batch item indexing in general)
+        b = active_state.assoc_memory.shape[0]
+        blended_levels = []
+        for lvl_idx, cur_lvl in enumerate(active_state.levels):
+            mem_bank = torch.stack(
+                [st.levels[lvl_idx].memory.to(device=cur_lvl.memory.device, dtype=torch.float32) for st, _, _ in self._grm_segments],
+                dim=1,
+            )  # (B, S, H, D, D)
+            anc_mem = torch.zeros_like(cur_lvl.memory, dtype=torch.float32)
+            for bi in range(b):
+                for ki in range(top_idx.shape[1]):
+                    anc_mem[bi] = anc_mem[bi] + weights[bi, ki] * mem_bank[bi, top_idx[bi, ki]]
+            new_mem = ((1.0 - grm_weight) * cur_lvl.memory.float() + grm_weight * anc_mem).contiguous()
+            blended_levels.append(FractalLevelState(new_mem, cur_lvl.tail.clone()))
+
+        assoc_bank = torch.stack(
+            [st.assoc_memory.to(device=active_state.assoc_memory.device, dtype=torch.float32) for st, _, _ in self._grm_segments],
+            dim=1,
+        )
+        anc_assoc = torch.zeros_like(active_state.assoc_memory, dtype=torch.float32)
+        for bi in range(b):
+            for ki in range(top_idx.shape[1]):
+                anc_assoc[bi] = anc_assoc[bi] + weights[bi, ki] * assoc_bank[bi, top_idx[bi, ki]]
+        new_assoc = ((1.0 - grm_weight) * active_state.assoc_memory.float() + grm_weight * anc_assoc).contiguous()
+        next_state = FractalDeltaState(
+            tuple(blended_levels),
+            new_assoc,
+            active_state.local_tail.clone(),
+            active_state.window,
+            None if active_state.phase_pos is None else active_state.phase_pos.clone(),
+            None if active_state.hybrid_windows is None else self.clone_state(active_state.hybrid_windows),
+        )
+        sel = top_idx[0].tolist()
+        return next_state, {
+            "num_segments": len(self._grm_segments),
+            "selected_indices": sel,
+            "selected_tags": [self._grm_segments[i][2] for i in sel],
+            "weights": [round(float(w), 4) for w in weights[0].tolist()],
+        }
+
     def blend_with_anchors(self, state, *, anchor_weight: float = 0.15, decay: float = 0.7):
         """Blend active FP32 recurrent memory matrices with exponentially weighted segment anchors."""
         if not 0.0 <= anchor_weight <= 1.0:
@@ -962,4 +1109,5 @@ class SegmentMemoryCache:
             state.local_tail.clone(),
             state.window,
             None if state.phase_pos is None else state.phase_pos.clone(),
+            None if state.hybrid_windows is None else self.clone_state(state.hybrid_windows),
         )

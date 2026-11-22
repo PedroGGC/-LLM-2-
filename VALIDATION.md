@@ -1469,3 +1469,38 @@ ZIP original rehashado e preservado, `git diff --check` limpo.
 - **Campanha pareada 3 seeds na L4 (`bf16`, `--mode unified`, `--unified-curriculum`, `--lr 0.003`, seeds `351, 352, 353`, `2354.5s`):**
   - `fractal_golden_classic_v2_big`: TinyStories `val@256 = 0.9447 ± 0.0041`, `val@512 = 0.9122 ± 0.0041`, `val@3219 = 0.8823 ± 0.0043`, banda `2049+ = 0.7221 ± 0.0134`, `ΔTrunc = +0.0110 ± 0.0003`, `ΔSwap = +0.0120 ± 0.0003`, `decode_inductor = 2,215.2 ± 27.3 B/s`; Byte-Binding-v2 `8192 w=32 = 99.7% ± 0.3%` (`99.5% ± 0.4% paired`), **`HARD 8192 w=64 = 95.1% ± 1.2%` (`90.9% ± 1.4% paired`)**, peak VRAM `1.73 GB`.
   - Ver relatório completo em [docs/results/IA2_CAMPAIGN_009_COLAB_L4.md](docs/results/IA2_CAMPAIGN_009_COLAB_L4.md).
+
+---
+
+### Microbenchmark Cirúrgico Fase 3 (`95b0005`, Colab `NVIDIA L4`, 22/11/2026)
+
+- **Ambiente real verificado via Colab MCP:** `1× NVIDIA L4`, PyTorch `2.14.1+cu130`, commit `95b0005` (`llm-ideas`), duração total `1081.3s`, runtime encerrado imediatamente após coleta (`list_runtimes == {}`).
+- **Stage 1 — CUDA Gate (`pytest -q -m cuda tests/test_phase3_upgrades.py tests/test_quarot_early_exit.py`):**
+  - **`3 passed, 10 deselected`** em `376.60s` (`exit 0`), validando em GPU real o fix de dtype BF16 em `EngramTableCPU`, `gradient_checkpointing`, `CUDAGraph` por bucket no `SelfSpeculativeMTPDecode`, `AdaptiveEarlyExitDecode` em 2 estágios com `CUDAGraph`, e `QuaRot Triton W4A16`.
+- **Stage 2 — Hardware `53,90M` (`seq=2048×2`, `vocab=8192`):**
+  - `gradient_checkpointing`: Eager VRAM **`9.75 → 2.42 GiB`** (`−75.2%`, `6,966.5 → 3,712.2 tok/s`); `torch.compile` VRAM **`6.41 → 4.91 GiB`** (`−23.4%`, `10,288.3 → 7,714.7 tok/s`, compile `149.06s → 198.74s`).
+  - `#7 EngramTableCPU` (`128.0 MiB` tabela em RAM CPU pinned, `0 B` de tabela na VRAM, `0.502 MiB` projeção GPU, `mixed_fp32proj_bf16_ok=True`): `decode (t=1) = 297.4 µs`, `prefill (t=512) = 402.7 µs`.
+  - `2:4 Semi-Structured Sparsity` (`torch.sparse.to_sparse_semi_structured` em `1024×3200` / `3200×1024`, `M=64, 512`): **`1,118–1,135 µs` vs `18.5–58.5 µs` denso BF16 (`0.02×–0.05×`)** — **reprovado empiricamente** no PyTorch `2.14.1+cu130` + L4; descartado do roadmap.
+- **Stage 3 — `53,90M` `CUDAGraph` Decode (`256` tokens, NVML, pesos inicializados não treinados):**
+  - `Dense BF16 Compiled`: `541.8 tok/s` | `107.06 mJ/tok` (`67.44 W`).
+  - `QuaRot Triton W4A16 Compiled` (`3.55×` compressão nas células): **`812.2 tok/s` (`+49.9%`)** | **`66.68 mJ/tok` (`−37.7%`)** (`54.12 W`).
+  - `AdaptiveEarlyExitDecode` (`cudagraph=True`): `4/8L` forçado = **`558.5 tok/s`**, **`91.66 mJ/tok` (`−14.4%`)** (`57.73 W`); `8/8L` forçado = `529.3 tok/s` (`113.41 mJ/tok`); empilhado `QuaRot + Early-Exit 4/8L` = **`715.5 tok/s`**, `78.21 mJ/tok`, **`47.60 W`**.
+  - `SelfSpeculativeMTPDecode` (`cudagraph=True`, pesos não treinados → `0%` aceite): ungated `520.0 tok/s`, gated `0.25` = `503.6 tok/s` (salto de **`~8.4×`** sobre os `59.9 tok/s` eager da C013).
+  - **Paridade greedy MTP solucionada:** em **FP32 (`64/64` tokens)** `exact_match_fp32 = True` (`64/64`, `cudagraph=True`); em BF16 puro com pesos aleatórios quase-uniformes houve divergência por não-associatividade GEMM `t=1` vs `t=3` (`129/256` e `137/256`), confirmando ausência de bug algorítmico.
+- **Limitações:** Stage 3 mediu vazão/energia/paridade em `53,90M` com pesos não treinados (taxa de aceite MTP = `0%` e taxa de early-exit forçada); ganho real de `tok/s` do Early-Exit em `53,9M` é limitado pelo sync host de `~0.3 ms` entre os 2 CUDAGraphs (`prefix`→`skip/suffix`), tornando-se mais expressivo em `≥ 500M–3B`.
+
+---
+
+### Campanha 014 — Fase A (`FractalDelta V2`: `Gated DeltaNet-2` + Híbrido `3:1` + `Exit Gate` + `GRM`, Colab `NVIDIA L4`, 22/11/2026)
+
+- **Alterações validadas:** `fractal_decoupled_gates` (`beta_erase`/`beta_write` desacoplados no kernel `Triton DPLR`), `inputs_embeds` nativo (`forward`, `prefill_embeds`, `step_hidden`), híbrido `3:1` (`fractal_hybrid_stride` + `return_all_states` em `CausalLocalWindow` + fix `F.embedding` para Inductor `2.14.1+cu130`), `Exit Gate` aprendido (`fractal_exit_gate`, `exit_gate_weight`), e `GRM` dependente de $q_t$ (`record_segment`, `query_grm_readout`, `retrieve_grm_state`).
+- **Testes executados:**
+  - Local CPU: `tests/test_fractal_v2_grm.py` + `tests/test_quarot_early_exit.py` + `tests/test_phase3_upgrades.py` + exact resume = **`18 passed, 4 skipped`** (`35.95s`); `tests/test_training.py` + `tests/test_decode_optimization.py` = **`30 passed, 1 skipped`** (`53.43s`); pós-fix Inductor `tests/test_fractal_v2_grm.py` = **`7 passed, 1 skipped`** (`11.16s`).
+  - Colab `NVIDIA L4`: `pytest -q -m cuda tests/test_fractal_v2_grm.py` = **`1 passed, 7 deselected`** (`293.67s`, `exit 0`).
+- **Ablação pareada `V1` (`7,45M`) vs `V2` (`8,04M`) em `FineWeb-Edu` (`vocab=4096`, `1.500` passos = `6,14M` tokens, currículo `512→1024→2048`, `2580.4s` total, runtime encerrado `list_runtimes == {}`):**
+  - `val BPB` (Dense BF16): `V1` `@512=1.7297 / @1024=1.7135 / @2048=1.7062` vs **`V2` `@512=1.7257 / @1024=1.7097 / @2048=1.7025`** (`−0.0037` a `−0.0040 BPB`); `QuaRot@1024` `1.7170 → 1.7132` (`3.55×` compressão).
+  - `RULER NIAH` `mean_answer_nll` (`8` exemplos/comprimento, `exact_match=0%` nesta escala de `8M`/`6M` tok): `8K` **`5.9785` (`V1 Raw`) → `5.3210` (`V2 + GRM cego`, `−0.6575`)**; `16K` **`6.6527` (`V1 Raw`) → `6.0366` (`V2 + GRM cego`, `−0.6161`)**.
+  - Decode `CUDAGraph` em pesos treinados (`256` tok, NVML): `V2 MTP` **`1,227.2 tok/s`** (`+30.3%` vs `V2 Dense` `942.0`, `33.44 mJ/tok` = `−36.8%` energia); `V2 Exit Gate` (`t=0.5`) atingiu **`53.3%` early-exit (`5.87/8L`, `26.7%` camadas salvas, `54.9 W`)** (`590.9 tok/s` devido ao sync host em escala `8M`).
+- **Limitações:** `V2` tem `+8%` parâmetros e compile mais longo (`1142.8s` vs `635.9s`) devido ao loop Python em `CausalLocalWindow` (otimização pendente para escala `≥ 100M`). Relatório completo em [IA2_CAMPAIGN_014_PHASE_A_V2_L4.md](docs/results/IA2_CAMPAIGN_014_PHASE_A_V2_L4.md).
+
+
