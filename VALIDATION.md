@@ -1503,4 +1503,22 @@ ZIP original rehashado e preservado, `git diff --check` limpo.
   - Decode `CUDAGraph` em pesos treinados (`256` tok, NVML): `V2 MTP` **`1,227.2 tok/s`** (`+30.3%` vs `V2 Dense` `942.0`, `33.44 mJ/tok` = `−36.8%` energia); `V2 Exit Gate` (`t=0.5`) atingiu **`53.3%` early-exit (`5.87/8L`, `26.7%` camadas salvas, `54.9 W`)** (`590.9 tok/s` devido ao sync host em escala `8M`).
 - **Limitações:** `V2` tem `+8%` parâmetros e compile mais longo (`1142.8s` vs `635.9s`) devido ao loop Python em `CausalLocalWindow` (otimização pendente para escala `≥ 100M`). Relatório completo em [IA2_CAMPAIGN_014_PHASE_A_V2_L4.md](docs/results/IA2_CAMPAIGN_014_PHASE_A_V2_L4.md).
 
+---
+
+### Campanha 015 — Fase B (`Lumina V1 Multimodal`: `SigLIP 2` + `VisionSpatialProjector` + `GRM` `<img_end>`, Colab `NVIDIA L4`, 22/11/2026)
+
+- **Alterações validadas:** novo pacote `src/llm2/multimodal/` (`vision_bridge.py`, `vlm_data.py`, `vlm_trainer.py`) com `SigLIPVisionEncoder`, `VisionSpatialProjector` (`2×2`/`4×4` pixel-unshuffle + posicional 2D + `RMSNorm` FP32), `LuminaMultimodalWrapper` (`<img_start>/<img_end>` + âncoras visuais no `GRM`), streaming HF (`FineVision`, `aipracticecafe/curated-danbooru-2026` com suporte AVIF) + JSONL local e receita de treino estrita em 3 estágios.
+- **Testes executados:**
+  - Local CPU: `tests/test_multimodal_bridge.py` + `tests/test_fractal_v2_grm.py` = **`11 passed, 2 skipped`** (`26.12s`); pós-ajuste de schema em `vlm_data.py`, `tests/test_multimodal_bridge.py` = **`4 passed, 1 skipped`** (`15.23s`).
+  - Colab `NVIDIA L4`: `pytest -q -m cuda tests/test_multimodal_bridge.py` = **`1 passed, 4 deselected`** (`11.73s`, `exit 0`).
+- **Validação real na L4 (`144.4s` total, runtime encerrado `list_runtimes == {}`):**
+  - `google/siglip2-base-patch16-224` (`BF16`): **`185.04 MiB` VRAM**, `14×14=196` patches → `51` tokens (`4.0×` compressão espacial).
+  - Streams reais (`70%` `HuggingFaceM4/FineVision:allava_laion` `120` amostras + `30%` `aipracticecafe/curated-danbooru-2026` `60` amostras AVIF, `n_val=20` reservado):
+    - Stage 1 (`Projector-Only`, `120` passos): val `5.6215 → 5.4445`, `backbone_mutated=False`, `vision_mutated=False`.
+    - Stage 2 (`Projector + Prelude + Adapters`, `80` passos): val **`5.4445 → 3.2423`**, `core_mutated=False`, `coda_mutated=False`.
+    - `QuaRot Triton W4A16` (`3.554×` compressão): val **`3.2440`** (`+0.0017` NLL vs BF16).
+  - Multi-imagem / GIF (`8` frames) + `512` tokens gerados: estado $O(1)$ rigorosamente constante (`1.038.848 B` em `1` img, `8` frames e `+512` tok; VRAM pico `461.2 → 471.5 MiB`), e `GRM` recuperou `img_0` e `img_5` em Top-1 após `512` tokens.
+- **Limitações:** validação de ponte em backbone `d_model=384` byte-level (`vocab=257`) sem pré-treino longo; qualidade descritiva real depende da escala da Fase C (`~1.5B–3B`). Relatório completo em [IA2_CAMPAIGN_015_PHASE_B_MULTIMODAL_L4.md](docs/results/IA2_CAMPAIGN_015_PHASE_B_MULTIMODAL_L4.md).
+
+
 
