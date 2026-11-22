@@ -1,6 +1,7 @@
 """Tests for Phase 2B levers: #6 QuaRot Hadamard INT4/W4A8, #5 Adaptive Early-Exit,
 SegmentMemoryCache (arXiv:2602.24281 inspiration), and Confidence-Gated Self-Speculative MTP."""
 
+import pytest
 import torch
 from torch import nn
 
@@ -285,4 +286,105 @@ def test_combined_quarot_early_exit_segment_cache_and_mtp_stack():
     ee_exact = AdaptiveEarlyExitDecode(q_model, confidence_threshold=1.1, delta_threshold=0.0, min_layers=2)
     ref_toks, _ = ee_exact.generate_greedy(prefix, 8)
     assert spec_toks == ref_toks
+
+
+@pytest.mark.cuda
+def test_triton_quarot_cuda_bf16_and_compile_parity():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA required")
+    from llm2.architectures.triton_quarot import HAS_TRITON, quarot_int4_linear
+
+    if not HAS_TRITON:
+        pytest.skip("Triton required")
+    device = torch.device("cuda")
+    torch.manual_seed(123)
+    for in_f, out_f in ((384, 640), (1024, 3200)):
+        lin = nn.Linear(in_f, out_f, bias=True).to(device)
+        q_tri = HadamardLinearINT4.from_linear(lin, group_size=32, act_bits=16, use_triton=True).to(device)
+        q_ref = HadamardLinearINT4.from_linear(lin, group_size=32, act_bits=16, use_triton=False).to(device)
+
+        for m in (1, 17, 64):
+            # 1) FP32 direct kernel parity
+            x_f32 = torch.randn(1, m, in_f, device=device, dtype=torch.float32)
+            out_tri = q_tri(x_f32)
+            out_ref = q_ref(x_f32)
+            torch.testing.assert_close(out_tri, out_ref, atol=2e-3, rtol=2e-3)
+
+            # 2) BF16 + torch.compile inductor parity
+            x_bf16 = x_f32.to(torch.bfloat16)
+            compiled_tri = torch.compile(q_tri, backend="inductor", fullgraph=True, dynamic=False)
+            out_bf16_tri = compiled_tri(x_bf16)
+            out_bf16_ref = q_ref(x_bf16)
+            assert out_bf16_tri.dtype == torch.bfloat16
+            torch.testing.assert_close(out_bf16_tri.float(), out_bf16_ref.float(), atol=6e-2, rtol=3e-2)
+
+    # Also test standalone quarot_int4_linear directly
+    pw = q_tri.packed_weight
+    ws = q_tri.weight_scale
+    x_raw = torch.randn(8, 1024, device=device, dtype=torch.bfloat16)
+    torch.testing.assert_close(
+        quarot_int4_linear(x_raw, pw, ws, q_tri.bias, 32, use_triton=True).float(),
+        quarot_int4_linear(x_raw, pw, ws, q_tri.bias, 32, use_triton=False).float(),
+        atol=6e-2,
+        rtol=3e-2,
+    )
+
+
+@pytest.mark.cuda
+def test_phase2b_cuda_bf16_compile_stack():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA required")
+    device = torch.device("cuda")
+    torch.manual_seed(351)
+
+    # 1. QAT + intermediate supervision under BF16 + torch.compile on CUDA
+    cfg_qat = _make_fractal_cfg(
+        d_model=128, hidden_dim=256, n_layers=4, weight_mode="quarot_int4", intermediate_weight=0.2, mtp_tokens=2, mtp_weight=0.25
+    )
+    qat_model = FractalDeltaMemory(cfg_qat.model, cfg_qat.research).to(device)
+    obj = PredictiveObjective(qat_model, cfg_qat.research).to(device)
+    compiled_qat = torch.compile(qat_model, backend="inductor", dynamic=False)
+    batch = {
+        "input_ids": torch.randint(0, 128, (2, 32), device=device),
+        "targets": torch.randint(0, 128, (2, 32), device=device),
+    }
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        out = obj(compiled_qat, batch)
+    assert torch.isfinite(out.loss)
+    out.loss.backward()
+    assert qat_model.cells[1].qkv.weight.grad is not None and torch.isfinite(qat_model.cells[1].qkv.weight.grad).all()
+
+    # 2. PTQ QuaRot BF16 + CompiledDecode + Early-Exit + SegmentMemoryCache + Confidence-Gated MTP
+    cfg_dense = _make_fractal_cfg(d_model=128, hidden_dim=256, n_layers=6, mtp_tokens=2, mtp_weight=0.25)
+    dense_model = FractalDeltaMemory(cfg_dense.model, cfg_dense.research).to(device=device, dtype=torch.bfloat16).eval()
+    dense_obj = PredictiveObjective(dense_model, cfg_dense.research).to(device=device, dtype=torch.bfloat16).eval()
+    q_model, report = quantize_model_quarot_int4(dense_model, group_size=32, act_bits=8, inplace=False, use_triton=True)
+    q_model = q_model.to(device=device, dtype=torch.bfloat16).eval()
+    assert report["shared_embedding_preserved"] is True
+
+    prefix = torch.randint(0, 128, (1, 16), device=device)
+    with torch.inference_mode():
+        q_compiled = CompiledDecode(FractalDecode(q_model), backend="inductor")
+        logits, st = q_compiled.prefill(prefix, 32)
+        assert torch.isfinite(logits).all()
+
+        cache = SegmentMemoryCache(max_entries=8, max_anchors=4)
+        _, _, h1 = cache.prefill_cached(FractalDecode(q_model), prefix, 32)
+        _, _, h2 = cache.prefill_cached(FractalDecode(q_model), prefix, 32)
+        assert h1["cache_hit"] == "miss" and h2["cache_hit"] == "exact"
+
+        ee = AdaptiveEarlyExitDecode(q_model, confidence_threshold=0.001, min_layers=2)
+        ee_toks, ee_stats = ee.generate_greedy(prefix, 6)
+        assert len(ee_toks) == 6 and ee_stats["mean_layers_executed"] == 2.0
+
+        spec = SelfSpeculativeMTPDecode(
+            q_model, dense_obj.mtp_heads, vocab_limit=128, backend="inductor", draft_confidence_threshold=0.0
+        )
+        spec_g = SelfSpeculativeMTPDecode(
+            q_model, dense_obj.mtp_heads, vocab_limit=128, backend=None, draft_confidence_threshold=0.3
+        )
+        t_u, _ = spec.generate_greedy(prefix, 8)
+        t_g, _ = spec_g.generate_greedy(prefix, 8)
+        assert t_u == t_g
+
 

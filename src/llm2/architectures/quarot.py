@@ -9,6 +9,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .triton_quarot import can_use_triton_quarot, quarot_int4_linear
+
 
 def largest_pow2_divisor(n: int, max_block: int = 128) -> int:
     """Return the largest power-of-two divisor of n capped at max_block."""
@@ -58,20 +60,19 @@ def fast_walsh_hadamard_transform(x: torch.Tensor, *, block_size: int | None = N
 def apply_hadamard_rotation(x: torch.Tensor, signs: torch.Tensor, hadamard_block: torch.Tensor) -> torch.Tensor:
     """Apply randomized orthogonal block-Hadamard transform: y = ((x * s) @ H_B)."""
     b_size = hadamard_block.shape[0]
-    work = x.float() * signs.float()
+    work = x * signs.to(x.dtype)
     if b_size > 1:
-        work = (work.unflatten(-1, (-1, b_size)) @ hadamard_block.float()).flatten(-2)
-    return work.to(x.dtype)
+        work = (work.unflatten(-1, (-1, b_size)) @ hadamard_block.to(x.dtype)).flatten(-2)
+    return work
 
 
 def inverse_hadamard_rotation(y: torch.Tensor, signs: torch.Tensor, hadamard_block: torch.Tensor) -> torch.Tensor:
     """Exact inverse of apply_hadamard_rotation since H_B^T = H_B and s^2 = 1."""
     b_size = hadamard_block.shape[0]
-    work = y.float()
+    work = y
     if b_size > 1:
-        work = (work.unflatten(-1, (-1, b_size)) @ hadamard_block.float()).flatten(-2)
-    work = work * signs.float()
-    return work.to(y.dtype)
+        work = (work.unflatten(-1, (-1, b_size)) @ hadamard_block.to(y.dtype)).flatten(-2)
+    return work * signs.to(y.dtype)
 
 
 def pack_int4_signed(q_int8: torch.Tensor) -> torch.Tensor:
@@ -116,6 +117,7 @@ class HadamardLinearINT4(nn.Module):
         max_block: int = 128,
         seed: int = 1729,
         qat: bool = False,
+        use_triton: bool = True,
     ):
         super().__init__()
         if in_features % 2 != 0:
@@ -129,6 +131,7 @@ class HadamardLinearINT4(nn.Module):
         self.act_bits = int(act_bits)
         self.block_size = largest_pow2_divisor(self.in_features, max_block)
         self.qat = bool(qat)
+        self.use_triton = bool(use_triton)
 
         self.register_buffer("signs", rademacher_signs(self.in_features, seed=seed))
         self.register_buffer("hadamard_block", hadamard_matrix(self.block_size))
@@ -183,6 +186,7 @@ class HadamardLinearINT4(nn.Module):
         act_bits: int = 8,
         max_block: int = 128,
         seed: int = 1729,
+        use_triton: bool = True,
     ) -> HadamardLinearINT4:
         layer = cls(
             linear.in_features,
@@ -193,6 +197,7 @@ class HadamardLinearINT4(nn.Module):
             max_block=max_block,
             seed=seed,
             qat=False,
+            use_triton=use_triton,
         ).to(device=linear.weight.device)
         layer.pack_from_float_weight(linear.weight, linear.bias)
         return layer
@@ -219,13 +224,23 @@ class HadamardLinearINT4(nn.Module):
         if self.act_bits == 8:
             x_rot = quantize_int8_dynamic(x_rot, group_size=self.group_size)
         if self.qat and self.weight is not None:
-            w_rot = apply_hadamard_rotation(self.weight, self.signs, self.hadamard_block)
+            w_rot = apply_hadamard_rotation(self.weight.to(x_rot.dtype), self.signs, self.hadamard_block)
             grouped = w_rot.float().view(self.out_features, self.n_groups, self.group_size)
             scale = (grouped.abs().amax(dim=-1, keepdim=True) / 7.0).clamp_min(1e-6)
-            w_q = ((grouped / scale).round().clamp(-7.0, 7.0) * scale).view(self.out_features, self.in_features).to(x.dtype)
+            w_q = ((grouped / scale).round().clamp(-7.0, 7.0) * scale).view(self.out_features, self.in_features).to(x_rot.dtype)
             w_eff = w_rot + (w_q - w_rot).detach()
-        else:
-            w_eff = self.dequantize_rotated_weight(dtype=x_rot.dtype)
+            bias = None if self.bias is None else self.bias.to(x_rot.dtype)
+            return F.linear(x_rot, w_eff, bias)
+        if self.use_triton and can_use_triton_quarot(self.in_features, self.group_size, x_rot.device):
+            return quarot_int4_linear(
+                x_rot,
+                self.packed_weight,
+                self.weight_scale,
+                self.bias,
+                self.group_size,
+                use_triton=True,
+            )
+        w_eff = self.dequantize_rotated_weight(dtype=x_rot.dtype)
         bias = None if self.bias is None else self.bias.to(x_rot.dtype)
         return F.linear(x_rot, w_eff, bias)
 
@@ -242,6 +257,7 @@ def quantize_model_quarot_int4(
     include_assoc: bool = True,
     inplace: bool = True,
     seed: int = 1729,
+    use_triton: bool = True,
 ) -> tuple[nn.Module, dict]:
     """Convert dense Linear layers of a model into packed HadamardLinearINT4 while preserving shared embeddings."""
     target = model if inplace else copy.deepcopy(model)
@@ -270,6 +286,7 @@ def quantize_model_quarot_int4(
                     act_bits=act_bits,
                     max_block=max_block,
                     seed=seed + len(replaced),
+                    use_triton=use_triton,
                 )
                 setattr(parent, name, q_layer)
                 replaced.append(full_name)
