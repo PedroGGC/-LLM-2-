@@ -119,7 +119,14 @@ def _extract_qa_pair(row: dict, default_prompt: str = "Describe this image in de
                 if asst_msg:
                     return (user_msg or default_prompt), asst_msg
 
-    # 2. Direct prompt/response pairs
+    # 2. Top-level user/assistant (+ optional system, e.g. AnimaDirector dataset_anima_vlm.jsonl) & prompt/response pairs
+    if row.get("assistant") is not None and str(row.get("assistant")).strip():
+        resp = str(row["assistant"]).strip()
+        user_txt = str(row.get("user") or row.get("prompt") or default_prompt).strip()
+        sys_txt = str(row.get("system") or "").strip()
+        prompt = f"{sys_txt}\n\n{user_txt}" if sys_txt else user_txt
+        return prompt, resp
+
     if row.get("response") or row.get("answer"):
         resp = str(row.get("response") or row.get("answer")).strip()
         prompt = str(row.get("prompt") or row.get("question") or default_prompt).strip()

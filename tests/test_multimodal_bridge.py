@@ -243,13 +243,15 @@ def test_jsonl_loader_refusal_filter_and_weighted_mixer(tmp_path: Path):
         {"image": "a.png", "messages": [{"role": "user", "content": "Describe"}, {"role": "assistant", "content": "A bright red square."}], "rating": "general"},
         {"image": "b.png", "prompt": "Describe", "response": "I'm sorry, I cannot assist with that request."},
         {"images": ["a.png", "b.png"], "caption_long": "Two panels showing red and blue squares.", "rating": "explicit"},
+        {"id": "pose::a.png", "task": "pose_breakdown", "image": "a.png", "system": "Analyze pose.", "user": "Examine target:", "assistant": "Standing upright, bright red canvas."},
     ]
     jsonl.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
 
     loaded = list(iter_jsonl_multimodal(jsonl, filter_refusals=True))
-    assert len(loaded) == 2
+    assert len(loaded) == 3
     assert loaded[0].response == "A bright red square."
     assert len(loaded[1].images) == 2 and loaded[1].rating == "explicit"
+    assert "Analyze pose." in loaded[2].prompt and loaded[2].response == "Standing upright, bright red canvas."
 
     # Weighted mixer (3:1 ratio between stream A and stream B)
     s_gen = iter([MultimodalSample([], "p", f"gen_{i}", "finevision") for i in range(6)])
