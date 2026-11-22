@@ -5,6 +5,7 @@ import copy
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 from ..interfaces import Objective, ObjectiveOutput
 
@@ -97,8 +98,19 @@ class PredictiveObjective(Objective):
         if r.intermediate_weight:
             if not output.intermediate_states:
                 raise ValueError("intermediate supervision requires a recursive backbone")
-            intermediate = torch.stack([self._ce(model.lm_head(h), batch["targets"])
-                                        for h in output.intermediate_states]).mean()
+            use_ckpt = bool(r.gradient_checkpointing and self.training and torch.is_grad_enabled())
+            inter_sum = None
+            for h in output.intermediate_states:
+                if use_ckpt:
+                    step_loss = grad_checkpoint(
+                        lambda hid: self._ce(model.lm_head(hid), batch["targets"]),
+                        h,
+                        use_reentrant=False,
+                    )
+                else:
+                    step_loss = self._ce(model.lm_head(h), batch["targets"])
+                inter_sum = step_loss if inter_sum is None else (inter_sum + step_loss)
+            intermediate = inter_sum / float(len(output.intermediate_states))
             loss = loss + r.intermediate_weight * intermediate
             metrics["intermediate_loss"] = float(intermediate.detach())
         if output.state is not None and hasattr(output.state, "iterations"):

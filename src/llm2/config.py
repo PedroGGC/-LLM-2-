@@ -268,7 +268,7 @@ class ResearchConfig:
             self.jepa_weight or (self.mtp_weight and self.architecture != "fractal_delta")
             or (self.intermediate_weight and self.architecture != "fractal_delta") or self.lm_weight != 1
             or self.latent_steps or self.latent_warmup_steps or self.detach_every
-            or self.gradient_checkpointing or self.record_states or self.curriculum != "off"
+            or (self.gradient_checkpointing and self.architecture != "fractal_delta") or self.record_states or self.curriculum != "off"
             or self.context_normalization != "none" or self.cache_context_projection or self.paired_common_init
             or self.core_layers != 1 or self.iterations != 2 or self.scale_conditioning
         ):

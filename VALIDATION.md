@@ -1,5 +1,14 @@
 # Validação vigente — 22/11/2026
 
+## Upgrades Pós-C013 (Local + Gate L4 Parcial): `gradient_checkpointing`, `CUDAGraph` em `Early-Exit` / `Confidence-Gated MTP`, Pipeline `FineWeb-Edu`, `external_eval` e `#7 Engram CPU-RAM` / `2:4 Sparsity`
+
+Verificações reais executadas:
+- **CPU local pós-ajuste (`engram_offload.py`, Windows, Python 3.12.2, PyTorch 2.14.1+cpu):**
+  - `python -m pytest -q tests/test_phase3_upgrades.py tests/test_quarot_early_exit.py` → **10 passed, 3 skipped em 55,69 s** (skips são exclusivamente os `3` testes `@pytest.mark.cuda`; cobre paridade de gradientes do `gradient_checkpointing`, `Confidence-Gated MTP` compilado em bucket, `AdaptiveEarlyExitDecode` em 2 estágios, deduplicação SHA-256 + BPE train-only no `FineWeb-Edu`, harness zero-shot/`RULER` e gradiente em `EngramTableCPU`).
+- **Google Colab NVIDIA L4 (`l4-c014`, execução interrompida/encerrada para poupar unidades antes do treino `53,9M` em `FineWeb-Edu`, `list_runtimes() == {}`):**
+  - Em `tests/test_phase3_upgrades.py::test_phase3_cuda_cudagraph_and_checkpointing`: validados em `CUDA + BF16 + torch.compile` o `forward/backward` com `gradient_checkpointing=True`, `SelfSpeculativeMTPDecode` (`draft_confidence_threshold=0.25`, `cudagraph=True`) e `AdaptiveEarlyExitDecode` em 2 estágios (`cudagraph=True`, `mean_layers_executed == 2.0`). A chamada final de `EngramTableCPU` acusou mismatch `BFloat16 != float` antes de qualquer treino longo; corrigido localmente em `src/llm2/architectures/engram_offload.py` (`self.proj.weight.dtype`).
+- **Limitações declaradas:** após a correção de `engram_offload.py`, apenas a suíte CPU local foi reexecutada (`10 passed, 3 skipped`); os benchmarks em GPU L4 do `#7 Engram` em CUDA/BF16, economia numérica de VRAM do `gradient_checkpointing` em `53,9M`, vazão final em `tok/s` dos novos `CUDAGraph`s e esparsidade `2:4` aguardam o microbenchmark cirúrgico opcional de `~2–3 min`.
+
 ## Roteiro Fase 2B (L4 + CPU): `#5` Profundidade Adaptativa (`Early-Exit`), `#6` QuaRot Triton `INT4/W4A8` + `SegmentMemoryCache` & `Confidence-Gated MTP` (`IA2 Campanha 013`)
 
 Relatório detalhado em [docs/results/IA2_CAMPAIGN_013_PHASE2B_L4_QUAROT_EE.md](docs/results/IA2_CAMPAIGN_013_PHASE2B_L4_QUAROT_EE.md).

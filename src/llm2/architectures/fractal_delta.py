@@ -9,6 +9,7 @@ import math
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 from ..interfaces import Backbone, ModelOutput
 from ..model import RMSNorm, SwiGLU
@@ -726,6 +727,7 @@ class FractalDeltaMemory(Backbone):
         next_levels = []
         intermediate_states = []
         collect_inter = bool(getattr(self.research, "intermediate_weight", 0.0) > 0 and self.depth > 1)
+        use_ckpt = bool(getattr(self.research, "gradient_checkpointing", False) and self.training and torch.is_grad_enabled())
         assoc_drop = F.dropout(assoc_out, p=self.config.dropout, training=self.training)
         v0 = None
         for level in range(self.depth):
@@ -737,7 +739,30 @@ class FractalDeltaMemory(Backbone):
             if adapter is not None and adapter.anchor_gate is not None:
                 x = x + adapter.anchor_gate.sigmoid() * anchor
             cell = self.cells[self.cell_index(level)]
-            if self.value_residual and level == 0:
+            if use_ckpt:
+                prev_mem = None if prev is None else prev.memory
+                prev_tail = None if prev is None else prev.tail
+                if self.value_residual and level == 0:
+                    def _run_lvl0(x_in, anc_in, p_mem, p_tail, p_pos, _cell=cell, _ad=adapter):
+                        st_in = None if p_mem is None else FractalLevelState(p_mem, p_tail)
+                        xo, cur, v0_o = _cell(x_in, st_in, adapter=_ad, return_v0=True, phase_pos=p_pos, anchor=anc_in)
+                        return xo, cur.memory, cur.tail, v0_o
+
+                    x, cur_mem, cur_tail, v0 = grad_checkpoint(
+                        _run_lvl0, x, anchor, prev_mem, prev_tail, cur_phase, use_reentrant=False
+                    )
+                    current = FractalLevelState(cur_mem, cur_tail)
+                else:
+                    def _run_lvl(x_in, anc_in, v0_in, p_mem, p_tail, p_pos, _cell=cell, _ad=adapter):
+                        st_in = None if p_mem is None else FractalLevelState(p_mem, p_tail)
+                        xo, cur = _cell(x_in, st_in, adapter=_ad, v0=v0_in, phase_pos=p_pos, anchor=anc_in)
+                        return xo, cur.memory, cur.tail
+
+                    x, cur_mem, cur_tail = grad_checkpoint(
+                        _run_lvl, x, anchor, v0, prev_mem, prev_tail, cur_phase, use_reentrant=False
+                    )
+                    current = FractalLevelState(cur_mem, cur_tail)
+            elif self.value_residual and level == 0:
                 x, current, v0 = cell(
                     x, prev, adapter=adapter, return_v0=True, phase_pos=cur_phase, anchor=anchor
                 )
@@ -1038,6 +1063,131 @@ class FractalDecode:
             next_phase_pos,
         )
         return cached_logits, cached_hidden, next_state, layers_executed
+
+    def step_early_exit_prefix(self, ids, state, *, min_layers: int, vocab_limit: int):
+        """Compiled/CUDAGraph-friendly stage 1 of Early-Exit: runs levels 0..min_layers-1 and halting signals."""
+        t = ids.shape[1]
+        depth = self.model.depth
+        min_l = max(1, min(int(min_layers), depth))
+        raw = self.model.embedding(ids)
+        assoc_out, next_assoc_mem, next_local_tail = self.model._run_assoc(raw, state, execution="sequential")
+        x = raw
+        next_window = None
+        if self.model.window_attn is not None:
+            win_out, next_window = self.model.window_attn(x, state.window)
+            x = x + win_out
+        cur_phase = None
+        next_phase_pos = None
+        if self.model.golden_phase:
+            cur_phase = state.phase_pos
+            next_phase_pos = (cur_phase + t).contiguous()
+        anchor = x
+        prefix_levels = []
+        v0 = None
+        prev_x = x
+        for level in range(min_l):
+            prev_x = x
+            prev = state.levels[level]
+            adapter = self.model.adapters[level] if depth > 1 else None
+            if adapter is not None and adapter.anchor_gate is not None:
+                x = x + adapter.anchor_gate.sigmoid() * anchor
+            cell = self.step_cells[self.model.cell_index(level)]
+            if self.model.value_residual and level == 0:
+                x, current, v0 = cell(
+                    x, prev, adapter=adapter, return_v0=True, phase_pos=cur_phase, anchor=anchor
+                )
+            else:
+                x, current = cell(
+                    x, prev, adapter=adapter, v0=v0, phase_pos=cur_phase, anchor=anchor
+                )
+            prefix_levels.append(current)
+        inter_hidden = self.model.norm(x + assoc_out)
+        inter_logits = self.model.lm_head(inter_hidden)
+        probs = F.softmax(inter_logits[..., :vocab_limit].float(), dim=-1)
+        top_prob = probs.amax(dim=-1).amin()
+        rel_delta = ((x - prev_x).float().norm(dim=-1) / x.float().norm(dim=-1).clamp_min(1e-6)).amax()
+        return (
+            x,
+            assoc_out,
+            v0,
+            anchor,
+            cur_phase,
+            tuple(prefix_levels),
+            next_assoc_mem,
+            next_local_tail,
+            next_window,
+            next_phase_pos,
+            inter_logits,
+            top_prob,
+            rel_delta,
+        )
+
+    def step_early_exit_skip(
+        self,
+        x,
+        state,
+        prefix_levels,
+        next_assoc_mem,
+        next_local_tail,
+        next_window,
+        next_phase_pos,
+        *,
+        min_layers: int,
+    ):
+        """Compiled/CUDAGraph-friendly zero-FLOP skip branch for levels min_layers..depth-1."""
+        depth = self.model.depth
+        min_l = max(1, min(int(min_layers), depth))
+        levels = list(prefix_levels)
+        for level in range(min_l, depth):
+            levels.append(self._skip_decode_level(state.levels[level], x, return_all_states=False))
+        return FractalDeltaState(
+            tuple(levels),
+            next_assoc_mem,
+            next_local_tail,
+            next_window,
+            next_phase_pos,
+        )
+
+    def step_early_exit_suffix(
+        self,
+        x,
+        assoc_out,
+        v0,
+        anchor,
+        cur_phase,
+        state,
+        prefix_levels,
+        next_assoc_mem,
+        next_local_tail,
+        next_window,
+        next_phase_pos,
+        *,
+        min_layers: int,
+    ):
+        """Compiled/CUDAGraph-friendly stage 2 for hard tokens: runs levels min_layers..depth-1."""
+        depth = self.model.depth
+        min_l = max(1, min(int(min_layers), depth))
+        levels = list(prefix_levels)
+        for level in range(min_l, depth):
+            prev = state.levels[level]
+            adapter = self.model.adapters[level] if depth > 1 else None
+            if adapter is not None and adapter.anchor_gate is not None:
+                x = x + adapter.anchor_gate.sigmoid() * anchor
+            cell = self.step_cells[self.model.cell_index(level)]
+            x, current = cell(
+                x, prev, adapter=adapter, v0=v0, phase_pos=cur_phase, anchor=anchor
+            )
+            levels.append(current)
+        hidden = self.model.norm(x + assoc_out)
+        logits = self.model.lm_head(hidden)
+        next_state = FractalDeltaState(
+            tuple(levels),
+            next_assoc_mem,
+            next_local_tail,
+            next_window,
+            next_phase_pos,
+        )
+        return logits, next_state
 
     def step(self, ids, state):
         if ids.shape != (state.levels[0].memory.shape[0], 1):

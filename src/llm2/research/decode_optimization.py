@@ -473,8 +473,40 @@ def try_pin_l2_weights(tensors, device):
     return {"supported": False, "pinned_bytes": 0, "reason": "libcudart_not_found"}
 
 
+class _CUDAGraphRunner:
+    """Reusable CUDAGraph wrapper for any pure-tensor/dataclass-state compiled callable."""
+
+    def __init__(self, fn, device: torch.device):
+        self.fn = fn
+        self.device = device
+        self._graphs: dict[tuple, tuple] = {}
+
+    def __call__(self, *args):
+        tensors = tuple(_iter_tensors(args))
+        key = tuple((t.shape, t.dtype) for t in tensors)
+        entry = self._graphs.get(key)
+        if entry is None:
+            static_args = _map_tensors(args, torch.Tensor.clone)
+            static_in = tuple(_iter_tensors(static_args))
+            torch.cuda.synchronize(self.device)
+            for _ in range(3):
+                self.fn(*static_args)
+            torch.cuda.synchronize(self.device)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                static_out = self.fn(*static_args)
+            torch.cuda.synchronize(self.device)
+            entry = (graph, static_in, static_out)
+            self._graphs[key] = entry
+        graph, static_in, static_out = entry
+        for dst, src in zip(static_in, tensors, strict=True):
+            dst.copy_(src)
+        graph.replay()
+        return _map_tensors(static_out, torch.Tensor.clone)
+
+
 class SelfSpeculativeMTPDecode:
-    """Exact greedy self-speculative decoder reusing trained auxiliary MTP heads with optional confidence gating."""
+    """Exact greedy self-speculative decoder reusing trained auxiliary MTP heads with per-bucket CUDAGraph gating."""
 
     def __init__(
         self,
@@ -501,13 +533,24 @@ class SelfSpeculativeMTPDecode:
         decoder = self.decoder
         heads = self.mtp_heads
         vlim = self.vocab_limit
+        track_probs = self.draft_confidence_threshold > 0.0
 
         def verify_raw(block_ids, state):
             logits_b, hidden_b, stacked_states = decoder.step_hidden(block_ids, state, return_all_states=True)
             pred_main = logits_b[0, :, :vlim].argmax(dim=-1, keepdim=True)
-            pred_drafts = [head(hidden_b)[0, :, :vlim].argmax(dim=-1, keepdim=True) for head in heads]
+            pred_drafts = []
+            prob_drafts = []
+            for head in heads:
+                h_logits = head(hidden_b)[0, :, :vlim]
+                if track_probs:
+                    p_max, tok_max = torch.softmax(h_logits.float(), dim=-1).max(dim=-1, keepdim=True)
+                    pred_drafts.append(tok_max)
+                    prob_drafts.append(p_max)
+                else:
+                    pred_drafts.append(h_logits.argmax(dim=-1, keepdim=True))
             toks_table = torch.cat([pred_main, *pred_drafts], dim=-1)
-            return toks_table, stacked_states
+            probs_table = torch.cat(prob_drafts, dim=-1) if track_probs else pred_main.new_ones((pred_main.shape[0], 1), dtype=torch.float32)
+            return toks_table, probs_table, stacked_states
 
         self._verify_raw = verify_raw
         if torch._dynamo.config.cache_size_limit < 64:
@@ -517,12 +560,8 @@ class SelfSpeculativeMTPDecode:
             if self.backend is None
             else torch.compile(verify_raw, backend=self.backend, fullgraph=True, dynamic=False)
         )
-        self.use_cudagraph = bool(self.backend == "inductor" and device.type == "cuda" and self.draft_confidence_threshold == 0.0)
-        self._graph = None
-        self._graph_key = None
-        self._static_block = None
-        self._static_in = None
-        self._static_out = None
+        self.use_cudagraph = bool(self.backend == "inductor" and device.type == "cuda")
+        self._cg_runner = _CUDAGraphRunner(self._verify_fn, device) if self.use_cudagraph else None
 
     def _select_drafts_from_hidden(self, last_hidden: torch.Tensor) -> tuple[list[int], int]:
         """Propose contiguous drafts passing draft_confidence_threshold; returns (drafts, pruned_count)."""
@@ -541,39 +580,24 @@ class SelfSpeculativeMTPDecode:
                 drafts.append(int(d_logits.argmax(dim=-1).item()))
         return drafts, pruned
 
-    def _capture(self, block_ids, state, key):
-        static_block = block_ids.clone()
-        static_state = _map_tensors(state, torch.Tensor.clone)
-        torch.cuda.synchronize(self.device)
-        for _ in range(3):
-            self._verify_fn(static_block, static_state)
-        torch.cuda.synchronize(self.device)
-        graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph):
-            static_out = self._verify_fn(static_block, static_state)
-        torch.cuda.synchronize(self.device)
-        self._graph = graph
-        self._graph_key = key
-        self._static_block = static_block
-        self._static_in = tuple(_iter_tensors(static_state))
-        self._static_out = static_out
+    def _select_drafts_from_row(self, draft_toks: list[int], draft_probs: list[float]) -> tuple[list[int], int]:
+        if self.draft_confidence_threshold <= 0.0:
+            return draft_toks, 0
+        selected: list[int] = []
+        for idx, (tok, prob) in enumerate(zip(draft_toks, draft_probs)):
+            if prob < self.draft_confidence_threshold:
+                return selected, self.k_drafts - idx
+            selected.append(tok)
+        return selected, 0
 
     def _run_verify(self, block_ids, state):
-        if self.use_cudagraph:
-            state_tensors = tuple(_iter_tensors(state))
-            key = (block_ids.shape, block_ids.dtype, tuple((t.shape, t.dtype) for t in state_tensors))
+        if self.use_cudagraph and self._cg_runner is not None:
             try:
-                if self._graph is None or self._graph_key != key:
-                    self._capture(block_ids, state, key)
-                self._static_block.copy_(block_ids)
-                for dst, src in zip(self._static_in, state_tensors, strict=True):
-                    dst.copy_(src)
-                self._graph.replay()
-                toks_table, stacked_states = self._static_out
-                return toks_table.clone(), _map_tensors(stacked_states, torch.Tensor.clone)
+                return self._cg_runner(block_ids, state)
             except Exception as exc:
                 if "InvalidCxxCompiler" in str(exc) or "cl is not found" in str(exc):
                     self.use_cudagraph = False
+                    self._cg_runner = None
                     self.backend = "aot_eager"
                     self._verify_fn = torch.compile(self._verify_raw, backend="aot_eager", fullgraph=True, dynamic=False)
                 else:
@@ -597,10 +621,12 @@ class SelfSpeculativeMTPDecode:
         logits0, hidden0, cur_state = self.decoder.prefill_hidden(prefix, cap)
         next_tok = int(logits0[0, -1, :self.vocab_limit].argmax(dim=-1).item())
         drafts, init_pruned = self._select_drafts_from_hidden(hidden0)
-        # Warmup verify pass before timing when compiling/capturing CUDAGraph.
-        if self.backend is not None and self.draft_confidence_threshold == 0.0:
-            warm_block = torch.tensor([[next_tok, *drafts]], dtype=torch.long, device=self.device)
-            self._run_verify(warm_block, cur_state)
+        # Warmup verify buckets before timing when compiling/capturing per-bucket CUDAGraphs.
+        if self.backend is not None:
+            bucket_lens = range(1, self.k_drafts + 2) if self.draft_confidence_threshold > 0.0 else (self.k_drafts + 1,)
+            for b_len in bucket_lens:
+                warm_block = torch.full((1, b_len), next_tok, dtype=torch.long, device=self.device)
+                self._run_verify(warm_block, cur_state)
 
         emitted: list[int] = []
         cycles = 0
@@ -616,43 +642,16 @@ class SelfSpeculativeMTPDecode:
             while len(emitted) < new_tokens:
                 cur_k = len(drafts)
                 block = torch.tensor([[next_tok, *drafts]], dtype=torch.long, device=self.device)
-                if self.draft_confidence_threshold > 0.0:
-                    logits_b, hidden_b, stacked_states = self.decoder.step_hidden(block, cur_state, return_all_states=True)
-                    main_preds = logits_b[0, :, :self.vocab_limit].argmax(dim=-1).tolist()
-                    cycles += 1
-                    emitted.append(next_tok)
-                    if len(emitted) >= new_tokens:
-                        break
-                    proposed_drafts += cur_k
-                    last_idx = cur_k
-                    for m in range(cur_k):
-                        true_next = int(main_preds[m])
-                        if true_next == drafts[m]:
-                            emitted.append(true_next)
-                            accepted_drafts += 1
-                            if len(emitted) >= new_tokens:
-                                last_idx = m + 1
-                                break
-                        else:
-                            last_idx = m
-                            break
-                    if len(emitted) >= new_tokens:
-                        break
-                    next_tok = int(main_preds[last_idx])
-                    drafts, step_pruned = self._select_drafts_from_hidden(hidden_b[:, last_idx : last_idx + 1])
-                    pruned_drafts += step_pruned
-                    cur_state = self.decoder.slice_step_state(stacked_states, last_idx)
-                    continue
-
-                toks_table, stacked_states = self._run_verify(block, cur_state)
+                toks_table, probs_table, stacked_states = self._run_verify(block, cur_state)
                 rows = toks_table.tolist()
+                prob_rows = probs_table.tolist() if self.draft_confidence_threshold > 0.0 else None
                 cycles += 1
                 emitted.append(next_tok)
                 if len(emitted) >= new_tokens:
                     break
-                proposed_drafts += self.k_drafts
-                last_idx = self.k_drafts
-                for m in range(self.k_drafts):
+                proposed_drafts += cur_k
+                last_idx = cur_k
+                for m in range(cur_k):
                     true_next = rows[m][0]
                     if true_next == drafts[m]:
                         emitted.append(true_next)
@@ -666,7 +665,11 @@ class SelfSpeculativeMTPDecode:
                 if len(emitted) >= new_tokens:
                     break
                 next_tok = rows[last_idx][0]
-                drafts = rows[last_idx][1:]
+                if prob_rows is not None:
+                    drafts, step_pruned = self._select_drafts_from_row(rows[last_idx][1:], prob_rows[last_idx])
+                    pruned_drafts += step_pruned
+                else:
+                    drafts = rows[last_idx][1:]
                 cur_state = self.decoder.slice_step_state(stacked_states, last_idx)
             sync(self.device)
             decode_s = max(time.perf_counter() - t0, 1e-9)
@@ -698,7 +701,7 @@ class SelfSpeculativeMTPDecode:
 
 
 class AdaptiveEarlyExitDecode:
-    """Adaptive depth (Early-Exit / ACT) decoder for FractalDeltaMemory skipping converged Core iterations."""
+    """Adaptive depth (Early-Exit / ACT) decoder with optional 2-stage compiled CUDAGraph execution."""
 
     def __init__(
         self,
@@ -708,6 +711,7 @@ class AdaptiveEarlyExitDecode:
         delta_threshold: float = 0.0,
         min_layers: int = 2,
         vocab_limit: int | None = None,
+        backend: str | None = None,
     ):
         self.decoder = FractalDecode(model)
         self.model = model
@@ -716,11 +720,72 @@ class AdaptiveEarlyExitDecode:
         self.min_layers = max(1, min(int(min_layers), model.depth))
         self.vocab_limit = model.config.vocab_size if vocab_limit is None else int(vocab_limit)
         self.device = next(model.parameters()).device
+        self.backend = None if backend is None else resolve_compile_backend(backend, self.device)
+        self.use_cudagraph = bool(self.backend == "inductor" and self.device.type == "cuda" and self.min_layers < model.depth)
+        self._compiled_mode = bool(self.backend is not None and self.min_layers < model.depth)
+        self._prefix_runner = None
+        self._skip_runner = None
+        self._suffix_runner = None
+        if self._compiled_mode:
+            dec = self.decoder
+            min_l = self.min_layers
+            vlim = self.vocab_limit
+            if torch._dynamo.config.cache_size_limit < 64:
+                torch._dynamo.config.cache_size_limit = 64
+
+            def _prefix_raw(tok, st):
+                return dec.step_early_exit_prefix(tok, st, min_layers=min_l, vocab_limit=vlim)
+
+            def _skip_raw(x, st, p_lvls, n_assoc, n_tail, n_win, n_phase):
+                return dec.step_early_exit_skip(
+                    x, st, p_lvls, n_assoc, n_tail, n_win, n_phase, min_layers=min_l
+                )
+
+            def _suffix_raw(x, a_out, v0, anc, c_phase, st, p_lvls, n_assoc, n_tail, n_win, n_phase):
+                return dec.step_early_exit_suffix(
+                    x, a_out, v0, anc, c_phase, st, p_lvls, n_assoc, n_tail, n_win, n_phase, min_layers=min_l
+                )
+
+            p_fn = torch.compile(_prefix_raw, backend=self.backend, fullgraph=True, dynamic=False)
+            k_fn = torch.compile(_skip_raw, backend=self.backend, fullgraph=True, dynamic=False)
+            s_fn = torch.compile(_suffix_raw, backend=self.backend, fullgraph=True, dynamic=False)
+            if self.use_cudagraph:
+                self._prefix_runner = _CUDAGraphRunner(p_fn, self.device)
+                self._skip_runner = _CUDAGraphRunner(k_fn, self.device)
+                self._suffix_runner = _CUDAGraphRunner(s_fn, self.device)
+            else:
+                self._prefix_runner = p_fn
+                self._skip_runner = k_fn
+                self._suffix_runner = s_fn
 
     def prefill(self, ids: torch.Tensor, capacity: int):
         return self.decoder.prefill(ids, capacity)
 
+    def _warmup_compiled(self, tok: torch.Tensor, state) -> None:
+        if not self._compiled_mode:
+            return
+        out_p = self._prefix_runner(tok, state)
+        x, a_out, v0, anc, c_phase, p_lvls, n_assoc, n_tail, n_win, n_phase, _, _, _ = out_p
+        _ = self._skip_runner(x, state, p_lvls, n_assoc, n_tail, n_win, n_phase)
+        _ = self._suffix_runner(x, a_out, v0, anc, c_phase, state, p_lvls, n_assoc, n_tail, n_win, n_phase)
+
     def step(self, token: torch.Tensor, state):
+        if self._compiled_mode:
+            out_p = self._prefix_runner(token, state)
+            x, a_out, v0, anc, c_phase, p_lvls, n_assoc, n_tail, n_win, n_phase, inter_logits, top_prob, rel_delta = out_p
+            halted = False
+            if self.delta_threshold > 0.0 and float(rel_delta.item()) <= self.delta_threshold:
+                halted = True
+            elif self.confidence_threshold < 1.0 and float(top_prob.item()) >= self.confidence_threshold:
+                halted = True
+            if halted:
+                next_state = self._skip_runner(x, state, p_lvls, n_assoc, n_tail, n_win, n_phase)
+                return inter_logits, next_state, self.min_layers
+            logits, next_state = self._suffix_runner(
+                x, a_out, v0, anc, c_phase, state, p_lvls, n_assoc, n_tail, n_win, n_phase
+            )
+            return logits, next_state, self.model.depth
+
         logits, _, next_state, layers_exec = self.decoder.step_adaptive(
             token,
             state,
@@ -740,6 +805,8 @@ class AdaptiveEarlyExitDecode:
         cap = prefix.shape[1] + new_tokens + 1
         logits, state = self.prefill(prefix, cap)
         next_tok = int(logits[0, -1, :self.vocab_limit].argmax(dim=-1).item())
+        if self._compiled_mode:
+            self._warmup_compiled(torch.tensor([[next_tok]], dtype=torch.long, device=self.device), state)
         emitted: list[int] = [next_tok]
         layers_hist: list[int] = []
         early_exits = 0
@@ -784,6 +851,7 @@ class AdaptiveEarlyExitDecode:
             "early_exit_rate": (early_exits / len(layers_hist)) if layers_hist else 0.0,
             "decode_seconds": decode_s,
             "tokens_per_sec": len(emitted) / decode_s,
+            "cudagraph": self.use_cudagraph,
             "nvml": nvml,
             "mj_per_token": mj_per_tok,
         }
