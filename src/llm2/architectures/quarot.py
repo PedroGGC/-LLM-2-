@@ -245,7 +245,7 @@ class HadamardLinearINT4(nn.Module):
         return F.linear(x_rot, w_eff, bias)
 
 
-_SKIP_LINEAR_NAMES = frozenset({"lm_head", "assoc_write_gate", "assoc_address", "assoc_value", "decay", "beta"})
+_SKIP_LINEAR_NAMES = frozenset({"lm_head", "assoc_write_gate", "assoc_address", "assoc_value", "decay", "beta", "beta_write"})
 
 
 def quantize_model_quarot_int4(

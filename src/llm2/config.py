@@ -194,6 +194,11 @@ class ResearchConfig:
     fractal_assoc_multilag: bool = False
     fractal_decoupled_gates: bool = False
     fractal_hybrid_stride: int = 0
+    fractal_hybrid_swa: bool = False
+    fractal_swa_kv_heads: int = 0
+    fractal_swa_sinks: int = 4
+    fractal_swa_rope: bool = False
+    fractal_deltanet_rope: bool = False
     fractal_exit_gate: bool = False
     exit_gate_weight: float = 0.0
 
@@ -218,12 +223,17 @@ class ResearchConfig:
             raise ValueError("unknown research architecture")
         if not 0 < self.fractal_beta_scale <= 2.0:
             raise ValueError("fractal_beta_scale must be in (0, 2]")
-        if self.fractal_window != 0 and (self.architecture != "fractal_delta" or not 4 <= self.fractal_window <= 128):
-            raise ValueError("fractal_window must be 0 or 4..128 for fractal_delta")
+        max_win = 4096 if self.fractal_hybrid_swa else 128
+        if self.fractal_window != 0 and (self.architecture != "fractal_delta" or not 4 <= self.fractal_window <= max_win):
+            raise ValueError(f"fractal_window must be 0 or 4..{max_win} for fractal_delta")
         if self.fractal_value_residual and self.architecture != "fractal_delta":
             raise ValueError("fractal_value_residual requires fractal_delta")
         if self.fractal_golden_phase and self.architecture != "fractal_delta":
             raise ValueError("fractal_golden_phase requires fractal_delta")
+        if self.fractal_deltanet_rope and self.architecture != "fractal_delta":
+            raise ValueError("fractal_deltanet_rope requires fractal_delta")
+        if self.fractal_deltanet_rope and self.fractal_golden_phase:
+            raise ValueError("fractal_deltanet_rope and fractal_golden_phase are mutually exclusive")
         if self.fractal_free_energy and self.architecture != "fractal_delta":
             raise ValueError("fractal_free_energy requires fractal_delta")
         if self.fractal_weight_mode not in ("dense", "ternary", "quaternion", "quarot_int4"):
@@ -248,6 +258,19 @@ class ResearchConfig:
             self.architecture != "fractal_delta" or self.fractal_window < 4 or self.fractal_hybrid_stride < 2
         ):
             raise ValueError("fractal_hybrid_stride requires fractal_delta with fractal_window >= 4 and stride >= 2")
+        if self.fractal_hybrid_swa and (
+            self.architecture != "fractal_delta"
+            or self.fractal_hybrid_stride < 2
+            or self.share_scales
+            or self.fractal_prelude_coda
+        ):
+            raise ValueError("fractal_hybrid_swa requires untied fractal_delta with fractal_hybrid_stride >= 2")
+        if self.fractal_swa_kv_heads < 0 or (self.fractal_swa_kv_heads > 0 and not self.fractal_hybrid_swa):
+            raise ValueError("fractal_swa_kv_heads must be 0 or positive with fractal_hybrid_swa=True")
+        if not 0 <= self.fractal_swa_sinks <= 16:
+            raise ValueError("fractal_swa_sinks must be in 0..16")
+        if self.fractal_swa_rope and not self.fractal_hybrid_swa:
+            raise ValueError("fractal_swa_rope requires fractal_hybrid_swa=True")
         if self.fractal_exit_gate and self.architecture != "fractal_delta":
             raise ValueError("fractal_exit_gate requires fractal_delta")
         if self.exit_gate_weight < 0:

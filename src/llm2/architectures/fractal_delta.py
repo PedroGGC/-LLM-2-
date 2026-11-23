@@ -94,6 +94,16 @@ def _apply_golden_phase(tensor: torch.Tensor, angles: torch.Tensor) -> torch.Ten
     return torch.cat((rotated, tensor[..., rot_dim:]), dim=-1)
 
 
+def _apply_split_half_rope(tensor: torch.Tensor, angles: torch.Tensor) -> torch.Tensor:
+    """Apply standard HuggingFace/Llama split-half FP32 RoPE (norm-preserving)."""
+    half = tensor.shape[-1] // 2
+    x1 = tensor[..., :half]
+    x2 = tensor[..., half:]
+    cos = angles.cos()
+    sin = angles.sin()
+    return torch.cat((x1 * cos - x2 * sin, x2 * cos + x1 * sin), dim=-1)
+
+
 def _init_decay_bias(heads, min_tau=4.0, max_tau=4096.0):
     if heads == 1:
         taus = torch.tensor([max_tau], dtype=torch.float32)
@@ -172,8 +182,19 @@ class LocalWindowState:
 
 
 @dataclass
+class SWAState:
+    k_sinks: torch.Tensor
+    v_sinks: torch.Tensor
+    pos_sinks: torch.Tensor
+    k_tail: torch.Tensor
+    v_tail: torch.Tensor
+    pos_tail: torch.Tensor
+    seen: torch.Tensor
+
+
+@dataclass
 class FractalDeltaState:
-    levels: tuple[FractalLevelState, ...]
+    levels: tuple[FractalLevelState | SWAState, ...]
     assoc_memory: torch.Tensor
     local_tail: torch.Tensor
     window: LocalWindowState | None = None
@@ -302,6 +323,268 @@ class CausalLocalWindow(nn.Module):
         return 2 * self.heads * w_tail * self.head_dim + w_tail
 
 
+class SlidingWindowGQACell(nn.Module):
+    """Full-width GQA Transformer block with bounded O(1) Sliding-Window + Attention Sinks (NoPE or FP32 RoPE)."""
+
+    def __init__(self, config, research):
+        super().__init__()
+        self.d_model = config.d_model
+        self.heads = config.n_heads
+        self.head_dim = self.d_model // self.heads
+        kv_heads = research.fractal_swa_kv_heads if research.fractal_swa_kv_heads > 0 else self.heads
+        if self.heads % kv_heads != 0:
+            raise ValueError(f"n_heads ({self.heads}) must be divisible by fractal_swa_kv_heads ({kv_heads})")
+        self.kv_heads = kv_heads
+        self.kv_groups = self.heads // self.kv_heads
+        self.kv_dim = self.kv_heads * self.head_dim
+        self.hidden_dim = config.hidden_dim
+        self.window = research.fractal_window
+        self.sink_tokens = research.fractal_swa_sinks
+        self.use_rope = research.fractal_swa_rope
+        self.dropout = config.dropout
+        self.weight_mode = research.fractal_weight_mode
+
+        self.attn_norm = RMSNorm(self.d_model, eps=config.norm_eps)
+        self.q_proj = _make_linear(self.d_model, self.d_model, self.weight_mode)
+        self.k_proj = _make_linear(self.d_model, self.kv_dim, self.weight_mode)
+        self.v_proj = _make_linear(self.d_model, self.kv_dim, self.weight_mode)
+        self.out_proj = _make_linear(self.d_model, self.d_model, self.weight_mode)
+        self.ffn_norm = RMSNorm(self.d_model, eps=config.norm_eps)
+        self.ffn = SwiGLU(self.d_model, self.hidden_dim)
+        if self.weight_mode != "dense":
+            self.ffn.gate = _make_linear(self.d_model, self.hidden_dim, self.weight_mode)
+            self.ffn.up = _make_linear(self.d_model, self.hidden_dim, self.weight_mode)
+            self.ffn.down = _make_linear(self.hidden_dim, self.d_model, self.weight_mode)
+
+        if self.use_rope:
+            inv_freq = 1.0 / (
+                float(config.rope_theta) ** (torch.arange(0, self.head_dim, 2, dtype=torch.float64) / float(self.head_dim))
+            )
+            self.register_buffer("rope_inv_freq", inv_freq, persistent=False)
+
+        proj_std = 0.02 / math.sqrt(2 * config.n_layers)
+        _init_linear_weight(self.q_proj, 0.02)
+        _init_linear_weight(self.k_proj, 0.02)
+        _init_linear_weight(self.v_proj, 0.02)
+        _init_linear_weight(self.out_proj, proj_std)
+        _init_linear_weight(self.ffn.gate, 0.02)
+        _init_linear_weight(self.ffn.up, 0.02)
+        _init_linear_weight(self.ffn.down, proj_std)
+
+    def empty_state(self, b: int, device: torch.device, dtype: torch.dtype) -> SWAState:
+        w_tail = self.window - 1
+        s = self.sink_tokens
+        return SWAState(
+            torch.zeros(b, self.kv_heads, s, self.head_dim, device=device, dtype=dtype),
+            torch.zeros(b, self.kv_heads, s, self.head_dim, device=device, dtype=dtype),
+            torch.full((b, s), -1, device=device, dtype=torch.int64),
+            torch.zeros(b, self.kv_heads, w_tail, self.head_dim, device=device, dtype=dtype),
+            torch.zeros(b, self.kv_heads, w_tail, self.head_dim, device=device, dtype=dtype),
+            torch.full((b, w_tail), -1, device=device, dtype=torch.int64),
+            torch.zeros((b,), device=device, dtype=torch.int64),
+        )
+
+    def validate_state(self, state: SWAState, b: int, device: torch.device) -> None:
+        if not isinstance(state, SWAState):
+            raise ValueError("invalid fractal delta state shape/dtype")
+        w_tail = self.window - 1
+        s = self.sink_tokens
+        checks = (
+            (state.k_sinks, (b, self.kv_heads, s, self.head_dim)),
+            (state.v_sinks, (b, self.kv_heads, s, self.head_dim)),
+            (state.k_tail, (b, self.kv_heads, w_tail, self.head_dim)),
+            (state.v_tail, (b, self.kv_heads, w_tail, self.head_dim)),
+        )
+        for tensor, expected in checks:
+            if tensor.shape != expected or tensor.device != device or not tensor.is_floating_point():
+                raise ValueError("invalid fractal delta state shape/dtype")
+        int_checks = (
+            (state.pos_sinks, (b, s)),
+            (state.pos_tail, (b, w_tail)),
+            (state.seen, (b,)),
+        )
+        for tensor, expected in int_checks:
+            if tensor.shape != expected or tensor.dtype != torch.int64 or tensor.device != device:
+                raise ValueError("invalid fractal delta state shape/dtype")
+
+    def _update_state_single(self, st: SWAState, k: torch.Tensor, v: torch.Tensor, new_pos: torch.Tensor) -> SWAState:
+        """Sync-free static-shape 1-token SWA+Sink update (CUDAGraph-safe)."""
+        s = self.sink_tokens
+        p = new_pos[:, 0]
+        if s > 0:
+            slot = p.clamp(0, s - 1)
+            is_sink = p < s
+            sink_mask = (torch.arange(s, device=k.device)[None, :] == slot[:, None]) & is_sink[:, None]
+            m4 = sink_mask[:, None, :, None]
+            nk_sinks = torch.where(m4, k, st.k_sinks)
+            nv_sinks = torch.where(m4, v, st.v_sinks)
+            np_sinks = torch.where(sink_mask, p[:, None], st.pos_sinks)
+            is_tail = p >= s
+        else:
+            nk_sinks, nv_sinks, np_sinks = st.k_sinks, st.v_sinks, st.pos_sinks
+            is_tail = torch.ones_like(p, dtype=torch.bool)
+        sh_k = torch.cat((st.k_tail[:, :, 1:, :], k), dim=2)
+        sh_v = torch.cat((st.v_tail[:, :, 1:, :], v), dim=2)
+        sh_p = torch.cat((st.pos_tail[:, 1:], new_pos), dim=1)
+        t4 = is_tail[:, None, None, None]
+        nk_tail = torch.where(t4, sh_k, st.k_tail)
+        nv_tail = torch.where(t4, sh_v, st.v_tail)
+        np_tail = torch.where(is_tail[:, None], sh_p, st.pos_tail)
+        return SWAState(nk_sinks, nv_sinks, np_sinks, nk_tail, nv_tail, np_tail, st.seen + 1)
+
+    def _update_state_block(
+        self, st: SWAState, k: torch.Tensor, v: torch.Tensor, new_pos: torch.Tensor, *, return_all_states: bool = False
+    ) -> SWAState:
+        b, _, t, _ = k.shape
+        if t == 1:
+            nxt = self._update_state_single(st, k, v, new_pos)
+            if not return_all_states:
+                return nxt
+            return SWAState(
+                nxt.k_sinks.unsqueeze(0),
+                nxt.v_sinks.unsqueeze(0),
+                nxt.pos_sinks.unsqueeze(0),
+                nxt.k_tail.unsqueeze(0),
+                nxt.v_tail.unsqueeze(0),
+                nxt.pos_tail.unsqueeze(0),
+                nxt.seen.unsqueeze(0),
+            )
+        if return_all_states:
+            cur = st
+            steps = []
+            for idx in range(t):
+                cur = self._update_state_single(cur, k[:, :, idx : idx + 1, :], v[:, :, idx : idx + 1, :], new_pos[:, idx : idx + 1])
+                steps.append(cur)
+            return SWAState(
+                torch.stack([s_i.k_sinks for s_i in steps], dim=0).contiguous(),
+                torch.stack([s_i.v_sinks for s_i in steps], dim=0).contiguous(),
+                torch.stack([s_i.pos_sinks for s_i in steps], dim=0).contiguous(),
+                torch.stack([s_i.k_tail for s_i in steps], dim=0).contiguous(),
+                torch.stack([s_i.v_tail for s_i in steps], dim=0).contiguous(),
+                torch.stack([s_i.pos_tail for s_i in steps], dim=0).contiguous(),
+                torch.stack([s_i.seen for s_i in steps], dim=0).contiguous(),
+            )
+        s = self.sink_tokens
+        w_tail = self.window - 1
+        if s > 0:
+            s_arange = torch.arange(s, device=k.device, dtype=torch.int64)[None, :, None]
+            eq = new_pos[:, None, :] == s_arange  # (B, S, T)
+            has_sink = eq.any(dim=-1)  # (B, S)
+            tok_idx = eq.long().argmax(dim=-1)  # (B, S)
+            gather_idx = tok_idx[:, None, :, None].expand(b, self.kv_heads, s, self.head_dim)
+            k_g = torch.gather(k, dim=2, index=gather_idx)
+            v_g = torch.gather(v, dim=2, index=gather_idx)
+            p_g = torch.gather(new_pos, dim=1, index=tok_idx)
+            m4 = has_sink[:, None, :, None]
+            nk_sinks = torch.where(m4, k_g, st.k_sinks).contiguous()
+            nv_sinks = torch.where(m4, v_g, st.v_sinks).contiguous()
+            np_sinks = torch.where(has_sink, p_g, st.pos_sinks).contiguous()
+        else:
+            nk_sinks, nv_sinks, np_sinks = st.k_sinks, st.v_sinks, st.pos_sinks
+        # Any token with pos < S belongs exclusively to sinks; new_pos is strictly increasing, so masking < S to -1 is exact.
+        masked_new_pos = torch.where(new_pos >= s, new_pos, torch.full_like(new_pos, -1))
+        nk_tail = torch.cat((st.k_tail, k), dim=2)[:, :, -w_tail:, :].contiguous()
+        nv_tail = torch.cat((st.v_tail, v), dim=2)[:, :, -w_tail:, :].contiguous()
+        np_tail = torch.cat((st.pos_tail, masked_new_pos), dim=1)[:, -w_tail:].contiguous()
+        return SWAState(nk_sinks, nv_sinks, np_sinks, nk_tail, nv_tail, np_tail, (st.seen + t).contiguous())
+
+    def _expand_kv(self, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.kv_groups == 1:
+            return k, v
+        return k.repeat_interleave(self.kv_groups, dim=1), v.repeat_interleave(self.kv_groups, dim=1)
+
+    def forward_attn_delta(
+        self,
+        x: torch.Tensor,
+        state: SWAState | None = None,
+        adapter=None,
+        *,
+        return_all_states: bool = False,
+    ) -> tuple[torch.Tensor, SWAState]:
+        b, t, d = x.shape
+        normed = self.attn_norm(x)
+        if adapter is not None:
+            normed = normed * adapter.attn_scale + adapter.attn_shift
+        q = self.q_proj(normed).reshape(b, t, self.heads, self.head_dim).transpose(1, 2)
+        k = self.k_proj(normed).reshape(b, t, self.kv_heads, self.head_dim).transpose(1, 2)
+        v = self.v_proj(normed).reshape(b, t, self.kv_heads, self.head_dim).transpose(1, 2)
+
+        st = self.empty_state(b, x.device, k.dtype) if state is None else state
+        new_pos = st.seen[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :]
+        if self.use_rope:
+            with torch.autocast(device_type=x.device.type, enabled=False):
+                angles = (new_pos[:, None, :, None].double() * self.rope_inv_freq.double().view(1, 1, 1, -1)).float()
+                q = _apply_split_half_rope(q.float(), angles).to(k.dtype)
+                k = _apply_split_half_rope(k.float(), angles).to(k.dtype)
+
+        drop_p = self.dropout if self.training else 0.0
+        if state is None and t <= self.window and not return_all_states:
+            k_exp, v_exp = self._expand_kv(k, v)
+            attn = F.scaled_dot_product_attention(q, k_exp, v_exp, is_causal=True, dropout_p=drop_p)
+        else:
+            if self.sink_tokens > 0:
+                k_all = torch.cat((st.k_sinks.to(k.dtype), st.k_tail.to(k.dtype), k), dim=2)
+                v_all = torch.cat((st.v_sinks.to(v.dtype), st.v_tail.to(v.dtype), v), dim=2)
+                pos_all = torch.cat((st.pos_sinks, st.pos_tail, new_pos), dim=1)
+            else:
+                k_all = torch.cat((st.k_tail.to(k.dtype), k), dim=2)
+                v_all = torch.cat((st.v_tail.to(v.dtype), v), dim=2)
+                pos_all = torch.cat((st.pos_tail, new_pos), dim=1)
+            pq = new_pos[:, :, None]
+            pk = pos_all[:, None, :]
+            mask = ((pk >= 0) & (pk <= pq) & ((pk < self.sink_tokens) | ((pq - pk) < self.window))).unsqueeze(1)
+            k_exp, v_exp = self._expand_kv(k_all, v_all)
+            attn = F.scaled_dot_product_attention(q, k_exp, v_exp, attn_mask=mask, dropout_p=drop_p)
+
+        next_state = self._update_state_block(st, k, v, new_pos, return_all_states=return_all_states)
+        out = attn.transpose(1, 2).contiguous().reshape(b, t, d).to(x.dtype)
+        attn_update = F.dropout(self.out_proj(out).to(x.dtype), p=self.dropout, training=self.training)
+        if adapter is not None:
+            attn_update = attn_update * adapter.euler_attn
+        return attn_update, next_state
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        state: SWAState | None = None,
+        adapter=None,
+        *,
+        v0=None,
+        return_v0: bool = False,
+        phase_pos=None,
+        anchor=None,
+        return_all_states: bool = False,
+    ):
+        attn_update, next_state = self.forward_attn_delta(
+            x, state=state, adapter=adapter, return_all_states=return_all_states
+        )
+        x = x + attn_update
+        ffn_in = self.ffn_norm(x)
+        if adapter is not None:
+            ffn_in = ffn_in * adapter.ffn_scale + adapter.ffn_shift
+        ffn_update = F.dropout(self.ffn(ffn_in).to(x.dtype), p=self.dropout, training=self.training)
+        if adapter is not None:
+            ffn_update = ffn_update * adapter.euler_ffn
+        next_x = x + ffn_update
+        if return_v0:
+            return next_x, next_state, None
+        return next_x, next_state
+
+    def parameter_count(self) -> int:
+        d = self.d_model
+        ff = self.hidden_dim
+        linear_scale = 4 if self.weight_mode == "quaternion" else 1
+        attn_proj = (d * d + 2 * d * self.kv_dim + d * d) // linear_scale
+        ffn_proj = (3 * d * ff) // linear_scale
+        return 2 * d + attn_proj + ffn_proj
+
+    def state_bytes_per_seq(self, kv_dtype_bytes: int = 4) -> int:
+        slots = self.sink_tokens + (self.window - 1)
+        kv_bytes = 2 * self.kv_heads * slots * self.head_dim * kv_dtype_bytes
+        pos_bytes = (slots + 1) * 8
+        return kv_bytes + pos_bytes
+
+
 class FractalLevelAdapter(nn.Module):
     """Lightweight per-level conditioning and Euler residual scaling (all 1D, no weight decay)."""
 
@@ -359,6 +642,7 @@ class FractalDeltaCell(nn.Module):
         self.beta_scale = research.fractal_beta_scale
         self.weight_mode = research.fractal_weight_mode
         self.golden_phase = research.fractal_golden_phase
+        self.deltanet_rope = research.fractal_deltanet_rope
         self.free_energy = research.fractal_free_energy
         self.kda = research.fractal_kda
         self.decoupled_gates = research.fractal_decoupled_gates
@@ -392,6 +676,11 @@ class FractalDeltaCell(nn.Module):
             exponents = 1.0 + 12.0 * torch.arange(rot_pairs, dtype=torch.float64) / max(1, rot_pairs)
             inv_freq = math.pi / (_GOLDEN_PHI ** exponents)
             self.register_buffer("golden_inv_freq", inv_freq, persistent=False)
+        elif self.deltanet_rope:
+            inv_freq = 1.0 / (
+                float(config.rope_theta) ** (torch.arange(0, self.head_dim, 2, dtype=torch.float64) / float(self.head_dim))
+            )
+            self.register_buffer("rope_inv_freq", inv_freq, persistent=False)
 
         if self.free_energy:
             self.fe_rank = min(16, max(4, self.d_model // 6))
@@ -487,6 +776,12 @@ class FractalDeltaCell(nn.Module):
                 angles = (pos_steps[:, None, :, None] * freq).remainder(2.0 * math.pi).float()
                 query = _apply_golden_phase(query, angles)
                 key = _apply_golden_phase(key, angles)
+            elif self.deltanet_rope and self.head_dim >= 2:
+                base_pos = x.new_zeros((b,), dtype=torch.int64) if phase_pos is None else phase_pos
+                pos_steps = (base_pos[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :]).double()
+                angles = (pos_steps[:, None, :, None] * self.rope_inv_freq.double().view(1, 1, 1, -1)).float()
+                query = _apply_split_half_rope(query, angles)
+                key = _apply_split_half_rope(key, angles)
             val_f = v.float()
             if adapter is not None and adapter.val_mix is not None and v0 is not None:
                 mix = adapter.val_mix.float().sigmoid().view(1, self.heads, 1, 1)
@@ -568,6 +863,8 @@ class FractalDeltaMemory(Backbone):
         self.chunk_size = research.state_chunk_size
         self.value_residual = research.fractal_value_residual
         self.golden_phase = research.fractal_golden_phase
+        self.deltanet_rope = research.fractal_deltanet_rope
+        self.use_phase_pos = bool(self.golden_phase or self.deltanet_rope)
         self.free_energy = research.fractal_free_energy
         self.weight_mode = research.fractal_weight_mode
         self.leaky_budget = research.fractal_leaky_budget
@@ -576,6 +873,7 @@ class FractalDeltaMemory(Backbone):
         self.assoc_multilag = research.fractal_assoc_multilag
         self.decoupled_gates = research.fractal_decoupled_gates
         self.hybrid_stride = research.fractal_hybrid_stride
+        self.hybrid_swa = research.fractal_hybrid_swa
         self.use_exit_gate = research.fractal_exit_gate
 
         d = config.d_model
@@ -598,22 +896,36 @@ class FractalDeltaMemory(Backbone):
         self.assoc_scale = nn.Parameter(torch.ones(d))
         self.assoc_lag_mix = nn.Parameter(torch.zeros(d)) if self.assoc_multilag else None
 
-        if self.hybrid_stride > 0:
-            lvls = tuple(lvl for lvl in range(self.depth) if (lvl + 1) % self.hybrid_stride == 0)
-            self.hybrid_window_levels = lvls if lvls else (self.depth - 1,)
-            self._hybrid_level_to_idx = {lvl: idx for idx, lvl in enumerate(self.hybrid_window_levels)}
-            self.hybrid_windows = nn.ModuleList(
-                [CausalLocalWindow(config, research.fractal_window) for _ in self.hybrid_window_levels]
-            )
-            self.window_attn = None
-        else:
+        if self.hybrid_swa:
+            self.swa_levels = frozenset(lvl for lvl in range(self.depth) if (lvl + 1) % self.hybrid_stride == 0)
             self.hybrid_window_levels = ()
             self._hybrid_level_to_idx = {}
             self.hybrid_windows = nn.ModuleList()
-            self.window_attn = CausalLocalWindow(config, research.fractal_window) if research.fractal_window > 0 else None
+            self.window_attn = None
+            self.cells = nn.ModuleList(
+                [
+                    SlidingWindowGQACell(config, research) if lvl in self.swa_levels else FractalDeltaCell(config, research)
+                    for lvl in range(self.depth)
+                ]
+            )
+        else:
+            self.swa_levels = frozenset()
+            if self.hybrid_stride > 0:
+                lvls = tuple(lvl for lvl in range(self.depth) if (lvl + 1) % self.hybrid_stride == 0)
+                self.hybrid_window_levels = lvls if lvls else (self.depth - 1,)
+                self._hybrid_level_to_idx = {lvl: idx for idx, lvl in enumerate(self.hybrid_window_levels)}
+                self.hybrid_windows = nn.ModuleList(
+                    [CausalLocalWindow(config, research.fractal_window) for _ in self.hybrid_window_levels]
+                )
+                self.window_attn = None
+            else:
+                self.hybrid_window_levels = ()
+                self._hybrid_level_to_idx = {}
+                self.hybrid_windows = nn.ModuleList()
+                self.window_attn = CausalLocalWindow(config, research.fractal_window) if research.fractal_window > 0 else None
 
-        cell_count = 3 if self.prelude_coda else (1 if self.shared else self.depth)
-        self.cells = nn.ModuleList([FractalDeltaCell(config, research) for _ in range(cell_count)])
+            cell_count = 3 if self.prelude_coda else (1 if self.shared else self.depth)
+            self.cells = nn.ModuleList([FractalDeltaCell(config, research) for _ in range(cell_count)])
         self.adapters = (
             nn.ModuleList(
                 [
@@ -657,7 +969,10 @@ class FractalDeltaMemory(Backbone):
         for tensor, expected in assoc_checks:
             if tensor.shape != expected or tensor.dtype != torch.float32 or tensor.device != x.device:
                 raise ValueError("invalid fractal delta state shape/dtype")
-        for level_state in state.levels:
+        for lvl_idx, level_state in enumerate(state.levels):
+            if lvl_idx in self.swa_levels:
+                self.cells[lvl_idx].validate_state(level_state, b, x.device)
+                continue
             if not isinstance(level_state, FractalLevelState):
                 raise ValueError("invalid fractal delta state shape/dtype")
             for tensor, expected in ((level_state.memory, mem_shape), (level_state.tail, tail_shape)):
@@ -676,7 +991,7 @@ class FractalDeltaMemory(Backbone):
                 raise ValueError("invalid fractal delta state shape/dtype")
             for win, w_state in zip(self.hybrid_windows, state.hybrid_windows):
                 win.validate_state(w_state, b, x.device)
-        if self.golden_phase:
+        if self.use_phase_pos:
             if (
                 state.phase_pos is None
                 or state.phase_pos.shape != (b,)
@@ -751,9 +1066,11 @@ class FractalDeltaMemory(Backbone):
         assoc_out = self.assoc_readout(read.to(raw_embed.dtype)).to(raw_embed.dtype) * self.assoc_scale
         return assoc_out, next_mem.float().contiguous(), next_local_tail
 
-    def _skip_level_state(self, prev: FractalLevelState | None, x: torch.Tensor) -> FractalLevelState:
+    def _skip_level_state(self, prev: FractalLevelState | SWAState | None, x: torch.Tensor, level: int = 0):
         b, _, d = x.shape
-        tail_width = self.cells[0].conv_kernel - 1
+        if level in self.swa_levels:
+            return self.cells[level].empty_state(b, x.device, x.dtype) if prev is None else prev
+        tail_width = 3
         with torch.autocast(device_type=x.device.type, enabled=False):
             norm_f = x.detach().float().transpose(1, 2)
             if prev is None:
@@ -789,7 +1106,7 @@ class FractalDeltaMemory(Backbone):
         if state is not None:
             self._validate_state(state, raw)
         active_depth = self.depth if max_levels is None else max(1, min(int(max_levels), self.depth))
-        exec_mode = self.cells[0].execution
+        exec_mode = next((c.execution for c in self.cells if hasattr(c, "execution")), "chunked")
         assoc_out, next_assoc_mem, next_local_tail = self._run_assoc(raw, state, execution=exec_mode)
         x = F.dropout(raw, p=self.config.dropout, training=self.training)
         next_window = None
@@ -798,7 +1115,7 @@ class FractalDeltaMemory(Backbone):
             x = x + F.dropout(win_out, p=self.config.dropout, training=self.training)
         cur_phase = None
         next_phase_pos = None
-        if self.golden_phase:
+        if self.use_phase_pos:
             cur_phase = (
                 raw.new_zeros((raw.shape[0],), dtype=torch.int64)
                 if state is None
@@ -822,7 +1139,7 @@ class FractalDeltaMemory(Backbone):
         for level in range(self.depth):
             prev = None if state is None else state.levels[level]
             if level >= active_depth:
-                next_levels.append(self._skip_level_state(prev, x))
+                next_levels.append(self._skip_level_state(prev, x, level=level))
                 if level in self._hybrid_level_to_idx:
                     w_idx = self._hybrid_level_to_idx[level]
                     prev_hw = None if state is None else state.hybrid_windows[w_idx]
@@ -837,28 +1154,47 @@ class FractalDeltaMemory(Backbone):
                 x = x + adapter.anchor_gate.sigmoid() * anchor
             cell = self.cells[self.cell_index(level)]
             if use_ckpt:
-                prev_mem = None if prev is None else prev.memory
-                prev_tail = None if prev is None else prev.tail
-                if self.value_residual and level == 0:
-                    def _run_lvl0(x_in, anc_in, p_mem, p_tail, p_pos, _cell=cell, _ad=adapter):
-                        st_in = None if p_mem is None else FractalLevelState(p_mem, p_tail)
-                        xo, cur, v0_o = _cell(x_in, st_in, adapter=_ad, return_v0=True, phase_pos=p_pos, anchor=anc_in)
-                        return xo, cur.memory, cur.tail, v0_o
+                if isinstance(cell, SlidingWindowGQACell):
+                    p_ks = None if prev is None else prev.k_sinks
+                    p_vs = None if prev is None else prev.v_sinks
+                    p_ps = None if prev is None else prev.pos_sinks
+                    p_kt = None if prev is None else prev.k_tail
+                    p_vt = None if prev is None else prev.v_tail
+                    p_pt = None if prev is None else prev.pos_tail
+                    p_seen = None if prev is None else prev.seen
 
-                    x, cur_mem, cur_tail, v0 = grad_checkpoint(
-                        _run_lvl0, x, anchor, prev_mem, prev_tail, cur_phase, use_reentrant=False
+                    def _run_swa(x_in, ks, vs, ps, kt, vt, pt, sn, _cell=cell, _ad=adapter):
+                        st_in = None if ks is None else SWAState(ks, vs, ps, kt, vt, pt, sn)
+                        xo, cur = _cell(x_in, st_in, adapter=_ad)
+                        return xo, cur.k_sinks, cur.v_sinks, cur.pos_sinks, cur.k_tail, cur.v_tail, cur.pos_tail, cur.seen
+
+                    x, nks, nvs, nps, nkt, nvt, npt, nsn = grad_checkpoint(
+                        _run_swa, x, p_ks, p_vs, p_ps, p_kt, p_vt, p_pt, p_seen, use_reentrant=False
                     )
-                    current = FractalLevelState(cur_mem, cur_tail)
+                    current = SWAState(nks, nvs, nps, nkt, nvt, npt, nsn)
                 else:
-                    def _run_lvl(x_in, anc_in, v0_in, p_mem, p_tail, p_pos, _cell=cell, _ad=adapter):
-                        st_in = None if p_mem is None else FractalLevelState(p_mem, p_tail)
-                        xo, cur = _cell(x_in, st_in, adapter=_ad, v0=v0_in, phase_pos=p_pos, anchor=anc_in)
-                        return xo, cur.memory, cur.tail
+                    prev_mem = None if prev is None else prev.memory
+                    prev_tail = None if prev is None else prev.tail
+                    if self.value_residual and level == 0:
+                        def _run_lvl0(x_in, anc_in, p_mem, p_tail, p_pos, _cell=cell, _ad=adapter):
+                            st_in = None if p_mem is None else FractalLevelState(p_mem, p_tail)
+                            xo, cur, v0_o = _cell(x_in, st_in, adapter=_ad, return_v0=True, phase_pos=p_pos, anchor=anc_in)
+                            return xo, cur.memory, cur.tail, v0_o
 
-                    x, cur_mem, cur_tail = grad_checkpoint(
-                        _run_lvl, x, anchor, v0, prev_mem, prev_tail, cur_phase, use_reentrant=False
-                    )
-                    current = FractalLevelState(cur_mem, cur_tail)
+                        x, cur_mem, cur_tail, v0 = grad_checkpoint(
+                            _run_lvl0, x, anchor, prev_mem, prev_tail, cur_phase, use_reentrant=False
+                        )
+                        current = FractalLevelState(cur_mem, cur_tail)
+                    else:
+                        def _run_lvl(x_in, anc_in, v0_in, p_mem, p_tail, p_pos, _cell=cell, _ad=adapter):
+                            st_in = None if p_mem is None else FractalLevelState(p_mem, p_tail)
+                            xo, cur = _cell(x_in, st_in, adapter=_ad, v0=v0_in, phase_pos=p_pos, anchor=anc_in)
+                            return xo, cur.memory, cur.tail
+
+                        x, cur_mem, cur_tail = grad_checkpoint(
+                            _run_lvl, x, anchor, v0, prev_mem, prev_tail, cur_phase, use_reentrant=False
+                        )
+                        current = FractalLevelState(cur_mem, cur_tail)
             elif self.value_residual and level == 0:
                 x, current, v0 = cell(
                     x, prev, adapter=adapter, return_v0=True, phase_pos=cur_phase, anchor=anchor
@@ -929,7 +1265,7 @@ class FractalDeltaMemory(Backbone):
         anchor = teacher_inputs[0].detach().to(dtype=self.embedding.weight.dtype)
         cur_phase = (
             anchor.new_zeros((anchor.shape[0],), dtype=torch.int64)
-            if self.golden_phase
+            if self.use_phase_pos
             else None
         )
         outputs = []
@@ -957,12 +1293,16 @@ class FractalDeltaMemory(Backbone):
         anchor: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute only the attention + hybrid-window delta of level l on clean teacher input h_in (skipping frozen FFN)."""
-        x = h_in.to(dtype=self.embedding.weight.dtype)
-        anc = x if anchor is None else anchor.to(dtype=x.dtype)
+        cell = self.cells[self.cell_index(level)]
+        target_dtype = cell.attn_norm.weight.dtype
+        x = h_in.to(dtype=target_dtype)
+        anc = x if anchor is None else anchor.to(dtype=target_dtype)
         adapter = self.adapters[level] if self.depth > 1 else None
         if adapter is not None and adapter.anchor_gate is not None:
-            x = x + adapter.anchor_gate.sigmoid() * anc
-        cell = self.cells[self.cell_index(level)]
+            x = x + adapter.anchor_gate.sigmoid().to(dtype=target_dtype) * anc
+        if isinstance(cell, SlidingWindowGQACell):
+            s_delta, _ = cell.forward_attn_delta(x, state=None, adapter=adapter)
+            return s_delta
         b, t, d = x.shape
         normed = cell.attn_norm(x)
         if adapter is not None:
@@ -992,6 +1332,11 @@ class FractalDeltaMemory(Backbone):
                 angles = (pos_steps[:, None, :, None] * freq).remainder(2.0 * math.pi).float()
                 query = _apply_golden_phase(query, angles)
                 key = _apply_golden_phase(key, angles)
+            elif cell.deltanet_rope and cell.head_dim >= 2:
+                pos_steps = torch.arange(t, device=x.device, dtype=torch.int64)[None, :].double()
+                angles = (pos_steps[:, None, :, None] * cell.rope_inv_freq.double().view(1, 1, 1, -1)).float()
+                query = _apply_split_half_rope(query, angles)
+                key = _apply_split_half_rope(key, angles)
             val_f = v.float()
             decay_logits = decay_raw.float()
             beta_logits = beta_raw.float()
@@ -1031,12 +1376,19 @@ class FractalDeltaMemory(Backbone):
 
     def state_bytes_per_sequence(self):
         d = self.config.d_model
-        levels_floats = self.depth * (self.heads * self.head_dim * self.head_dim + d * 3)
+        kv_dtype_bytes = 2 if self.embedding.weight.dtype in (torch.float16, torch.bfloat16) else 4
+        delta_level_bytes = (self.heads * self.head_dim * self.head_dim + d * 3) * 4
+        levels_bytes = 0
+        for lvl in range(self.depth):
+            if lvl in self.swa_levels:
+                levels_bytes += self.cells[lvl].state_bytes_per_seq(kv_dtype_bytes=kv_dtype_bytes)
+            else:
+                levels_bytes += delta_level_bytes
         assoc_floats = self.assoc_dim * self.assoc_val_dim + 2 * d
         win_floats = self.window_attn.state_floats_per_seq() if self.window_attn is not None else 0
         win_floats += sum(w.state_floats_per_seq() for w in self.hybrid_windows)
-        phase_bytes = 8 if self.golden_phase else 0
-        return (levels_floats + assoc_floats + win_floats) * 4 + phase_bytes
+        phase_bytes = 8 if self.use_phase_pos else 0
+        return levels_bytes + (assoc_floats + win_floats) * 4 + phase_bytes
 
     def cell_index(self, level: int) -> int:
         if self.prelude_coda:
@@ -1052,10 +1404,21 @@ class FractalDeltaMemory(Backbone):
         h = self.heads
         dh = self.head_dim
         ff = self.config.hidden_dim
-        cell0 = self.cells[0]
-        decay_flops = (2 * d * cell0.decay_rank + 2 * cell0.decay_rank * d) if cell0.kda else 2 * d * h
-        beta_flops = (4 * d * h) if self.decoupled_gates else (2 * d * h)
-        per_level = seq_len * (10 * d * d + beta_flops + decay_flops + 6 * d * ff + 6 * d * dh)
+        delta_cell0 = next((c for c in self.cells if isinstance(c, FractalDeltaCell)), None)
+        if delta_cell0 is not None:
+            decay_flops = (2 * d * delta_cell0.decay_rank + 2 * delta_cell0.decay_rank * d) if delta_cell0.kda else 2 * d * h
+            beta_flops = (4 * d * h) if self.decoupled_gates else (2 * d * h)
+            delta_level_flops = seq_len * (10 * d * d + beta_flops + decay_flops + 6 * d * ff + 6 * d * dh)
+        else:
+            delta_level_flops = 0
+        levels_flops = 0
+        for lvl in range(self.depth):
+            cell = self.cells[self.cell_index(lvl)]
+            if isinstance(cell, SlidingWindowGQACell):
+                eff_w = min(seq_len, cell.window + cell.sink_tokens)
+                levels_flops += seq_len * (4 * d * d + 4 * d * cell.kv_dim + 4 * eff_w * d + 6 * d * ff)
+            else:
+                levels_flops += delta_level_flops
         assoc_flops = seq_len * (
             4 * d * self.assoc_dim
             + 4 * d * self.assoc_val_dim
@@ -1071,7 +1434,7 @@ class FractalDeltaMemory(Backbone):
             win_flops += seq_len * (8 * d * wd + 4 * min(seq_len, hw.window) * wd)
         exit_flops = (2 * seq_len * d * max(self.depth - 1, 0)) if self.use_exit_gate else 0
         forward = (
-            self.depth * per_level
+            levels_flops
             + assoc_flops
             + win_flops
             + exit_flops
@@ -1088,19 +1451,26 @@ class FractalDeltaMemory(Backbone):
         win_params += sum(hw.parameter_count(d) for hw in self.hybrid_windows)
         linear_scale = 4 if self.weight_mode == "quaternion" else 1
         dense_proj = (3 * d * d + 2 * d * d + 3 * d * ff) // linear_scale
-        cell0 = self.cells[0]
-        decay_cell = (d * cell0.decay_rank + (cell0.decay_rank + 1) * d) if cell0.kda else (d + 1) * h
-        fe_cell = (d + 2 * d * cell0.fe_rank) if self.free_energy else 0
-        beta_cell = 2 * (d + 1) * h if self.decoupled_gates else (d + 1) * h
-        cell = (
-            d  # attn_norm
-            + d * (k + 1)  # depthwise conv weight + bias
-            + dense_proj  # qkv, out_gate, out_proj, SwiGLU
-            + decay_cell  # decay
-            + beta_cell  # beta (and beta_write when decoupled)
-            + d  # head_gamma
-            + d  # ffn_norm
-            + fe_cell
+        delta_cell0 = next((cell_i for cell_i in self.cells if isinstance(cell_i, FractalDeltaCell)), None)
+        if delta_cell0 is not None:
+            decay_cell = (d * delta_cell0.decay_rank + (delta_cell0.decay_rank + 1) * d) if delta_cell0.kda else (d + 1) * h
+            fe_cell = (d + 2 * d * delta_cell0.fe_rank) if self.free_energy else 0
+            beta_cell = 2 * (d + 1) * h if self.decoupled_gates else (d + 1) * h
+            delta_cell_params = (
+                d  # attn_norm
+                + d * (k + 1)  # depthwise conv weight + bias
+                + dense_proj  # qkv, out_gate, out_proj, SwiGLU
+                + decay_cell  # decay
+                + beta_cell  # beta (and beta_write when decoupled)
+                + d  # head_gamma
+                + d  # ffn_norm
+                + fe_cell
+            )
+        else:
+            delta_cell_params = 0
+        cells_params = sum(
+            cell_i.parameter_count() if isinstance(cell_i, SlidingWindowGQACell) else delta_cell_params
+            for cell_i in self.cells
         )
         adapters = self.depth * (6 * d + 2 * h) + max(self.depth - 1, 0) * d if self.depth > 1 else 0
         if self.decoupled_gates and self.depth > 1:
@@ -1113,7 +1483,7 @@ class FractalDeltaMemory(Backbone):
             adapters += (self.depth - 1) * (d + 2)
         exit_params = (d + 1) if self.use_exit_gate else 0
         final_norm = d
-        return embed + assoc_params + win_params + len(self.cells) * cell + adapters + exit_params + final_norm
+        return embed + assoc_params + win_params + cells_params + adapters + exit_params + final_norm
 
 
 class FractalDecode:
@@ -1127,7 +1497,22 @@ class FractalDecode:
         self.model = model
         self.step_cells = tuple(copy(cell) for cell in model.cells)
         for cell in self.step_cells:
-            cell.execution = "sequential"
+            if hasattr(cell, "execution"):
+                cell.execution = "sequential"
+
+    @staticmethod
+    def _slice_level_state(lvl, index: int):
+        if isinstance(lvl, SWAState):
+            return SWAState(
+                lvl.k_sinks[index].contiguous(),
+                lvl.v_sinks[index].contiguous(),
+                lvl.pos_sinks[index].contiguous(),
+                lvl.k_tail[index].contiguous(),
+                lvl.v_tail[index].contiguous(),
+                lvl.pos_tail[index].contiguous(),
+                lvl.seen[index].contiguous(),
+            )
+        return FractalLevelState(lvl.memory[index].contiguous(), lvl.tail[index].contiguous())
 
     @staticmethod
     def _slice_window_state(win_state: LocalWindowState | None, index: int) -> LocalWindowState | None:
@@ -1145,10 +1530,7 @@ class FractalDecode:
     def slice_step_state(stacked_state: FractalDeltaState, index: int) -> FractalDeltaState:
         """Extract a single step state from stacked (T, ...) verify states."""
         return FractalDeltaState(
-            tuple(
-                FractalLevelState(lvl.memory[index].contiguous(), lvl.tail[index].contiguous())
-                for lvl in stacked_state.levels
-            ),
+            tuple(FractalDecode._slice_level_state(lvl, index) for lvl in stacked_state.levels),
             stacked_state.assoc_memory[index].contiguous(),
             stacked_state.local_tail[index].contiguous(),
             FractalDecode._slice_window_state(stacked_state.window, index),
@@ -1174,9 +1556,21 @@ class FractalDecode:
     def prefill_embeds(self, inputs_embeds: torch.Tensor, capacity: int | None = None):
         return self.prefill_hidden(None, capacity, inputs_embeds=inputs_embeds)
 
-    def _skip_decode_level(self, prev: FractalLevelState, x: torch.Tensor, *, return_all_states: bool = False) -> FractalLevelState:
+    def _skip_decode_level(self, prev: FractalLevelState | SWAState, x: torch.Tensor, *, return_all_states: bool = False):
         t = x.shape[1]
-        tail_width = self.step_cells[0].conv_kernel - 1
+        if isinstance(prev, SWAState):
+            if not return_all_states:
+                return prev
+            return SWAState(
+                prev.k_sinks.unsqueeze(0).expand(t, *prev.k_sinks.shape).clone(),
+                prev.v_sinks.unsqueeze(0).expand(t, *prev.v_sinks.shape).clone(),
+                prev.pos_sinks.unsqueeze(0).expand(t, *prev.pos_sinks.shape).clone(),
+                prev.k_tail.unsqueeze(0).expand(t, *prev.k_tail.shape).clone(),
+                prev.v_tail.unsqueeze(0).expand(t, *prev.v_tail.shape).clone(),
+                prev.pos_tail.unsqueeze(0).expand(t, *prev.pos_tail.shape).clone(),
+                prev.seen.unsqueeze(0).expand(t, *prev.seen.shape).clone(),
+            )
+        tail_width = 3
         with torch.autocast(device_type=x.device.type, enabled=False):
             norm_f = x.detach().float().transpose(1, 2)
             padded = torch.cat((prev.tail, norm_f), dim=2)
@@ -1209,15 +1603,16 @@ class FractalDecode:
     ):
         if (ids is None) == (inputs_embeds is None) or state is None:
             raise ValueError("fractal recurrent step requires state and exactly one of ids or inputs_embeds")
+        batch_size = state.assoc_memory.shape[0]
         if ids is not None:
-            if ids.ndim != 2 or ids.shape[0] != state.levels[0].memory.shape[0] or ids.shape[1] < 1:
+            if ids.ndim != 2 or ids.shape[0] != batch_size or ids.shape[1] < 1:
                 raise ValueError("fractal recurrent step requires shape (batch, >=1)")
             t = ids.shape[1]
             raw = self.model.embedding(ids)
         else:
             if (
                 inputs_embeds.ndim != 3
-                or inputs_embeds.shape[0] != state.levels[0].memory.shape[0]
+                or inputs_embeds.shape[0] != batch_size
                 or inputs_embeds.shape[1] < 1
                 or inputs_embeds.shape[2] != self.model.config.d_model
             ):
@@ -1235,7 +1630,7 @@ class FractalDecode:
             x = x + win_out
         cur_phase = None
         next_phase_pos = None
-        if self.model.golden_phase:
+        if self.model.use_phase_pos:
             cur_phase = state.phase_pos
             next_phase_pos = (
                 torch.stack([cur_phase + (idx + 1) for idx in range(t)], dim=0).contiguous()
@@ -1312,7 +1707,7 @@ class FractalDecode:
         vocab_limit: int | None = None,
     ):
         """Adaptive Early-Exit step skipping deeper Core iterations via learned Exit Gate, confidence, or delta."""
-        if ids.ndim != 2 or ids.shape[0] != state.levels[0].memory.shape[0] or ids.shape[1] < 1:
+        if ids.ndim != 2 or ids.shape[0] != state.assoc_memory.shape[0] or ids.shape[1] < 1:
             raise ValueError("fractal recurrent step requires shape (batch, >=1)")
         t = ids.shape[1]
         depth = self.model.depth
@@ -1327,7 +1722,7 @@ class FractalDecode:
             x = x + win_out
         cur_phase = None
         next_phase_pos = None
-        if self.model.golden_phase:
+        if self.model.use_phase_pos:
             cur_phase = state.phase_pos
             next_phase_pos = (cur_phase + t).contiguous()
         anchor = x
@@ -1408,7 +1803,7 @@ class FractalDecode:
             x = x + win_out
         cur_phase = None
         next_phase_pos = None
-        if self.model.golden_phase:
+        if self.model.use_phase_pos:
             cur_phase = state.phase_pos
             next_phase_pos = (cur_phase + t).contiguous()
         anchor = x
@@ -1545,7 +1940,7 @@ class FractalDecode:
         return logits, next_state
 
     def step(self, ids, state):
-        if ids.shape != (state.levels[0].memory.shape[0], 1):
+        if ids.shape != (state.assoc_memory.shape[0], 1):
             raise ValueError("fractal recurrent step requires one byte")
         logits, _, next_state = self.step_hidden(ids, state)
         return logits, next_state

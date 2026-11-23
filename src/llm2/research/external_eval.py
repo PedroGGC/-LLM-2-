@@ -248,6 +248,20 @@ def evaluate_hf_suite(
         report["arc_easy"] = {"error": str(exc)}
 
     try:
+        ds = load_dataset("allenai/ai2_arc", "ARC-Challenge", split="validation")
+        examples = []
+        for i in range(min(max_examples, len(ds))):
+            row = ds[i]
+            labels = row["choices"]["label"]
+            texts_c = row["choices"]["text"]
+            if row["answerKey"] in labels:
+                gold = labels.index(row["answerKey"])
+                examples.append((f"Question: {row['question']}\nAnswer:", texts_c, gold))
+        report["arc_challenge"] = evaluate_multiple_choice(model, tokenizer, examples, device)
+    except Exception as exc:
+        report["arc_challenge"] = {"error": str(exc)}
+
+    try:
         ds = load_dataset("Rowan/hellaswag", split="validation")
         examples = []
         for i in range(min(max_examples, len(ds))):
@@ -257,6 +271,32 @@ def evaluate_hf_suite(
         report["hellaswag"] = evaluate_multiple_choice(model, tokenizer, examples, device)
     except Exception as exc:
         report["hellaswag"] = {"error": str(exc)}
+
+    try:
+        ds = load_dataset("ybisk/piqa", split="validation", trust_remote_code=False)
+        examples = []
+        for i in range(min(max_examples, len(ds))):
+            row = ds[i]
+            if int(row["label"]) in (0, 1):
+                examples.append((f"Question: {row['goal']}\nAnswer:", [row["sol1"], row["sol2"]], int(row["label"])))
+        report["piqa"] = evaluate_multiple_choice(model, tokenizer, examples, device)
+    except Exception as exc:
+        report["piqa"] = {"error": str(exc)}
+
+    try:
+        ds = load_dataset("allenai/winogrande", "winogrande_xl", split="validation")
+        examples = []
+        for i in range(min(max_examples, len(ds))):
+            row = ds[i]
+            ans = str(row.get("answer", ""))
+            if ans in ("1", "2") and "_" in row["sentence"]:
+                prefix, suffix = row["sentence"].split("_", 1)
+                c1 = row["option1"] + suffix
+                c2 = row["option2"] + suffix
+                examples.append((prefix.rstrip(), [c1, c2], int(ans) - 1))
+        report["winogrande"] = evaluate_multiple_choice(model, tokenizer, examples, device)
+    except Exception as exc:
+        report["winogrande"] = {"error": str(exc)}
 
     report["ruler_niah"] = evaluate_ruler_niah(model, tokenizer, device, lengths=ruler_lengths, examples_per_len=8, use_segment_cache=False)
     report["ruler_niah_segment_cache"] = evaluate_ruler_niah(model, tokenizer, device, lengths=ruler_lengths, examples_per_len=8, use_segment_cache=True)

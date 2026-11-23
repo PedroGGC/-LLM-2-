@@ -12,6 +12,7 @@ from safetensors.torch import save_model
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 
 @dataclass
@@ -29,18 +30,22 @@ class DistillConfig:
     max_steps: int = 200
     grad_accum_steps: int = 1
     grad_clip: float = 1.0
-    precision: str = "fp32"  # fp32 | bf16
+    precision: str = "fp32"  # fp32 | bf16 | fp16
     surgery_transplant: bool = False
     freeze_ffn: bool = False
     freeze_embeddings: bool = False
+    freeze_swa: bool = True
     layer_mse_weight: float = 0.0
     teacher_forced_ratio: float = 0.5
+    logit_chunk_tokens: int = 0
 
     def __post_init__(self):
         if self.temperature <= 0 or self.lr <= 0 or self.max_steps <= 0 or self.grad_accum_steps <= 0:
             raise ValueError("temperature, lr, max_steps, and grad_accum_steps must be positive")
-        if self.precision not in ("fp32", "bf16"):
-            raise ValueError("precision must be fp32|bf16")
+        if self.precision not in ("fp32", "bf16", "fp16"):
+            raise ValueError("precision must be fp32|bf16|fp16")
+        if self.logit_chunk_tokens < 0:
+            raise ValueError("logit_chunk_tokens must be nonnegative")
 
 
 def _get_teacher_embedding_weight(teacher: nn.Module) -> torch.Tensor | None:
@@ -148,6 +153,7 @@ def transplant_teacher_weights(
     d_s = student.config.d_model
     ffn_copied = 0
     qkv_copied = 0
+    swa_copied = 0
     norms_copied = 0
 
     for c_idx, cell in enumerate(student.cells):
@@ -178,11 +184,42 @@ def transplant_teacher_weights(
                 _copy_matching_or_slice(cell.ffn.down.weight, d_proj.weight)
                 ffn_copied += 1
 
-        # 3. QKV & Out projection initialization from teacher self-attention (HF q/k/v/o_proj or native llm2 attn.qkv/proj)
+        # 3. Attention projections: verbatim GQA transplant for SlidingWindowGQACell or QKV+Out for FractalDeltaCell
         attn = getattr(t_layer, "self_attn", None) or getattr(t_layer, "attn", None) or getattr(t_layer, "attention", None)
+        if attn is not None and hasattr(cell, "q_proj") and hasattr(cell, "k_proj") and hasattr(cell, "v_proj"):
+            if hasattr(attn, "qkv") and hasattr(attn, "proj") and attn.qkv.weight.shape[0] == 3 * d_s:
+                q_w, k_w, v_w = attn.qkv.weight.detach().float().split(d_s, dim=0)
+                _copy_matching_or_slice(cell.q_proj.weight, q_w)
+                _copy_matching_or_slice(cell.k_proj.weight, k_w)
+                _copy_matching_or_slice(cell.v_proj.weight, v_w)
+                _copy_matching_or_slice(cell.out_proj.weight, attn.proj.weight)
+                swa_copied += 1
+            else:
+                q_p = getattr(attn, "q_proj", None) or getattr(attn, "q", None)
+                k_p = getattr(attn, "k_proj", None) or getattr(attn, "k", None)
+                v_p = getattr(attn, "v_proj", None) or getattr(attn, "v", None)
+                o_p = getattr(attn, "o_proj", None) or getattr(attn, "out", None)
+                if q_p is not None and k_p is not None and v_p is not None and o_p is not None:
+                    _copy_matching_or_slice(cell.q_proj.weight, q_p.weight)
+                    if cell.k_proj.weight.shape[0] != k_p.weight.shape[0]:
+                        _copy_matching_or_slice(
+                            cell.k_proj.weight,
+                            _expand_gqa_kv(k_p.weight, cell.k_proj.weight.shape[0], head_dim=getattr(cell, "head_dim", None)),
+                        )
+                        _copy_matching_or_slice(
+                            cell.v_proj.weight,
+                            _expand_gqa_kv(v_p.weight, cell.v_proj.weight.shape[0], head_dim=getattr(cell, "head_dim", None)),
+                        )
+                    else:
+                        _copy_matching_or_slice(cell.k_proj.weight, k_p.weight)
+                        _copy_matching_or_slice(cell.v_proj.weight, v_p.weight)
+                    _copy_matching_or_slice(cell.out_proj.weight, o_p.weight)
+                    swa_copied += 1
+            continue
+
         cell_hd = getattr(cell, "head_dim", None)
         vw_for_scale: torch.Tensor | None = None
-        if attn is not None and hasattr(cell.qkv, "weight") and hasattr(cell.out_proj, "weight"):
+        if attn is not None and hasattr(cell, "qkv") and hasattr(cell.qkv, "weight") and hasattr(cell.out_proj, "weight"):
             if hasattr(attn, "qkv") and hasattr(attn, "proj"):
                 _copy_matching_or_slice(cell.qkv.weight, attn.qkv.weight)
                 _copy_matching_or_slice(cell.out_proj.weight, attn.proj.weight)
@@ -205,7 +242,7 @@ def transplant_teacher_weights(
                     _copy_matching_or_slice(cell.out_proj.weight, o_p.weight)
                     qkv_copied += 1
 
-        if quiet_init_gates:
+        if quiet_init_gates and hasattr(cell, "conv"):
             # Start depthwise conv as near-identity residual and out_gate around SiLU(1.7844)=1.0 so transplanted W_O is not scrambled.
             nn.init.normal_(cell.conv.weight, std=1e-4)
             nn.init.zeros_(cell.conv.bias)
@@ -220,12 +257,13 @@ def transplant_teacher_weights(
                 else:
                     nn.init.constant_(cell.head_gamma, 0.15)
 
+    swa_lvls = getattr(student, "swa_levels", frozenset())
     if quiet_init_gates and hasattr(student, "assoc_readout"):
         nn.init.normal_(student.assoc_readout.weight, std=1e-4)
     if quiet_init_gates and hasattr(student, "adapters"):
-        for ad in student.adapters:
+        for lvl_i, ad in enumerate(student.adapters):
             if getattr(ad, "anchor_gate", None) is not None:
-                ad.anchor_gate.fill_(-8.0)
+                ad.anchor_gate.fill_(-15.0 if lvl_i in swa_lvls else -8.0)
     if quiet_init_gates and hasattr(student, "hybrid_windows"):
         for hw in student.hybrid_windows:
             nn.init.normal_(hw.out_proj.weight, std=1e-4)
@@ -237,6 +275,7 @@ def transplant_teacher_weights(
         "student_cells": n_c,
         "ffn_cells_copied": ffn_copied,
         "qkv_cells_copied": qkv_copied,
+        "swa_cells_copied": swa_copied,
         "norms_copied": norms_copied,
     }
 
@@ -246,20 +285,108 @@ def apply_surgery_freeze(
     *,
     freeze_ffn: bool = True,
     freeze_embeddings: bool = True,
+    freeze_swa: bool = True,
 ) -> dict[str, int]:
-    """Freeze transplanted SwiGLU FFNs and tied Embeddings so distillation focuses 100% on Gated DeltaNet-2 state conversion."""
+    """Freeze transplanted SwiGLU FFNs, SWA layers, and tied Embeddings so distillation focuses on Gated DeltaNet-2 conversion."""
     student.requires_grad_(True)
     if freeze_embeddings and hasattr(student, "embedding"):
         student.embedding.requires_grad_(False)
         if hasattr(student, "lm_head"):
             student.lm_head.requires_grad_(False)
-    if freeze_ffn and hasattr(student, "cells"):
-        for cell in student.cells:
-            cell.ffn.requires_grad_(False)
-            cell.ffn_norm.requires_grad_(False)
+    swa_lvls = getattr(student, "swa_levels", frozenset())
+    if hasattr(student, "cells"):
+        for lvl_i, cell in enumerate(student.cells):
+            if freeze_swa and lvl_i in swa_lvls:
+                cell.requires_grad_(False)
+                if hasattr(student, "adapters") and lvl_i < len(student.adapters):
+                    student.adapters[lvl_i].requires_grad_(False)
+            elif freeze_ffn:
+                cell.ffn.requires_grad_(False)
+                cell.ffn_norm.requires_grad_(False)
     trainable = sum(p.numel() for p in {p.data_ptr(): p for p in student.parameters() if p.requires_grad}.values())
     frozen = sum(p.numel() for p in {p.data_ptr(): p for p in student.parameters() if not p.requires_grad}.values())
     return {"trainable_params": trainable, "frozen_params": frozen}
+
+
+class LoRALinear(nn.Module):
+    """Minimal zero-init LoRA wrapper for Stage 2b FFN/SWA co-adaptation, mergeable back into pure nn.Linear."""
+
+    def __init__(self, base: nn.Linear, rank: int = 16, alpha: float = 32.0):
+        super().__init__()
+        if rank <= 0:
+            raise ValueError("LoRA rank must be positive")
+        self.base = base
+        self.base.requires_grad_(False)
+        self.in_features = base.in_features
+        self.out_features = base.out_features
+        self.rank = int(rank)
+        self.scale = float(alpha) / float(rank)
+        dev = base.weight.device
+        self.lora_a = nn.Parameter(torch.empty(self.rank, self.in_features, device=dev, dtype=torch.float32))
+        self.lora_b = nn.Parameter(torch.zeros(self.out_features, self.rank, device=dev, dtype=torch.float32))
+        nn.init.kaiming_uniform_(self.lora_a, a=math.sqrt(5))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        xb = x.to(dtype=self.base.weight.dtype)
+        out = self.base(xb)
+        delta = F.linear(F.linear(xb, self.lora_a.to(dtype=xb.dtype)), self.lora_b.to(dtype=xb.dtype))
+        return (out + delta * self.scale).to(dtype=x.dtype)
+
+    @torch.no_grad()
+    def merge_into_base(self) -> nn.Linear:
+        delta_w = (self.lora_b.float() @ self.lora_a.float()) * self.scale
+        self.base.weight.add_(delta_w.to(device=self.base.weight.device, dtype=self.base.weight.dtype))
+        return self.base
+
+
+def attach_ffn_swa_lora(
+    student: nn.Module,
+    *,
+    rank: int = 16,
+    alpha: float = 32.0,
+    include_ffn: bool = True,
+    include_swa: bool = True,
+) -> dict[str, int]:
+    """Attach zero-init LoRA adapters to frozen SwiGLU FFNs and/or SlidingWindowGQACell projections."""
+    wrapped = 0
+    lora_params = 0
+    swa_lvls = getattr(student, "swa_levels", frozenset())
+    for lvl_i, cell in enumerate(getattr(student, "cells", ())):
+        if include_ffn and hasattr(cell, "ffn"):
+            for name in ("gate", "up", "down"):
+                layer = getattr(cell.ffn, name, None)
+                if isinstance(layer, nn.Linear):
+                    w = LoRALinear(layer, rank=rank, alpha=alpha)
+                    setattr(cell.ffn, name, w)
+                    wrapped += 1
+                    lora_params += w.lora_a.numel() + w.lora_b.numel()
+        if include_swa and lvl_i in swa_lvls:
+            for name in ("q_proj", "k_proj", "v_proj", "out_proj"):
+                layer = getattr(cell, name, None)
+                if isinstance(layer, nn.Linear):
+                    w = LoRALinear(layer, rank=rank, alpha=alpha)
+                    setattr(cell, name, w)
+                    wrapped += 1
+                    lora_params += w.lora_a.numel() + w.lora_b.numel()
+    return {"wrapped_layers": wrapped, "lora_params": lora_params}
+
+
+@torch.no_grad()
+def merge_and_remove_lora(student: nn.Module) -> int:
+    """Fold all LoRALinear adapters back into their underlying nn.Linear weights with zero inference overhead."""
+    merged = 0
+
+    def _walk(parent: nn.Module) -> None:
+        nonlocal merged
+        for name, child in list(parent.named_children()):
+            if isinstance(child, LoRALinear):
+                setattr(parent, name, child.merge_into_base())
+                merged += 1
+            else:
+                _walk(child)
+
+    _walk(student)
+    return merged
 
 
 def _forward_teacher(
@@ -348,8 +475,11 @@ def calibrate_surgery_attention_scales(
         return
     n_t = len(t_inputs)
     n_s = getattr(student, "depth", len(student.cells))
+    swa_lvls = getattr(student, "swa_levels", frozenset())
     anc = t_inputs[0].float()
     for lvl in range(n_s):
+        if lvl in swa_lvls:
+            continue
         t_idx = 0 if n_s == 1 else round(lvl * (n_t - 1) / max(n_s - 1, 1))
         hin = t_inputs[t_idx].float()
         t_attn = t_attn_deltas[t_idx].float()
@@ -362,6 +492,60 @@ def calibrate_surgery_attention_scales(
             cell.head_gamma.mul_(scale)
 
 
+def _chunked_ce_kl_loss(
+    s_hidden_flat: torch.Tensor,
+    s_lm_head: nn.Module,
+    t_logits_flat: torch.Tensor,
+    targets_flat: torch.Tensor,
+    *,
+    temperature: float,
+    ce_weight: float,
+    kl_weight: float,
+    chunk_tokens: int,
+) -> tuple[torch.Tensor, float, float]:
+    """Exact FP32 CE + KL loss computed in token chunks with checkpointing to cap peak large-vocab VRAM."""
+    n_tok = int(s_hidden_flat.shape[0])
+    total_valid = int((targets_flat != -100).sum().item())
+    if total_valid <= 0:
+        z = s_hidden_flat.sum() * 0.0
+        return z, 0.0, 0.0
+    inv_t = 1.0 / float(temperature)
+    t_sq = float(temperature) ** 2
+    v_common = min(int(s_lm_head.weight.shape[0]), int(t_logits_flat.shape[-1]))
+    ce_acc = s_hidden_flat.new_zeros((), dtype=torch.float32)
+    kl_acc = s_hidden_flat.new_zeros((), dtype=torch.float32)
+
+    def _chunk_fn(h_c: torch.Tensor, t_c: torch.Tensor, y_c: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        s_log = s_lm_head(h_c).float()
+        ce_c = F.cross_entropy(s_log, y_c, ignore_index=-100, reduction="sum")
+        vm = y_c != -100
+        if kl_weight > 0.0 and vm.any():
+            log_ps = F.log_softmax(s_log[:, :v_common][vm] * inv_t, dim=-1)
+            log_pt = F.log_softmax(t_c[:, :v_common][vm].float() * inv_t, dim=-1)
+            kl_c = F.kl_div(log_ps, log_pt, reduction="sum", log_target=True)
+        else:
+            kl_c = s_log.new_zeros(())
+        return ce_c, kl_c
+
+    use_ckpt = torch.is_grad_enabled() and s_hidden_flat.requires_grad
+    for start in range(0, n_tok, chunk_tokens):
+        end = min(start + chunk_tokens, n_tok)
+        h_c = s_hidden_flat[start:end]
+        t_c = t_logits_flat[start:end].detach()
+        y_c = targets_flat[start:end]
+        if use_ckpt:
+            ce_c, kl_c = grad_checkpoint(_chunk_fn, h_c, t_c, y_c, use_reentrant=False)
+        else:
+            ce_c, kl_c = _chunk_fn(h_c, t_c, y_c)
+        ce_acc = ce_acc + ce_c
+        kl_acc = kl_acc + kl_c
+
+    ce_mean = ce_acc / float(total_valid)
+    kl_mean = (kl_acc / float(total_valid)) * t_sq
+    total = ce_weight * ce_mean + (kl_weight * kl_mean if kl_weight > 0.0 else 0.0)
+    return total, float(ce_mean.detach().item()), float(kl_mean.detach().item())
+
+
 def compute_distill_loss(
     teacher: nn.Module,
     student: nn.Module,
@@ -372,18 +556,19 @@ def compute_distill_loss(
     hidden_adapter: nn.Module | None = None,
     mtp_heads: nn.ModuleList | None = None,
     use_amp: bool = False,
+    amp_dtype: torch.dtype = torch.bfloat16,
     teacher_forced: bool = False,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Compute FP32 RADLADS/LoopUS distillation loss (Subfase 1 attention-delta or Subfase 2 E2E KL+CE+layer_mse)."""
     device_type = input_ids.device.type
     need_layers = bool(cfg.layer_mse_weight > 0.0 or teacher_forced)
     with torch.no_grad():
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=use_amp):
+        with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
             t_logits, t_hidden, t_layers, t_inputs, t_attn_deltas = _forward_teacher(
                 teacher, input_ids, need_layer_states=need_layers
             )
 
-    # Subfase 1 (RADLADS parallel attention-delta alignment, skipping frozen FFNs)
+    # Subfase 1 (RADLADS parallel attention-delta alignment on DeltaNet levels only, skipping frozen FFNs & exact SWA layers)
     if (
         teacher_forced
         and t_inputs
@@ -393,10 +578,13 @@ def compute_distill_loss(
     ):
         n_t = len(t_inputs)
         n_s = getattr(student, "depth", len(getattr(student, "cells", ())))
+        swa_lvls = getattr(student, "swa_levels", frozenset())
         anc = t_inputs[0].detach().float()
         delta_losses = []
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=use_amp):
+        with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
             for lvl in range(n_s):
+                if lvl in swa_lvls:
+                    continue
                 t_idx = 0 if n_s == 1 else round(lvl * (n_t - 1) / max(n_s - 1, 1))
                 hin = t_inputs[t_idx].detach().float()
                 t_delta = t_attn_deltas[t_idx].detach().float()
@@ -412,32 +600,59 @@ def compute_distill_loss(
             "total_loss": val_d,
         }
 
-    with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=use_amp):
+    use_chunked_logits = bool(
+        cfg.logit_chunk_tokens > 0
+        and cfg.exit_gate_weight == 0.0
+        and hasattr(student, "lm_head")
+        and getattr(student, "supports_hidden_only", False)
+    )
+    with torch.autocast(device_type=device_type, dtype=amp_dtype, enabled=use_amp):
         try:
-            s_out = student(input_ids, return_layer_states=need_layers)
+            s_out = student(input_ids, return_logits=not use_chunked_logits, return_layer_states=need_layers)
         except TypeError:
-            s_out = student(input_ids)
+            use_chunked_logits = False
+            try:
+                s_out = student(input_ids, return_layer_states=need_layers)
+            except TypeError:
+                s_out = student(input_ids)
 
     valid_mask = targets != -100
-    s_logits_f = s_out.logits.float()
-    t_logits_f = t_logits.detach().float()
-    v_common = min(s_logits_f.shape[-1], t_logits_f.shape[-1])
+    metrics: dict[str, float] = {}
+    if use_chunked_logits and s_out.hidden_states is not None:
+        total, ce_val, kl_val = _chunked_ce_kl_loss(
+            s_out.hidden_states.flatten(0, 1),
+            student.lm_head,
+            t_logits.detach().flatten(0, 1),
+            targets.flatten(),
+            temperature=cfg.temperature,
+            ce_weight=cfg.ce_weight,
+            kl_weight=cfg.kl_weight,
+            chunk_tokens=cfg.logit_chunk_tokens,
+        )
+        metrics["ce_loss"] = ce_val
+        if cfg.kl_weight > 0.0:
+            metrics["kl_loss"] = kl_val
+        s_logits_f = None
+    else:
+        s_logits_f = s_out.logits.float()
+        t_logits_f = t_logits.detach().float()
+        v_common = min(s_logits_f.shape[-1], t_logits_f.shape[-1])
 
-    # 1. Hard-target CE in FP32
-    ce_loss = F.cross_entropy(s_logits_f.flatten(0, 1), targets.flatten(), ignore_index=-100)
-    total = cfg.ce_weight * ce_loss
-    metrics: dict[str, float] = {"ce_loss": float(ce_loss.detach().item())}
+        # 1. Hard-target CE in FP32
+        ce_loss = F.cross_entropy(s_logits_f.flatten(0, 1), targets.flatten(), ignore_index=-100)
+        total = cfg.ce_weight * ce_loss
+        metrics["ce_loss"] = float(ce_loss.detach().item())
 
-    # 2. Temperature-scaled KL distillation in FP32 over valid tokens
-    if cfg.kl_weight > 0.0 and valid_mask.any():
-        inv_t = 1.0 / float(cfg.temperature)
-        s_sel = s_logits_f[..., :v_common][valid_mask] * inv_t
-        t_sel = t_logits_f[..., :v_common][valid_mask] * inv_t
-        log_p_s = F.log_softmax(s_sel, dim=-1)
-        log_p_t = F.log_softmax(t_sel, dim=-1)
-        kl_loss = F.kl_div(log_p_s, log_p_t, reduction="batchmean", log_target=True) * (cfg.temperature ** 2)
-        total = total + cfg.kl_weight * kl_loss
-        metrics["kl_loss"] = float(kl_loss.detach().item())
+        # 2. Temperature-scaled KL distillation in FP32 over valid tokens
+        if cfg.kl_weight > 0.0 and valid_mask.any():
+            inv_t = 1.0 / float(cfg.temperature)
+            s_sel = s_logits_f[..., :v_common][valid_mask] * inv_t
+            t_sel = t_logits_f[..., :v_common][valid_mask] * inv_t
+            log_p_s = F.log_softmax(s_sel, dim=-1)
+            log_p_t = F.log_softmax(t_sel, dim=-1)
+            kl_loss = F.kl_div(log_p_s, log_p_t, reduction="batchmean", log_target=True) * (cfg.temperature ** 2)
+            total = total + cfg.kl_weight * kl_loss
+            metrics["kl_loss"] = float(kl_loss.detach().item())
 
     # 3. Hidden-state representation alignment (dimension-invariant cosine + scale-matched L2)
     if cfg.hidden_mse_weight > 0.0 and t_hidden is not None and s_out.hidden_states is not None:
@@ -476,7 +691,13 @@ def compute_distill_loss(
             metrics["layer_mse"] = float(l_mse.detach().item())
 
     # 4. Self-distilled Exit Gate supervision
-    if cfg.exit_gate_weight > 0.0 and getattr(s_out, "exit_logits", ()) and getattr(s_out, "intermediate_states", ()) and valid_mask.any():
+    if (
+        cfg.exit_gate_weight > 0.0
+        and s_logits_f is not None
+        and getattr(s_out, "exit_logits", ())
+        and getattr(s_out, "intermediate_states", ())
+        and valid_mask.any()
+    ):
         with torch.no_grad():
             final_pred = s_logits_f.detach().argmax(dim=-1)
         eg_losses = []
@@ -534,8 +755,13 @@ def run_distill_conversion(
         warm_info = {"warmstarted": False}
 
     freeze_info = (
-        apply_surgery_freeze(student, freeze_ffn=cfg.freeze_ffn, freeze_embeddings=cfg.freeze_embeddings)
-        if (cfg.freeze_ffn or cfg.freeze_embeddings)
+        apply_surgery_freeze(
+            student,
+            freeze_ffn=cfg.freeze_ffn,
+            freeze_embeddings=cfg.freeze_embeddings,
+            freeze_swa=cfg.freeze_swa,
+        )
+        if (cfg.freeze_ffn or cfg.freeze_embeddings or cfg.freeze_swa)
         else None
     )
 
@@ -564,7 +790,9 @@ def run_distill_conversion(
         return cfg.min_lr_ratio + 0.5 * (1.0 - cfg.min_lr_ratio) * (1.0 + math.cos(math.pi * progress))
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, _lr_scale)
-    use_amp = cfg.precision == "bf16" and device.type == "cuda"
+    use_amp = cfg.precision in ("bf16", "fp16") and device.type == "cuda"
+    amp_dtype = torch.float16 if cfg.precision == "fp16" else torch.bfloat16
+    scaler = torch.amp.GradScaler("cuda", enabled=(cfg.precision == "fp16" and device.type == "cuda"))
 
     it = iter(batch_iter)
     history: list[dict] = []
@@ -594,16 +822,19 @@ def run_distill_conversion(
                 hidden_adapter=hidden_adapter,
                 mtp_heads=mtp_heads,
                 use_amp=use_amp,
+                amp_dtype=amp_dtype,
                 teacher_forced=use_tf_step,
             )
             if not torch.isfinite(loss):
                 raise RuntimeError(f"Non-finite distillation loss at step {step}")
-            (loss / float(cfg.grad_accum_steps)).backward()
+            scaler.scale(loss / float(cfg.grad_accum_steps)).backward()
             tokens_total += int((by != -100).sum().item())
             for k, v in m.items():
                 step_metrics[k] = step_metrics.get(k, 0.0) + v / float(cfg.grad_accum_steps)
+        scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(unique_params, cfg.grad_clip)
-        optimizer.step()
+        scaler.step(optimizer)
+        scaler.update()
         scheduler.step()
         history.append(step_metrics)
         if log_interval > 0 and ((step + 1) % log_interval == 0 or step == cfg.max_steps - 1):

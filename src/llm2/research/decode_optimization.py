@@ -1044,6 +1044,9 @@ class SegmentMemoryCache:
         b = active_state.assoc_memory.shape[0]
         blended_levels = []
         for lvl_idx, cur_lvl in enumerate(active_state.levels):
+            if not isinstance(cur_lvl, FractalLevelState):
+                blended_levels.append(self.clone_state(cur_lvl))
+                continue
             mem_bank = torch.stack(
                 [st.levels[lvl_idx].memory.to(device=cur_lvl.memory.device, dtype=torch.float32) for st, _, _ in self._grm_segments],
                 dim=1,
@@ -1093,6 +1096,9 @@ class SegmentMemoryCache:
 
         blended_levels = []
         for lvl_idx, cur_lvl in enumerate(state.levels):
+            if not isinstance(cur_lvl, FractalLevelState):
+                blended_levels.append(self.clone_state(cur_lvl))
+                continue
             anchor_mem = torch.zeros_like(cur_lvl.memory, dtype=torch.float32)
             for w, anc in zip(weights, self._anchors):
                 anchor_mem = anchor_mem + float(w) * anc.levels[lvl_idx].memory.float()
