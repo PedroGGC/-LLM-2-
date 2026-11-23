@@ -535,24 +535,47 @@ def save_lumina_checkpoint(
 
 
 def load_lumina_checkpoint(ckpt_dir: str | Path, *, device: str | torch.device = "cpu", dtype: torch.dtype | None = None) -> tuple[FractalDeltaMemory, dict]:
-    """Load saved Lumina-V1 checkpoint preserving shared embedding/lm_head tying with minimal RAM."""
+    """Load saved Lumina-V1 checkpoint preserving shared embedding/lm_head tying with minimal RAM & time."""
+    from safetensors.torch import load_file
+
     ckpt_path = Path(ckpt_dir)
     payload = json.loads((ckpt_path / "config.json").read_text(encoding="utf-8"))
     m_cfg = ModelConfig(**payload["model"])
     r_cfg = ResearchConfig(**payload["research"])
-    prev_dtype = torch.get_default_dtype()
-    try:
-        if dtype is not None:
-            torch.set_default_dtype(dtype)
+    with torch.device("meta"):
         model = FractalDeltaMemory(m_cfg, r_cfg)
-    finally:
-        torch.set_default_dtype(prev_dtype)
-    load_model(model, str(ckpt_path / "model.safetensors"))
-    model.lm_head.weight = model.embedding.weight
+    dev_str = str(device)
+    sd = load_file(str(ckpt_path / "model.safetensors"), device=dev_str)
+    if "lm_head.weight" not in sd and "embedding.weight" in sd:
+        sd["lm_head.weight"] = sd["embedding.weight"]
     if dtype is not None:
-        model.to(device=device, dtype=dtype)
-    else:
-        model.to(device=device)
+        for k, v in list(sd.items()):
+            if v.is_floating_point() and v.dtype != dtype:
+                sd[k] = v.to(dtype=dtype)
+    res_load = model.load_state_dict(sd, strict=False, assign=True)
+    unexpected_missing = [k for k in res_load.missing_keys if not k.endswith("_inv_freq")]
+    if unexpected_missing or res_load.unexpected_keys:
+        raise RuntimeError(f"Checkpoint mismatch: missing={unexpected_missing} unexpected={res_load.unexpected_keys}")
+    # Reconstruct non-persistent positional/frequency buffers cleanly on target device.
+    from ..architectures.fractal_delta import SlidingWindowGQACell, _GOLDEN_PHI
+
+    for cell in model.cells:
+        if isinstance(cell, SlidingWindowGQACell):
+            if cell.use_rope:
+                inv_freq = 1.0 / (
+                    float(m_cfg.rope_theta) ** (torch.arange(0, cell.head_dim, 2, dtype=torch.float64, device=dev_str) / float(cell.head_dim))
+                )
+                cell.register_buffer("rope_inv_freq", inv_freq, persistent=False)
+        else:
+            if cell.golden_phase:
+                rot_pairs = max(1, cell.head_dim // 2)
+                exponents = 1.0 + 12.0 * torch.arange(rot_pairs, dtype=torch.float64, device=dev_str) / max(1, rot_pairs)
+                cell.register_buffer("golden_inv_freq", math.pi / (_GOLDEN_PHI ** exponents), persistent=False)
+            elif cell.deltanet_rope:
+                inv_freq = 1.0 / (
+                    float(m_cfg.rope_theta) ** (torch.arange(0, cell.head_dim, 2, dtype=torch.float64, device=dev_str) / float(cell.head_dim))
+                )
+                cell.register_buffer("rope_inv_freq", inv_freq, persistent=False)
     model.lm_head.weight = model.embedding.weight
     return model, payload.get("meta", {})
 
@@ -609,7 +632,7 @@ def run_subfase1_dual_gpu(
         scheduler = torch.optim.lr_scheduler.LambdaLR(
             optimizer, lambda s: _cosine_lr_scale(s, warmup_steps, max_steps, min_lr_ratio)
         )
-        scaler = torch.amp.GradScaler("cuda", enabled=(precision == "fp16" and dev1.type == "cuda"))
+        scaler = torch.amp.GradScaler("cuda", init_scale=1024.0, enabled=(precision == "fp16" and dev1.type == "cuda"))
 
         it = iter(batch_iter)
         calibrated = False
@@ -666,9 +689,11 @@ def run_subfase1_dual_gpu(
 
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(unique_params, grad_clip, foreach=False)
+            prev_scale = scaler.get_scale() if scaler.is_enabled() else 1.0
             scaler.step(optimizer)
             scaler.update()
-            scheduler.step()
+            if not scaler.is_enabled() or scaler.get_scale() >= prev_scale:
+                scheduler.step()
             history.append({"attn_delta_loss": loss_acc, "mean_attn_cos": cos_acc, "lr": optimizer.param_groups[0]["lr"]})
 
             if log_interval > 0 and ((step + 1) % log_interval == 0 or step == max_steps - 1):
@@ -763,7 +788,7 @@ def run_subfase2_dual_gpu(
         scheduler = torch.optim.lr_scheduler.LambdaLR(
             optimizer, lambda s: _cosine_lr_scale(s, warmup_steps, max_steps, min_lr_ratio)
         )
-        scaler = torch.amp.GradScaler("cuda", enabled=(precision == "fp16" and head_dev.type == "cuda"))
+        scaler = torch.amp.GradScaler("cuda", init_scale=1024.0, enabled=(precision == "fp16" and head_dev.type == "cuda"))
 
         it = iter(batch_iter)
         history: list[dict[str, float]] = []
@@ -823,9 +848,11 @@ def run_subfase2_dual_gpu(
 
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(unique_params, grad_clip, foreach=False)
+            prev_scale = scaler.get_scale() if scaler.is_enabled() else 1.0
             scaler.step(optimizer)
             scaler.update()
-            scheduler.step()
+            if not scaler.is_enabled() or scaler.get_scale() >= prev_scale:
+                scheduler.step()
             history.append(step_m)
 
             if log_interval > 0 and ((step + 1) % log_interval == 0 or step == max_steps - 1):
