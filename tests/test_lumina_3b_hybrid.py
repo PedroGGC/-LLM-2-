@@ -21,6 +21,7 @@ from llm2.research.distill_convert import LoRALinear, transplant_teacher_weights
 from llm2.research.lumina_3b_pipeline import (
     _chunked_hidden_ce_kl_loss,
     build_lumina_3b_config_from_hf,
+    build_student_for_surgery,
     load_lumina_checkpoint,
     run_subfase1_dual_gpu,
     run_subfase2_dual_gpu,
@@ -293,7 +294,8 @@ def test_smollm3_style_gqa_3to1_surgery_subfase1_2_lora_merge_and_ckpt(tmp_path)
     assert r_cfg.fractal_deltanet_rope is True
     assert r_cfg.fractal_swa_kv_heads == 2
 
-    student = FractalDeltaMemory(m_cfg, r_cfg)
+    student = build_student_for_surgery(m_cfg, r_cfg, dtype=torch.float32)
+    assert student.parameter_formula() == _unique_param_count(student)
     t_info = transplant_teacher_weights(teacher, student)
     assert t_info["swa_cells_copied"] == 2
     assert t_info["qkv_cells_copied"] == 6

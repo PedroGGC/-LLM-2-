@@ -90,6 +90,92 @@ def build_lumina_3b_config_from_hf(
     return m_cfg, r_cfg
 
 
+@torch.no_grad()
+def build_student_for_surgery(
+    m_cfg: ModelConfig,
+    r_cfg: ResearchConfig,
+    *,
+    dtype: torch.dtype = torch.float16,
+) -> FractalDeltaMemory:
+    """Instantiate FractalDeltaMemory on meta -> to_empty(cpu) skipping redundant 3B FFN CPU RNG (~175s saved)."""
+    from ..architectures.fractal_delta import _init_decay_bias, _GOLDEN_PHI
+
+    with torch.device("meta"):
+        student = FractalDeltaMemory(m_cfg, r_cfg)
+    student.to_empty(device="cpu")
+    student.to(dtype=dtype)
+    student.lm_head.weight = student.embedding.weight
+
+    # Re-initialize buffers & lightweight non-transplanted heads/gates cleanly (FFN/SWA/QKV/Embed will be overwritten by transplant).
+    for mod in student.modules():
+        if hasattr(mod, "weight") and mod.weight is not None and mod.weight.ndim == 1:
+            nn.init.ones_(mod.weight)
+    nn.init.normal_(student.local_conv.weight, std=0.02)
+    nn.init.normal_(student.assoc_address.weight, std=0.02)
+    nn.init.normal_(student.assoc_value.weight, std=0.02)
+    nn.init.normal_(student.assoc_write_gate.weight, std=0.02)
+    nn.init.constant_(student.assoc_write_gate.bias, -2.0)
+    nn.init.normal_(student.assoc_readout.weight, std=1e-4)
+    student.assoc_scale.fill_(1.0)
+    if student.assoc_lag_mix is not None:
+        student.assoc_lag_mix.zero_()
+    for lvl_i, ad in enumerate(student.adapters):
+        ad.attn_scale.fill_(1.0)
+        ad.attn_shift.zero_()
+        ad.ffn_scale.fill_(1.0)
+        ad.ffn_shift.zero_()
+        span = (lvl_i - 0.5 * (student.depth - 1)) * 0.5
+        ad.decay_bias.fill_(span)
+        ad.beta_bias.fill_(-max(0.0, span) if student.leaky_budget else 0.0)
+        if ad.beta_write_bias is not None:
+            ad.beta_write_bias.fill_(-max(0.0, span) if student.leaky_budget else 0.0)
+        ad.euler_attn.fill_(1.0)
+        ad.euler_ffn.fill_(1.0)
+        if ad.anchor_gate is not None:
+            ad.anchor_gate.fill_(-15.0 if lvl_i in student.swa_levels else -8.0)
+        if ad.val_mix is not None:
+            ad.val_mix.fill_(-1.0)
+        if ad.phase_scale is not None:
+            ad.phase_scale.fill_(1.0)
+
+    proj_std = 0.02 / math.sqrt(2 * student.depth)
+    for cell in student.cells:
+        if isinstance(cell, SlidingWindowGQACell):
+            if cell.use_rope:
+                inv_freq = 1.0 / (
+                    float(m_cfg.rope_theta) ** (torch.arange(0, cell.head_dim, 2, dtype=torch.float64) / float(cell.head_dim))
+                )
+                cell.register_buffer("rope_inv_freq", inv_freq, persistent=False)
+            continue
+        nn.init.normal_(cell.conv.weight, std=1e-4)
+        nn.init.zeros_(cell.conv.bias)
+        nn.init.normal_(cell.decay.weight, std=0.02)
+        if cell.kda:
+            nn.init.normal_(cell.decay_down.weight, std=0.02)
+            cell.decay.bias.copy_(_init_decay_bias(cell.heads).repeat_interleave(cell.head_dim).to(dtype=cell.decay.bias.dtype))
+        else:
+            cell.decay.bias.copy_(_init_decay_bias(cell.heads).to(dtype=cell.decay.bias.dtype))
+        nn.init.normal_(cell.beta.weight, std=0.02)
+        nn.init.constant_(cell.beta.bias, -1.0)
+        if cell.beta_write is not None:
+            nn.init.normal_(cell.beta_write.weight, std=0.02)
+            nn.init.constant_(cell.beta_write.bias, -1.0)
+        nn.init.normal_(cell.out_gate.weight, std=1e-4)
+        cell.out_gate_bias = torch.tensor(1.784376, dtype=dtype)
+        cell.head_gamma.fill_(0.15)
+        nn.init.normal_(cell.out_proj.weight, std=proj_std)
+        if cell.golden_phase:
+            rot_pairs = max(1, cell.head_dim // 2)
+            exponents = 1.0 + 12.0 * torch.arange(rot_pairs, dtype=torch.float64) / max(1, rot_pairs)
+            cell.register_buffer("golden_inv_freq", math.pi / (_GOLDEN_PHI ** exponents), persistent=False)
+        elif cell.deltanet_rope:
+            inv_freq = 1.0 / (
+                float(m_cfg.rope_theta) ** (torch.arange(0, cell.head_dim, 2, dtype=torch.float64) / float(cell.head_dim))
+            )
+            cell.register_buffer("rope_inv_freq", inv_freq, persistent=False)
+    return student
+
+
 class CompactAdamW(torch.optim.Optimizer):
     """Memory-compact AdamW storing exp_avg and sqrt(exp_avg_sq) in FP16 (4 B/param) while stepping in FP32."""
 
@@ -293,6 +379,18 @@ def _move_cell_attn_only(cell: FractalDeltaCell, device: torch.device, dtype: to
             setattr(cell, buf_name, buf.to(device=device))
 
 
+class _NullCtx:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def _cuda_dev_ctx(dev: torch.device):
+    return torch.cuda.device(dev) if dev.type == "cuda" else _NullCtx()
+
+
 def _place_student_split(
     student: FractalDeltaMemory,
     dev0: torch.device,
@@ -492,102 +590,110 @@ def run_subfase1_dual_gpu(
 
     # Move ONLY the DeltaNet attention submodules + adapters to dev1 (frozen FFNs stay on CPU saving ~5 GB VRAM!).
     student.train()
-    trainable_params: list[nn.Parameter] = []
-    for lvl in delta_levels:
-        cell = student.cells[lvl]
-        assert isinstance(cell, FractalDeltaCell)
-        _move_cell_attn_only(cell, dev1, torch.float32)
-        for p in cell.parameters():
-            if p.requires_grad:
-                trainable_params.append(p)
-        if lvl < len(student.adapters):
-            student.adapters[lvl].to(device=dev1, dtype=torch.float32)
-            for p in student.adapters[lvl].parameters():
+    with _cuda_dev_ctx(dev1):
+        trainable_params: list[nn.Parameter] = []
+        for lvl in delta_levels:
+            cell = student.cells[lvl]
+            assert isinstance(cell, FractalDeltaCell)
+            _move_cell_attn_only(cell, dev1, torch.float32)
+            for p in cell.parameters():
                 if p.requires_grad:
                     trainable_params.append(p)
-    unique_params = list({p.data_ptr(): p for p in trainable_params}.values())
-    optimizer = torch.optim.AdamW(unique_params, lr=lr, weight_decay=weight_decay)
-    scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer, lambda s: _cosine_lr_scale(s, warmup_steps, max_steps, min_lr_ratio)
-    )
-    scaler = torch.amp.GradScaler("cuda", enabled=(precision == "fp16" and dev1.type == "cuda"))
+            if lvl < len(student.adapters):
+                student.adapters[lvl].to(device=dev1, dtype=torch.float32)
+                for p in student.adapters[lvl].parameters():
+                    if p.requires_grad:
+                        trainable_params.append(p)
+        unique_params = list({p.data_ptr(): p for p in trainable_params}.values())
+        optimizer = torch.optim.AdamW(unique_params, lr=lr, weight_decay=weight_decay, foreach=False)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lambda s: _cosine_lr_scale(s, warmup_steps, max_steps, min_lr_ratio)
+        )
+        scaler = torch.amp.GradScaler("cuda", enabled=(precision == "fp16" and dev1.type == "cuda"))
 
-    it = iter(batch_iter)
-    calibrated = False
-    history: list[dict[str, float]] = []
-    tokens_total = 0
-    t0 = time.perf_counter()
+        it = iter(batch_iter)
+        calibrated = False
+        history: list[dict[str, float]] = []
+        tokens_total = 0
+        t0 = time.perf_counter()
 
-    for step in range(max_steps):
-        optimizer.zero_grad(set_to_none=True)
-        loss_acc = 0.0
-        cos_acc = 0.0
-        for _ in range(grad_accum_steps):
-            bx, by = next(it)
-            bx0 = bx.to(device=dev0)
-            _, t_inputs, _, t_deltas = _teacher_forward_hidden_and_deltas(
-                teacher, bx0, delta_levels=delta_set, need_attn_deltas=True, use_amp=(precision in ("fp16", "bf16") and dev0.type == "cuda"), amp_dtype=amp_dtype
-            )
-            anc1 = _xfer_tensor(t_inputs[0], dev1, torch.float32)
+        for step in range(max_steps):
+            optimizer.zero_grad(set_to_none=True)
+            loss_acc = 0.0
+            cos_acc = 0.0
+            for _ in range(grad_accum_steps):
+                bx, by = next(it)
+                with _cuda_dev_ctx(dev0):
+                    bx0 = bx.to(device=dev0)
+                    _, t_inputs, _, t_deltas = _teacher_forward_hidden_and_deltas(
+                        teacher, bx0, delta_levels=delta_set, need_attn_deltas=True, use_amp=(precision in ("fp16", "bf16") and dev0.type == "cuda"), amp_dtype=amp_dtype
+                    )
+                    if dev0.type == "cuda":
+                        torch.cuda.synchronize(dev0)
+                anc1 = _xfer_tensor(t_inputs[0], dev1, torch.float32)
 
-            if not calibrated:
-                with torch.no_grad():
-                    for lvl in delta_levels:
-                        hin1 = _xfer_tensor(t_inputs[lvl], dev1, torch.float32)
-                        td1 = _xfer_tensor(t_deltas[lvl], dev1, torch.float32)
-                        with torch.autocast(device_type=dev1.type, dtype=amp_dtype, enabled=use_amp):
-                            sd1 = student.forward_level_attn_delta(lvl, hin1, anc1).float()
-                        ratio = (td1.norm(dim=-1).mean() / sd1.norm(dim=-1).mean().clamp_min(1e-6)).item()
-                        ca = F.cosine_similarity(sd1, td1, dim=-1, eps=1e-6).mean().item()
-                        scale = max(0.02, min(10.0, ratio * max(0.25, ca)))
-                        student.cells[lvl].head_gamma.data.mul_(scale)
-                calibrated = True
+                if not calibrated:
+                    with torch.no_grad():
+                        for lvl in delta_levels:
+                            hin1 = _xfer_tensor(t_inputs[lvl], dev1, torch.float32)
+                            td1 = _xfer_tensor(t_deltas[lvl], dev1, torch.float32)
+                            with torch.autocast(device_type=dev1.type, dtype=amp_dtype, enabled=use_amp):
+                                sd1 = student.forward_level_attn_delta(lvl, hin1, anc1).float()
+                            ratio = (td1.norm(dim=-1).mean() / sd1.norm(dim=-1).mean().clamp_min(1e-6)).item()
+                            ca = F.cosine_similarity(sd1, td1, dim=-1, eps=1e-6).mean().item()
+                            scale = max(0.02, min(10.0, ratio * max(0.25, ca)))
+                            student.cells[lvl].head_gamma.data.mul_(scale)
+                    calibrated = True
 
-            # Compute & backprop 1 DeltaNet layer at a time: mathematically exact sum, 27x lower peak activation VRAM!
-            denom = float(len(delta_levels) * grad_accum_steps)
-            for lvl in delta_levels:
-                hin1 = _xfer_tensor(t_inputs[lvl], dev1, torch.float32)
-                td1 = _xfer_tensor(t_deltas[lvl], dev1, torch.float32)
-                with torch.autocast(device_type=dev1.type, dtype=amp_dtype, enabled=use_amp):
-                    sd1 = student.forward_level_attn_delta(lvl, hin1, anc1).float()
-                    loss_l = _attn_delta_loss(sd1, td1)
-                if not torch.isfinite(loss_l):
-                    raise RuntimeError(f"Non-finite Subfase-1 loss at step {step} level {lvl}")
-                scaler.scale(loss_l / denom).backward()
-                loss_acc += float(loss_l.detach().item()) / denom
-                with torch.no_grad():
-                    cos_acc += float(F.cosine_similarity(sd1.detach(), td1, dim=-1, eps=1e-6).mean().item()) / denom
-                del hin1, td1, sd1, loss_l
+                # Compute & backprop 1 DeltaNet layer at a time: mathematically exact sum, 27x lower peak activation VRAM!
+                denom = float(len(delta_levels) * grad_accum_steps)
+                for lvl in delta_levels:
+                    hin1 = _xfer_tensor(t_inputs[lvl], dev1, torch.float32)
+                    td1 = _xfer_tensor(t_deltas[lvl], dev1, torch.float32)
+                    with torch.autocast(device_type=dev1.type, dtype=amp_dtype, enabled=use_amp):
+                        sd1 = student.forward_level_attn_delta(lvl, hin1, anc1).float()
+                        loss_l = _attn_delta_loss(sd1, td1)
+                    if not torch.isfinite(loss_l):
+                        raise RuntimeError(f"Non-finite Subfase-1 loss at step {step} level {lvl}")
+                    scaler.scale(loss_l / denom).backward()
+                    loss_acc += float(loss_l.detach().item()) / denom
+                    with torch.no_grad():
+                        cos_acc += float(F.cosine_similarity(sd1.detach(), td1, dim=-1, eps=1e-6).mean().item()) / denom
+                    del hin1, td1, sd1, loss_l
 
-            tokens_total += int((by != -100).sum().item())
-            del t_inputs, t_deltas, anc1
+                tokens_total += int((by != -100).sum().item())
+                del t_inputs, t_deltas, anc1
 
-        scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(unique_params, grad_clip)
-        scaler.step(optimizer)
-        scaler.update()
-        scheduler.step()
-        history.append({"attn_delta_loss": loss_acc, "mean_attn_cos": cos_acc, "lr": optimizer.param_groups[0]["lr"]})
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(unique_params, grad_clip, foreach=False)
+            scaler.step(optimizer)
+            scaler.update()
+            scheduler.step()
+            history.append({"attn_delta_loss": loss_acc, "mean_attn_cos": cos_acc, "lr": optimizer.param_groups[0]["lr"]})
 
-        if log_interval > 0 and ((step + 1) % log_interval == 0 or step == max_steps - 1):
-            el = time.perf_counter() - t0
-            print(
-                f"[Subfase 1 step={step+1}/{max_steps}] attn_loss={loss_acc:.4f} mean_cos={cos_acc:.4f} "
-                f"lr={optimizer.param_groups[0]['lr']:.2e} tok/s={tokens_total / max(el, 1e-6):.0f} elapsed={el:.1f}s",
-                flush=True,
-            )
-        if ckpt_dir is not None and ckpt_interval > 0 and (step + 1) % ckpt_interval == 0:
-            save_lumina_checkpoint(
-                student,
-                ckpt_dir,
-                meta={"stage": "subfase1", "step": step + 1, "tokens": tokens_total, "mean_cos": cos_acc},
-                save_dtype=torch.float16 if precision == "fp16" else None,
-            )
+            if log_interval > 0 and ((step + 1) % log_interval == 0 or step == max_steps - 1):
+                el = time.perf_counter() - t0
+                print(
+                    f"[Subfase 1 step={step+1}/{max_steps}] attn_loss={loss_acc:.4f} mean_cos={cos_acc:.4f} "
+                    f"lr={optimizer.param_groups[0]['lr']:.2e} tok/s={tokens_total / max(el, 1e-6):.0f} elapsed={el:.1f}s",
+                    flush=True,
+                )
+            if ckpt_dir is not None and ckpt_interval > 0 and (step + 1) % ckpt_interval == 0:
+                if dev1.type == "cuda":
+                    torch.cuda.synchronize(dev1)
+                save_lumina_checkpoint(
+                    student,
+                    ckpt_dir,
+                    meta={"stage": "subfase1", "step": step + 1, "tokens": tokens_total, "mean_cos": cos_acc},
+                    save_dtype=torch.float16 if precision == "fp16" else None,
+                )
 
-    # Cleanly release optimizer state before Subfase 2.
-    del optimizer, scheduler, scaler
-    if dev1.type == "cuda":
-        torch.cuda.empty_cache()
+        if dev1.type == "cuda":
+            torch.cuda.synchronize(dev1)
+        # Cleanly release optimizer state before Subfase 2.
+        del optimizer, scheduler, scaler
+        if dev1.type == "cuda":
+            torch.cuda.empty_cache()
     elapsed_s = time.perf_counter() - t0
     return {
         "steps_completed": len(history),
@@ -647,102 +753,112 @@ def run_subfase2_dual_gpu(
     _place_student_split(student, dev0, dev1, split, frozen_dtype=frozen_dtype, trainable_dtype=torch.float32)
     student.train()
 
-    unique_params = list({p.data_ptr(): p for p in student.parameters() if p.requires_grad}.values())
-    optimizer = (
-        CompactAdamW(unique_params, lr=lr, weight_decay=weight_decay)
-        if use_compact
-        else torch.optim.AdamW(unique_params, lr=lr, weight_decay=weight_decay)
-    )
-    scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer, lambda s: _cosine_lr_scale(s, warmup_steps, max_steps, min_lr_ratio)
-    )
-    scaler = torch.amp.GradScaler("cuda", enabled=(precision == "fp16" and head_dev.type == "cuda"))
+    with _cuda_dev_ctx(head_dev):
+        unique_params = list({p.data_ptr(): p for p in student.parameters() if p.requires_grad}.values())
+        optimizer = (
+            CompactAdamW(unique_params, lr=lr, weight_decay=weight_decay)
+            if use_compact
+            else torch.optim.AdamW(unique_params, lr=lr, weight_decay=weight_decay, foreach=False)
+        )
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lambda s: _cosine_lr_scale(s, warmup_steps, max_steps, min_lr_ratio)
+        )
+        scaler = torch.amp.GradScaler("cuda", enabled=(precision == "fp16" and head_dev.type == "cuda"))
 
-    it = iter(batch_iter)
-    history: list[dict[str, float]] = []
-    tokens_total = 0
-    t0 = time.perf_counter()
+        it = iter(batch_iter)
+        history: list[dict[str, float]] = []
+        tokens_total = 0
+        t0 = time.perf_counter()
 
-    for step in range(max_steps):
-        optimizer.zero_grad(set_to_none=True)
-        step_m = {"total_loss": 0.0, "ce_loss": 0.0, "kl_loss": 0.0, "layer_mse": 0.0}
-        for _ in range(grad_accum_steps):
-            bx, by = next(it)
-            bx_t = bx.to(device=dev0)
-            bx_s = bx_t if head_dev == dev0 else bx.to(device=head_dev)
-            by_s = by.to(device=head_dev)
-            t_final_h, _, t_layers, _ = _teacher_forward_hidden_and_deltas(
-                teacher, bx_t, need_attn_deltas=False, use_amp=use_amp, amp_dtype=amp_dtype
-            )
-            s_hidden, s_layers = _forward_student_split(
-                student, bx_s, dev0, dev1, split, use_amp=use_amp, amp_dtype=amp_dtype, return_layer_states=(layer_mse_weight > 0.0)
-            )
+        for step in range(max_steps):
+            optimizer.zero_grad(set_to_none=True)
+            step_m = {"total_loss": 0.0, "ce_loss": 0.0, "kl_loss": 0.0, "layer_mse": 0.0}
+            for _ in range(grad_accum_steps):
+                bx, by = next(it)
+                with _cuda_dev_ctx(dev0):
+                    bx_t = bx.to(device=dev0)
+                    t_final_h, _, t_layers, _ = _teacher_forward_hidden_and_deltas(
+                        teacher, bx_t, need_attn_deltas=False, use_amp=use_amp, amp_dtype=amp_dtype
+                    )
+                    if dev0.type == "cuda":
+                        torch.cuda.synchronize(dev0)
+                bx_s = bx_t if head_dev == dev0 else bx.to(device=head_dev)
+                by_s = by.to(device=head_dev)
+                s_hidden, s_layers = _forward_student_split(
+                    student, bx_s, dev0, dev1, split, use_amp=use_amp, amp_dtype=amp_dtype, return_layer_states=(layer_mse_weight > 0.0)
+                )
 
-            loss, ce_v, kl_v = _chunked_hidden_ce_kl_loss(
-                s_hidden.flatten(0, 1),
-                student.lm_head,
-                t_final_h.detach().flatten(0, 1),
-                t_lm_head,
-                by_s.flatten(),
-                temperature=temperature,
-                ce_weight=ce_weight,
-                kl_weight=kl_weight,
-                chunk_tokens=logit_chunk_tokens,
-            )
+                loss, ce_v, kl_v = _chunked_hidden_ce_kl_loss(
+                    s_hidden.flatten(0, 1),
+                    student.lm_head,
+                    t_final_h.detach().flatten(0, 1),
+                    t_lm_head,
+                    by_s.flatten(),
+                    temperature=temperature,
+                    ce_weight=ce_weight,
+                    kl_weight=kl_weight,
+                    chunk_tokens=logit_chunk_tokens,
+                )
 
-            l_mse_v = 0.0
-            if layer_mse_weight > 0.0 and t_layers and s_layers:
-                l_losses = []
-                for idx, (sh, th) in enumerate(zip(s_layers, t_layers)):
-                    use_normed = t_final_h is not None and th.data_ptr() == t_final_h.data_ptr()
-                    sh_use = s_hidden if use_normed else sh
-                    th_d = _xfer_tensor(th.detach(), sh_use.device, torch.float32)
-                    l_losses.append(_repr_alignment_loss(sh_use.float(), th_d).to(head_dev))
-                l_mse = torch.stack(l_losses).mean()
-                loss = loss + layer_mse_weight * l_mse
-                l_mse_v = float(l_mse.detach().item())
+                l_mse_v = 0.0
+                if layer_mse_weight > 0.0 and t_layers and s_layers:
+                    l_losses = []
+                    for idx, (sh, th) in enumerate(zip(s_layers, t_layers)):
+                        use_normed = t_final_h is not None and th.data_ptr() == t_final_h.data_ptr()
+                        sh_use = s_hidden if use_normed else sh
+                        th_d = _xfer_tensor(th.detach(), sh_use.device, torch.float32)
+                        l_losses.append(_repr_alignment_loss(sh_use.float(), th_d).to(head_dev))
+                    l_mse = torch.stack(l_losses).mean()
+                    loss = loss + layer_mse_weight * l_mse
+                    l_mse_v = float(l_mse.detach().item())
 
-            if not torch.isfinite(loss):
-                raise RuntimeError(f"Non-finite Subfase-2 loss at step {step}")
-            scaler.scale(loss / float(grad_accum_steps)).backward()
-            tokens_total += int((by_s != -100).sum().item())
-            step_m["total_loss"] += float(loss.detach().item()) / float(grad_accum_steps)
-            step_m["ce_loss"] += ce_v / float(grad_accum_steps)
-            step_m["kl_loss"] += kl_v / float(grad_accum_steps)
-            step_m["layer_mse"] += l_mse_v / float(grad_accum_steps)
+                if not torch.isfinite(loss):
+                    raise RuntimeError(f"Non-finite Subfase-2 loss at step {step}")
+                scaler.scale(loss / float(grad_accum_steps)).backward()
+                tokens_total += int((by_s != -100).sum().item())
+                step_m["total_loss"] += float(loss.detach().item()) / float(grad_accum_steps)
+                step_m["ce_loss"] += ce_v / float(grad_accum_steps)
+                step_m["kl_loss"] += kl_v / float(grad_accum_steps)
+                step_m["layer_mse"] += l_mse_v / float(grad_accum_steps)
 
-        scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(unique_params, grad_clip)
-        scaler.step(optimizer)
-        scaler.update()
-        scheduler.step()
-        history.append(step_m)
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(unique_params, grad_clip, foreach=False)
+            scaler.step(optimizer)
+            scaler.update()
+            scheduler.step()
+            history.append(step_m)
 
-        if log_interval > 0 and ((step + 1) % log_interval == 0 or step == max_steps - 1):
-            el = time.perf_counter() - t0
-            print(
-                f"[Subfase 2{'b-LoRA' if lora_rank > 0 else 'a'} step={step+1}/{max_steps}] "
-                f"total={step_m['total_loss']:.4f} ce={step_m['ce_loss']:.4f} kl={step_m['kl_loss']:.4f} "
-                f"lyr={step_m['layer_mse']:.4f} tok/s={tokens_total / max(el, 1e-6):.0f} elapsed={el:.1f}s",
-                flush=True,
-            )
-        if ckpt_dir is not None and ckpt_interval > 0 and (step + 1) % ckpt_interval == 0 and lora_rank == 0:
-            save_lumina_checkpoint(
-                student,
-                ckpt_dir,
-                meta={"stage": "subfase2a", "step": step + 1, "tokens": tokens_total, **step_m},
-                save_dtype=torch.float16 if precision == "fp16" else None,
-            )
+            if log_interval > 0 and ((step + 1) % log_interval == 0 or step == max_steps - 1):
+                el = time.perf_counter() - t0
+                print(
+                    f"[Subfase 2{'b-LoRA' if lora_rank > 0 else 'a'} step={step+1}/{max_steps}] "
+                    f"total={step_m['total_loss']:.4f} ce={step_m['ce_loss']:.4f} kl={step_m['kl_loss']:.4f} "
+                    f"lyr={step_m['layer_mse']:.4f} tok/s={tokens_total / max(el, 1e-6):.0f} elapsed={el:.1f}s",
+                    flush=True,
+                )
+            if ckpt_dir is not None and ckpt_interval > 0 and (step + 1) % ckpt_interval == 0 and lora_rank == 0:
+                if head_dev.type == "cuda":
+                    torch.cuda.synchronize(head_dev)
+                save_lumina_checkpoint(
+                    student,
+                    ckpt_dir,
+                    meta={"stage": "subfase2a", "step": step + 1, "tokens": tokens_total, **step_m},
+                    save_dtype=torch.float16 if precision == "fp16" else None,
+                )
+
+        if head_dev.type == "cuda":
+            torch.cuda.synchronize(head_dev)
 
     merged_lora = 0
     if lora_rank > 0:
         merged_lora = merge_and_remove_lora(student)
 
     del optimizer, scheduler, scaler
-    if dev0.type == "cuda":
-        torch.cuda.empty_cache()
-    if dev1.type == "cuda" and dev1 != dev0:
-        torch.cuda.empty_cache()
+    for d in ({dev0, dev1, head_dev}):
+        if d.type == "cuda":
+            with torch.cuda.device(d):
+                torch.cuda.synchronize(d)
+                torch.cuda.empty_cache()
 
     if ckpt_dir is not None:
         save_lumina_checkpoint(
