@@ -334,8 +334,14 @@ class LoRALinear(nn.Module):
 
     @torch.no_grad()
     def merge_into_base(self) -> nn.Linear:
-        delta_w = (self.lora_b.float() @ self.lora_a.float()) * self.scale
-        self.base.weight.add_(delta_w.to(device=self.base.weight.device, dtype=self.base.weight.dtype))
+        dev = self.base.weight.device
+        if dev.type == "cuda":
+            with torch.cuda.device(dev):
+                delta_w = (self.lora_b.float() @ self.lora_a.float()) * self.scale
+                self.base.weight.add_(delta_w.to(device=dev, dtype=self.base.weight.dtype))
+        else:
+            delta_w = (self.lora_b.float() @ self.lora_a.float()) * self.scale
+            self.base.weight.add_(delta_w.to(device=dev, dtype=self.base.weight.dtype))
         return self.base
 
 

@@ -875,12 +875,13 @@ def run_subfase2_dual_gpu(
 
         if head_dev.type == "cuda":
             torch.cuda.synchronize(head_dev)
+        del optimizer, scheduler, scaler
+        merged_lora = 0
+        if lora_rank > 0:
+            merged_lora = merge_and_remove_lora(student)
+        if head_dev.type == "cuda":
+            torch.cuda.synchronize(head_dev)
 
-    merged_lora = 0
-    if lora_rank > 0:
-        merged_lora = merge_and_remove_lora(student)
-
-    del optimizer, scheduler, scaler
     for d in ({dev0, dev1, head_dev}):
         if d.type == "cuda":
             with torch.cuda.device(d):
