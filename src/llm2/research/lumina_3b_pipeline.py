@@ -90,6 +90,52 @@ def build_lumina_3b_config_from_hf(
     return m_cfg, r_cfg
 
 
+class CompactAdamW(torch.optim.Optimizer):
+    """Memory-compact AdamW storing exp_avg and sqrt(exp_avg_sq) in FP16 (4 B/param) while stepping in FP32."""
+
+    def __init__(self, params, lr: float = 1e-3, betas: tuple[float, float] = (0.9, 0.999), eps: float = 1e-8, weight_decay: float = 0.01):
+        defaults = {"lr": lr, "betas": betas, "eps": eps, "weight_decay": weight_decay}
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+        for group in self.param_groups:
+            lr = group["lr"]
+            beta1, beta2 = group["betas"]
+            eps = group["eps"]
+            wd = group["weight_decay"]
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                grad = p.grad.float()
+                state = self.state[p]
+                if not state:
+                    state["step"] = 0
+                    state["exp_avg"] = torch.zeros_like(p, dtype=torch.float16)
+                    state["exp_avg_sq_sqrt"] = torch.zeros_like(p, dtype=torch.float16)
+                state["step"] += 1
+                step = state["step"]
+                m = state["exp_avg"].float()
+                v = state["exp_avg_sq_sqrt"].float().square()
+                m.mul_(beta1).add_(grad, alpha=1.0 - beta1)
+                v.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
+                bias_c1 = 1.0 - beta1 ** step
+                bias_c2 = 1.0 - beta2 ** step
+                denom = (v.sqrt() / math.sqrt(bias_c2)).add_(eps)
+                p_f = p.float()
+                if wd != 0.0:
+                    p_f.mul_(1.0 - lr * wd)
+                p_f.addcdiv_(m / bias_c1, denom, value=-lr)
+                p.copy_(p_f.to(dtype=p.dtype))
+                state["exp_avg"].copy_(m.clamp(-65500.0, 65500.0).to(dtype=torch.float16))
+                state["exp_avg_sq_sqrt"].copy_(v.sqrt().clamp(0.0, 65500.0).to(dtype=torch.float16))
+        return loss
+
+
 def _cosine_lr_scale(step: int, warmup_steps: int, max_steps: int, min_lr_ratio: float) -> float:
     if step < warmup_steps:
         return float(step + 1) / float(max(warmup_steps, 1))
@@ -155,6 +201,14 @@ def _teacher_forward_hidden_and_deltas(
     return final_h, layer_inputs, layer_outputs, attn_deltas
 
 
+def _xfer_tensor(t: torch.Tensor, target_dev: torch.device, dtype: torch.dtype | None = None) -> torch.Tensor:
+    """Transfer detached tensors safely across GPUs via CPU staging when needed (avoids broken PCIe P2P hangs)."""
+    dt = t.dtype if dtype is None else dtype
+    if t.device == target_dev:
+        return t if t.dtype == dt else t.to(dtype=dt)
+    if t.device.type == "cuda" and target_dev.type == "cuda":
+        return t.to(device="cpu", dtype=dt).to(device=target_dev)
+    return t.to(device=target_dev, dtype=dt)
 def _get_teacher_lm_head(teacher: nn.Module) -> nn.Module:
     if hasattr(teacher, "lm_head") and teacher.lm_head is not None:
         return teacher.lm_head
@@ -185,6 +239,8 @@ def _chunked_hidden_ce_kl_loss(
     v_common = min(int(s_lm_head.weight.shape[0]), int(t_lm_head.weight.shape[0]))
     ce_acc = s_hidden_flat.new_zeros((), dtype=torch.float32)
     kl_acc = s_hidden_flat.new_zeros((), dtype=torch.float32)
+    s_dev = s_hidden_flat.device
+    t_dev = t_lm_head.weight.device
 
     def _chunk_fn(hs_c: torch.Tensor, ht_c: torch.Tensor, y_c: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         s_log = s_lm_head(hs_c.to(dtype=s_lm_head.weight.dtype)).float()
@@ -192,8 +248,12 @@ def _chunked_hidden_ce_kl_loss(
         vm = y_c != -100
         if kl_weight > 0.0 and vm.any():
             with torch.no_grad():
-                t_log = t_lm_head(ht_c.to(dtype=t_lm_head.weight.dtype)).float()
-                log_pt = F.log_softmax(t_log[:, :v_common][vm] * inv_t, dim=-1)
+                ht_in = ht_c.to(device=t_dev, dtype=t_lm_head.weight.dtype)
+                t_log = t_lm_head(ht_in).float()
+                vm_t = vm.to(device=t_dev) if t_dev != vm.device else vm
+                log_pt = F.log_softmax(t_log[:, :v_common][vm_t] * inv_t, dim=-1)
+                if log_pt.device != s_dev:
+                    log_pt = log_pt.to(device="cpu").to(device=s_dev)
             log_ps = F.log_softmax(s_log[:, :v_common][vm] * inv_t, dim=-1)
             kl_c = F.kl_div(log_ps, log_pt, reduction="sum", log_target=True)
         else:
@@ -255,17 +315,18 @@ def _place_student_split(
             else:
                 buf.data = buf.data.to(device=target_dev)
 
-    # Keep tied embedding / lm_head, assoc channel, and final norm on dev0.
+    # Keep tied embedding / lm_head, assoc channel, and final norm on head_dev (= dev1 if split_layer==0 else dev0).
+    head_dev = dev1 if split_layer <= 0 else dev0
     for name in ("embedding", "input_norm", "local_conv", "local_norm", "assoc_address", "assoc_value", "assoc_write_gate", "assoc_readout", "norm", "window_attn", "exit_gate"):
         mod = getattr(student, name, None)
         if mod is not None:
-            _cast_module_by_grad(mod, dev0)
+            _cast_module_by_grad(mod, head_dev)
     student.assoc_scale.data = student.assoc_scale.data.to(
-        device=dev0, dtype=trainable_dtype if student.assoc_scale.requires_grad else frozen_dtype
+        device=head_dev, dtype=trainable_dtype if student.assoc_scale.requires_grad else frozen_dtype
     )
     if student.assoc_lag_mix is not None:
         student.assoc_lag_mix.data = student.assoc_lag_mix.data.to(
-            device=dev0, dtype=trainable_dtype if student.assoc_lag_mix.requires_grad else frozen_dtype
+            device=head_dev, dtype=trainable_dtype if student.assoc_lag_mix.requires_grad else frozen_dtype
         )
     student.lm_head.weight = student.embedding.weight
 
@@ -287,9 +348,10 @@ def _forward_student_split(
     amp_dtype: torch.dtype,
     return_layer_states: bool = True,
 ) -> tuple[torch.Tensor, list[torch.Tensor]]:
-    """Run full 36-layer student forward split cleanly across (dev0, dev1) with per-layer gradient checkpointing."""
+    """Run full 36-layer student forward split cleanly across (dev0, dev1) or single-GPU when split_layer<=0."""
     use_ckpt = bool(student.training and torch.is_grad_enabled() and getattr(student.research, "gradient_checkpointing", False))
-    with torch.autocast(device_type=dev0.type, dtype=amp_dtype, enabled=use_amp):
+    head_dev = dev1 if split_layer <= 0 else dev0
+    with torch.autocast(device_type=head_dev.type, dtype=amp_dtype, enabled=use_amp):
         raw = student.embedding(input_ids)
         assoc_out, _, _ = student._run_assoc(raw, None, execution="chunked")
         x = raw
@@ -297,7 +359,7 @@ def _forward_student_split(
         cur_phase0 = raw.new_zeros((raw.shape[0],), dtype=torch.int64) if student.use_phase_pos else None
 
     layer_states: list[torch.Tensor] = []
-    on_dev1 = False
+    on_dev1 = bool(split_layer <= 0)
     anchor = anchor0
     cur_phase = cur_phase0
 
@@ -329,9 +391,9 @@ def _forward_student_split(
         if return_layer_states:
             layer_states.append(x)
 
-    if on_dev1 and dev1 != dev0:
-        x = x.to(dev0)
-    with torch.autocast(device_type=dev0.type, dtype=amp_dtype, enabled=use_amp):
+    if on_dev1 and dev1 != head_dev:
+        x = x.to(head_dev)
+    with torch.autocast(device_type=head_dev.type, dtype=amp_dtype, enabled=use_amp):
         hidden = student.norm(x + assoc_out)
     return hidden, layer_states
 
@@ -466,13 +528,13 @@ def run_subfase1_dual_gpu(
             _, t_inputs, _, t_deltas = _teacher_forward_hidden_and_deltas(
                 teacher, bx0, delta_levels=delta_set, need_attn_deltas=True, use_amp=(precision in ("fp16", "bf16") and dev0.type == "cuda"), amp_dtype=amp_dtype
             )
-            anc1 = t_inputs[0].to(device=dev1, dtype=torch.float32)
+            anc1 = _xfer_tensor(t_inputs[0], dev1, torch.float32)
 
             if not calibrated:
                 with torch.no_grad():
                     for lvl in delta_levels:
-                        hin1 = t_inputs[lvl].to(device=dev1, dtype=torch.float32)
-                        td1 = t_deltas[lvl].to(device=dev1, dtype=torch.float32)
+                        hin1 = _xfer_tensor(t_inputs[lvl], dev1, torch.float32)
+                        td1 = _xfer_tensor(t_deltas[lvl], dev1, torch.float32)
                         with torch.autocast(device_type=dev1.type, dtype=amp_dtype, enabled=use_amp):
                             sd1 = student.forward_level_attn_delta(lvl, hin1, anc1).float()
                         ratio = (td1.norm(dim=-1).mean() / sd1.norm(dim=-1).mean().clamp_min(1e-6)).item()
@@ -484,8 +546,8 @@ def run_subfase1_dual_gpu(
             # Compute & backprop 1 DeltaNet layer at a time: mathematically exact sum, 27x lower peak activation VRAM!
             denom = float(len(delta_levels) * grad_accum_steps)
             for lvl in delta_levels:
-                hin1 = t_inputs[lvl].to(device=dev1, dtype=torch.float32)
-                td1 = t_deltas[lvl].to(device=dev1, dtype=torch.float32)
+                hin1 = _xfer_tensor(t_inputs[lvl], dev1, torch.float32)
+                td1 = _xfer_tensor(t_deltas[lvl], dev1, torch.float32)
                 with torch.autocast(device_type=dev1.type, dtype=amp_dtype, enabled=use_amp):
                     sd1 = student.forward_level_attn_delta(lvl, hin1, anc1).float()
                     loss_l = _attn_delta_loss(sd1, td1)
@@ -560,6 +622,7 @@ def run_subfase2_dual_gpu(
     precision: str = "fp16",
     lora_rank: int = 0,
     lora_alpha: float = 32.0,
+    compact_optimizer: bool | None = None,
     log_interval: int = 10,
     ckpt_dir: str | Path | None = None,
     ckpt_interval: int = 0,
@@ -568,9 +631,9 @@ def run_subfase2_dual_gpu(
     use_amp = precision in ("fp16", "bf16") and dev0.type == "cuda"
     amp_dtype = torch.float16 if precision == "fp16" else torch.bfloat16
     frozen_dtype = amp_dtype if use_amp else torch.float32
-    split = (student.depth // 4) if split_layer is None else int(split_layer)
-    if dev0 == dev1:
-        split = student.depth
+    split = 0 if (split_layer is None and dev1 != dev0) else (student.depth if dev0 == dev1 else int(split_layer))
+    head_dev = dev1 if split <= 0 else dev0
+    use_compact = bool((split <= 0 and precision == "fp16") if compact_optimizer is None else compact_optimizer)
 
     teacher.eval()
     teacher.requires_grad_(False)
@@ -585,11 +648,15 @@ def run_subfase2_dual_gpu(
     student.train()
 
     unique_params = list({p.data_ptr(): p for p in student.parameters() if p.requires_grad}.values())
-    optimizer = torch.optim.AdamW(unique_params, lr=lr, weight_decay=weight_decay)
+    optimizer = (
+        CompactAdamW(unique_params, lr=lr, weight_decay=weight_decay)
+        if use_compact
+        else torch.optim.AdamW(unique_params, lr=lr, weight_decay=weight_decay)
+    )
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer, lambda s: _cosine_lr_scale(s, warmup_steps, max_steps, min_lr_ratio)
     )
-    scaler = torch.amp.GradScaler("cuda", enabled=(precision == "fp16" and dev0.type == "cuda"))
+    scaler = torch.amp.GradScaler("cuda", enabled=(precision == "fp16" and head_dev.type == "cuda"))
 
     it = iter(batch_iter)
     history: list[dict[str, float]] = []
@@ -601,13 +668,14 @@ def run_subfase2_dual_gpu(
         step_m = {"total_loss": 0.0, "ce_loss": 0.0, "kl_loss": 0.0, "layer_mse": 0.0}
         for _ in range(grad_accum_steps):
             bx, by = next(it)
-            bx0 = bx.to(device=dev0)
-            by0 = by.to(device=dev0)
+            bx_t = bx.to(device=dev0)
+            bx_s = bx_t if head_dev == dev0 else bx.to(device=head_dev)
+            by_s = by.to(device=head_dev)
             t_final_h, _, t_layers, _ = _teacher_forward_hidden_and_deltas(
-                teacher, bx0, need_attn_deltas=False, use_amp=use_amp, amp_dtype=amp_dtype
+                teacher, bx_t, need_attn_deltas=False, use_amp=use_amp, amp_dtype=amp_dtype
             )
             s_hidden, s_layers = _forward_student_split(
-                student, bx0, dev0, dev1, split, use_amp=use_amp, amp_dtype=amp_dtype, return_layer_states=(layer_mse_weight > 0.0)
+                student, bx_s, dev0, dev1, split, use_amp=use_amp, amp_dtype=amp_dtype, return_layer_states=(layer_mse_weight > 0.0)
             )
 
             loss, ce_v, kl_v = _chunked_hidden_ce_kl_loss(
@@ -615,7 +683,7 @@ def run_subfase2_dual_gpu(
                 student.lm_head,
                 t_final_h.detach().flatten(0, 1),
                 t_lm_head,
-                by0.flatten(),
+                by_s.flatten(),
                 temperature=temperature,
                 ce_weight=ce_weight,
                 kl_weight=kl_weight,
@@ -628,8 +696,8 @@ def run_subfase2_dual_gpu(
                 for idx, (sh, th) in enumerate(zip(s_layers, t_layers)):
                     use_normed = t_final_h is not None and th.data_ptr() == t_final_h.data_ptr()
                     sh_use = s_hidden if use_normed else sh
-                    th_d = th.detach().to(device=sh_use.device, dtype=torch.float32)
-                    l_losses.append(_repr_alignment_loss(sh_use.float(), th_d).to(dev0))
+                    th_d = _xfer_tensor(th.detach(), sh_use.device, torch.float32)
+                    l_losses.append(_repr_alignment_loss(sh_use.float(), th_d).to(head_dev))
                 l_mse = torch.stack(l_losses).mean()
                 loss = loss + layer_mse_weight * l_mse
                 l_mse_v = float(l_mse.detach().item())
@@ -637,7 +705,7 @@ def run_subfase2_dual_gpu(
             if not torch.isfinite(loss):
                 raise RuntimeError(f"Non-finite Subfase-2 loss at step {step}")
             scaler.scale(loss / float(grad_accum_steps)).backward()
-            tokens_total += int((by0 != -100).sum().item())
+            tokens_total += int((by_s != -100).sum().item())
             step_m["total_loss"] += float(loss.detach().item()) / float(grad_accum_steps)
             step_m["ce_loss"] += ce_v / float(grad_accum_steps)
             step_m["kl_loss"] += kl_v / float(grad_accum_steps)
@@ -687,6 +755,7 @@ def run_subfase2_dual_gpu(
                 "merged_lora_layers": merged_lora,
                 **(history[-1] if history else {}),
             },
+            save_dtype=torch.float16 if precision == "fp16" else None,
         )
     elapsed_s = time.perf_counter() - t0
     return {
