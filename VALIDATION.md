@@ -1520,5 +1520,20 @@ ZIP original rehashado e preservado, `git diff --check` limpo.
   - Multi-imagem / GIF (`8` frames) + `512` tokens gerados: estado $O(1)$ rigorosamente constante (`1.038.848 B` em `1` img, `8` frames e `+512` tok; VRAM pico `461.2 → 471.5 MiB`), e `GRM` recuperou `img_0` e `img_5` em Top-1 após `512` tokens.
 - **Limitações:** validação de ponte em backbone `d_model=384` byte-level (`vocab=257`) sem pré-treino longo; qualidade descritiva real depende da escala da Fase C (`~1.5B–3B`). Relatório completo em [IA2_CAMPAIGN_015_PHASE_B_MULTIMODAL_L4.md](docs/results/IA2_CAMPAIGN_015_PHASE_B_MULTIMODAL_L4.md).
 
+---
+
+### Campanha 016 — Fase C (`CausalLocalWindow` Vetorizado + Destilação Rota 1 + Primeiro Ringue, Colab `Tesla T4`, 22/11/2026)
+
+- **Alterações validadas:** `CausalLocalWindow` vetorizado $O(T \cdot W)$ via `unfold` (eliminando loop Python de chunks), `clean_civitai_prompt` + presets de texto SFT sem censura em `vlm_data.py`, guard de Stage 1 para linhas só-texto em `vlm_trainer.py`, pipeline de destilação `src/llm2/research/distill_convert.py` (SVD warm-start + `KL/CE/Hidden/ExitGate/MTP` em FP32 + `safetensors.torch.save_model`), e harness oficial do Ringue `src/llm2/research/ringue_eval.py`.
+- **Testes executados:**
+  - Local CPU: `tests/test_phase_c_distill_ringue.py` + `tests/test_multimodal_bridge.py` + `tests/test_fractal_v2_grm.py` = **`15 passed, 3 skipped`** (`29.19s`).
+  - Colab `Tesla T4` (`sm_75`): `pytest -q -m cuda tests/test_phase_c_distill_ringue.py` = **`1 passed, 4 deselected`** (`153.54s`, `exit 0`).
+- **Resultados reais na `Tesla T4` (`list_runtimes == {}` após coleta):**
+  - Destilação `SmolLM2-1.7B` → `Lumina-V1-Proto` (`64.64M` params em loop, `300` passos = `614.400` tokens, `755.4s`): `CE 14.66 → 6.53`, `KL 13.69 → 5.44`, `Hidden MSE 0.00261 → 0.000535`, `Total 23.39 → 10.26`.
+  - Visão Stage 1 + Stage 2 (`FineVision` + `curated-danbooru-2026` + texto SFT sem censura, `n_val=16`): val loss `7.1748 → 7.0933 → 6.0008`.
+  - Primeiro Ringue (`n=50`/tarefa, NVML): `SmolLM2-1.7B` (`3.362 GiB` VRAM, `3.072 MiB` KV@16K, `38.5 tok/s`, `1.755 mJ/tok`, `Score 68.0`, `20.23 Score/GiB`) vs `Lumina-V1-Proto FP16` (**`0.264 GiB` VRAM**, **`4.072 MiB` estado@16K [`754×` menor]**, **`248.3 tok/s` [`6.45×`]**, **`177.3 mJ/tok` [`9.9×` menos energia]**, `Score 14.0`, `53.03 Score/GiB`) vs `QuaRot Triton W4A16` (`223.7 tok/s`, `Score 14.0`, `3.556×` compressão).
+- **Limitações honestas:** `614K` tokens com MLPs inicializados aleatoriamente são insuficientes para consolidar linguagem sobre `vocab=49.152` (gerando repetições `"the top of the image shows..."` após Stage 2 multimodal); para qualidade competitiva real no Ringue em 1 GPU, o próximo passo é **Weight-Transfer / Attention-Surgery** copiando MLPs + embeddings pré-treinados do professor. Também registrado: `wallstoneai/civitai-top-nsfw-images-with-metadata` expõe só `['image']` em streaming, `multi-pixmo-cap` é gated e `Vezora/Mini_Orca_Code_Uncensored_alpaca_Format` retornou 404. Relatório completo em [IA2_CAMPAIGN_016_PHASE_C_RINGUE_T4.md](docs/results/IA2_CAMPAIGN_016_PHASE_C_RINGUE_T4.md).
+
+
 
 

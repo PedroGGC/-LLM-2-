@@ -263,56 +263,36 @@ class CausalLocalWindow(nn.Module):
                 attn_out = attn.transpose(1, 2).reshape(b, 1, self.win_dim).to(x.dtype)
                 return self.out_proj(attn_out).to(x.dtype), next_state
 
+            # Single vectorized O(T * W) banded causal sliding window (zero Python chunk loop).
+            k_ctx = torch.cat((k_tail, k), dim=2)
+            v_ctx = torch.cat((v_tail, v), dim=2)
+            valid_ctx = torch.cat((valid_tail, q.new_ones(b, t)), dim=1)
+
+            k_win = k_ctx.unfold(2, w, 1)  # (B, H, T, Dh, W)
+            v_win = v_ctx.unfold(2, w, 1).transpose(-1, -2)  # (B, H, T, W, Dh)
+            valid_win = valid_ctx.unfold(1, w, 1)  # (B, T, W)
+
+            scale = self.head_dim ** -0.5
+            scores = torch.matmul(q.unsqueeze(-2), k_win).squeeze(-2) * scale + bias[None, :, None, :]
+            scores = scores.masked_fill(valid_win[:, None, :, :] <= 0.5, float("-inf"))
+            probs = F.softmax(scores, dim=-1)
+            if drop > 0.0:
+                probs = F.dropout(probs, p=drop, training=True)
+            attn = torch.matmul(probs.unsqueeze(-2), v_win).squeeze(-2)  # (B, H, T, Dh)
+
+            out = attn.transpose(1, 2).contiguous().reshape(b, t, self.win_dim).to(x.dtype)
             if return_all_states:
-                k_ctx = torch.cat((k_tail, k), dim=2)
-                v_ctx = torch.cat((v_tail, v), dim=2)
-                valid_ctx = torch.cat((valid_tail, q.new_ones(b, t)), dim=1)
-                q_pos = torch.arange(w_tail, w_tail + t, device=x.device)[:, None]
-                k_pos = torch.arange(w_tail + t, device=x.device)[None, :]
-                dist = q_pos - k_pos
-                in_win = (dist >= 0) & (dist < w)
-                rel_idx = (w - 1 - dist.clamp(0, w - 1)).long()
-                rel = F.embedding(rel_idx, bias.transpose(0, 1)).permute(2, 0, 1)
-                rel = torch.where(in_win[None, :, :], rel, float("-inf"))
-                valid_mask = torch.where(valid_ctx > 0.5, 0.0, float("-inf"))[:, None, None, :]
-                mask = valid_mask + rel[None, :, :, :]
-                attn = F.scaled_dot_product_attention(q, k_ctx, v_ctx, attn_mask=mask, dropout_p=drop)
                 k_steps = torch.stack([k_ctx[:, :, idx + 1 : idx + 1 + w_tail] for idx in range(t)], dim=0).contiguous()
                 v_steps = torch.stack([v_ctx[:, :, idx + 1 : idx + 1 + w_tail] for idx in range(t)], dim=0).contiguous()
                 val_steps = torch.stack([valid_ctx[:, idx + 1 : idx + 1 + w_tail] for idx in range(t)], dim=0).contiguous()
-                out = attn.transpose(1, 2).contiguous().reshape(b, t, self.win_dim).to(x.dtype)
-                return self.out_proj(out).to(x.dtype), LocalWindowState(k_steps, v_steps, val_steps)
-
-            chunk = max(w, 64)
-            outputs = []
-            kt, vt, val_t = k_tail, v_tail, valid_tail
-            for start in range(0, t, chunk):
-                end = min(start + chunk, t)
-                clen = end - start
-                kc = k[:, :, start:end]
-                vc = v[:, :, start:end]
-                qc = q[:, :, start:end]
-                k_ctx = torch.cat((kt, kc), dim=2)
-                v_ctx = torch.cat((vt, vc), dim=2)
-                valid_ctx = torch.cat((val_t, q.new_ones(b, clen)), dim=1)
-
-                q_pos = torch.arange(w_tail, w_tail + clen, device=x.device)[:, None]
-                k_pos = torch.arange(w_tail + clen, device=x.device)[None, :]
-                dist = q_pos - k_pos
-                in_win = (dist >= 0) & (dist < w)
-                rel_idx = (w - 1 - dist.clamp(0, w - 1)).long()
-                rel = F.embedding(rel_idx, bias.transpose(0, 1)).permute(2, 0, 1)
-                rel = torch.where(in_win[None, :, :], rel, float("-inf"))
-                valid_mask = torch.where(valid_ctx > 0.5, 0.0, float("-inf"))[:, None, None, :]
-                mask = valid_mask + rel[None, :, :, :]
-
-                outputs.append(F.scaled_dot_product_attention(qc, k_ctx, v_ctx, attn_mask=mask, dropout_p=drop))
-                kt = k_ctx[:, :, -w_tail:].clone(memory_format=torch.contiguous_format)
-                vt = v_ctx[:, :, -w_tail:].clone(memory_format=torch.contiguous_format)
-                val_t = valid_ctx[:, -w_tail:].clone(memory_format=torch.contiguous_format)
-
-            out = torch.cat(outputs, dim=2).transpose(1, 2).contiguous().reshape(b, t, self.win_dim).to(x.dtype)
-        return self.out_proj(out).to(x.dtype), LocalWindowState(kt, vt, val_t)
+                next_state = LocalWindowState(k_steps, v_steps, val_steps)
+            else:
+                next_state = LocalWindowState(
+                    k_ctx[:, :, -w_tail:].clone(memory_format=torch.contiguous_format),
+                    v_ctx[:, :, -w_tail:].clone(memory_format=torch.contiguous_format),
+                    valid_ctx[:, -w_tail:].clone(memory_format=torch.contiguous_format),
+                )
+        return self.out_proj(out).to(x.dtype), next_state
 
     def parameter_count(self, d: int) -> int:
         return d + 3 * d * self.win_dim + self.win_dim * d + self.heads * self.window

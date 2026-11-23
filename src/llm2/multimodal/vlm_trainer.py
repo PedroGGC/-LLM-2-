@@ -105,6 +105,9 @@ def train_vlm_stage(
     for sample in samples:
         if step >= cfg.max_steps:
             break
+        # Stage 1 freezes the entire backbone and trains only the vision projector; skip text-only rows cleanly.
+        if cfg.stage == 1 and not sample.images:
+            continue
         prompt_toks = [eos_id] + _encode_text(tokenizer, f"User: {sample.prompt}\nAssistant:", cfg.max_text_tokens // 2)
         resp_toks = _encode_text(tokenizer, f" {sample.response}", cfg.max_text_tokens // 2) + [eos_id]
 
