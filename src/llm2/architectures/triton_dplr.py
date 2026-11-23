@@ -243,7 +243,14 @@ def _next_pow2_16(x: int) -> int:
 
 
 def can_use_triton_dplr(chunk_size: int, v_dim: int, k_dim: int, device: torch.device) -> bool:
-    return bool(HAS_TRITON and device.type == "cuda" and max(chunk_size, v_dim, k_dim) <= 64)
+    if not (HAS_TRITON and device.type == "cuda" and max(chunk_size, v_dim, k_dim) <= 64):
+        return False
+    # Turing (sm_75, T4) caps shared memory at 64 KiB, whereas the 64x64 backward kernel requires 72-88 KiB.
+    props = torch.cuda.get_device_properties(device)
+    smem_optin = int(getattr(props, "shared_memory_per_block_optin", getattr(props, "shared_memory_per_block", 0)))
+    if smem_optin > 0 and smem_optin < 96 * 1024 and max(v_dim, k_dim) > 32:
+        return False
+    return True
 
 
 def _inter_chunk_scan_pytorch_fwd(

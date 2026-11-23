@@ -2,72 +2,67 @@
 
 **Data:** 22/11/2026  
 **Branch:** `llm-ideas`  
-**Escopo:** Solução cirúrgica para o gargalo de qualidade semântica identificado na Campanha 016 (`Score 14.0` por MLPs inicializados aleatoriamente) via **`Attention-Surgery` 1:1** (`transplant_teacher_weights`, `apply_surgery_freeze`, `layer_mse_weight`) em [`src/llm2/research/distill_convert.py`](../../src/llm2/research/distill_convert.py), otimização de Tensor Cores `FP16` (`sm_75`) em [`src/llm2/architectures/triton_quarot.py`](../../src/llm2/architectures/triton_quarot.py) e implementação completa da **Fase D (`MetaQueryBridge` para o `Nano Lumina`)** em [`src/llm2/multimodal/metaquery_head.py`](../../src/llm2/multimodal/metaquery_head.py).
+**Hardware Verificado:** CPU local (`Windows`, PyTorch `2.14.1+cpu`) + **Google Colab `NVIDIA Tesla T4` (`sm_75`, `15 GB`, PyTorch `2.14.1+cu130`, `FP16`/`FP32`)** (`runtime` encerrado imediatamente após coleta com `list_runtimes() == {}`).
 
 ---
 
 ## 1. Mecanismos Implementados
 
-### 1.1 `Attention-Surgery` (`RADLADS` / `Jet-Nemotron` Literal Weight Transfer)
-Na Campanha 016, a destilação Rota 1 com apenas `warmstart_student_embeddings` e `SwiGLU` FFNs aleatórios atingiu `12.7×` menos VRAM, `754×` menor estado em `16K` e `9.9×` menos energia na Tesla T4, mas apenas `Score = 14.0` porque matrizes MLP aleatórias sobre `vocab=49.152` não aprendem sintaxe/factualidade em `614K` tokens.
-
-O pipeline de **`Attention-Surgery`** resolve a raiz desse problema em três etapas:
-1. **`transplant_teacher_weights(teacher, student, quiet_init_gates=True)`:**
-   - Transplanta `100%` dos **Embeddings / `lm_head` amarrados** (`warmstart_student_embeddings`), **`RMSNorm`s** (`attn_norm`, `ffn_norm`, `final_norm`), **camadas `SwiGLU` FFN** (`gate`, `up`, `down`) e **projeções `QKV` / `Out`** (suportando tanto `q_proj/k_proj/v_proj/o_proj` do HuggingFace com expansão automática de `GQA` via `_expand_gqa_kv` quanto `attn.qkv/proj` do `TransformerLM` nativo).
-   - Inicializa `cell.conv` (`std=1e-4`), `assoc_readout` (`std=1e-4`), `anchor_gate = -8.0` e `hybrid_windows.out_proj` (`std=1e-4`) em regime silencioso para que os FFNs transplantados recebam o fluxo residual limpo desde o Passo 0.
-2. **`apply_surgery_freeze(student, freeze_ffn=True, freeze_embeddings=True)`:**
-   - Congela integralmente os `SwiGLU` FFNs (`cell.ffn`, `cell.ffn_norm`) e `embedding`/`lm_head` (~`61%–67%` dos parâmetros totais), concentrando 100% dos gradientes e estados do `AdamW` na conversão do mecanismo de atenção para o estado recorrente $O(1)$ (`Gated DeltaNet-2` + janela híbrida `3:1`) e impedindo esquecimento catastrófico em orçamentos curtos de destilação.
-3. **Alinhamento Intermediário Camada-a-Camada (`layer_mse_weight` + `return_layer_states=True`):**
-   - Adicionado `return_layer_states: bool = False` e `layer_states: tuple[Tensor, ...]` em `ModelOutput`, `TransformerLM.forward` e `FractalDeltaModel.forward`.
-   - Em `compute_distill_loss`, cada camada $l$ do aluno tem sua direção latente alinhada à camada correspondente do professor via MSE cosseno normalizado em FP32 (`F.mse_loss(F.normalize(sh_f), F.normalize(th))`), eliminando a deriva acumulada (*snowball drift*) entre blocos FFN congelados.
-
-### 1.2 Fase D — `MetaQueryBridge` para o `Nano Lumina` (`Anima 2B` / `DiT` + `VAE 16ch` & `3D GIF`)
-Implementado em [`src/llm2/multimodal/metaquery_head.py`](../../src/llm2/multimodal/metaquery_head.py):
-- **`MetaQueryBridge` (`num_queries=64, dit_cond_dim=2048, dit_pooled_dim=768, connector_layers=2, max_frames=32, grm_alpha=0.25`):**
-  - Após o prefill multimodal de texto + imagens/frames de referência no estado recorrente $O(1)$ do `Lumina V1`, injeta $Q=64$ tokens aprendíveis `meta_queries` via `backbone(inputs_embeds=queries, state=cur_state, return_logits=False)`.
-  - Funde automaticamente as âncoras visuais `<img_end>` armazenadas no `SegmentMemoryCache` (`GRM`) via `query_grm_readout(q_hidden, top_k=2)` (com `@torch.no_grad()` para permitir retropropagação limpa pelos `meta_queries`).
-  - Refina os $Q$ estados com um conector bidirecional Pre-Norm de 2 camadas (`_ConnectorBlock` com `RMSNorm` FP32 + `SDPA` bidirecional + `SwiGLU`) e projeta:
-    - **Imagem Estática / Edição (`num_frames=1`):** `seq_cond` de shape `(B, 64, 2048)` + `pooled_cond` de shape `(B, 768)`.
-    - **GIF Animado 3D (`num_frames=F`):** soma embeddings temporais aprendidos `temporal_frame_emb[:F]` e emite `seq_cond` de shape `(B, F, 64, 2048)` + `pooled_cond` `(B, 768)` mantendo **exatamente o mesmo estado recorrente $O(1)$ no backbone**.
-- **`freeze_backbone_for_metaquery` & `compute_metaquery_alignment_loss`:**
-  - Congela 100% do `Lumina V1` e da ponte de visão (`SigLIP 2` + `VisionSpatialProjector`), treinando apenas os `meta_queries`, `temporal_frame_emb`, `_ConnectorBlock` e projeções `seq_proj`/`pool_proj` com perda híbrida `MSE + Cosine Distance` em FP32.
+1. **`Attention-Surgery` 1:1 ([`src/llm2/research/distill_convert.py`](../../src/llm2/research/distill_convert.py), [`src/llm2/model.py`](../../src/llm2/model.py), [`src/llm2/architectures/fractal_delta.py`](../../src/llm2/architectures/fractal_delta.py)):**
+   - `transplant_teacher_weights`: copia Embeddings/`lm_head` amarrados, `RMSNorm`s, `SwiGLU` FFNs e projeções `QKV`/`Out` (com expansão automática de `GQA` via `_expand_gqa_kv`), inicializando `conv`, `assoc_readout`, `anchor_gate` e `hybrid_windows.out_proj` em baixa magnitude.
+   - `apply_surgery_freeze` + `layer_mse_weight`: congela `SwiGLU` FFNs e Embeddings e alinha estados intermediários por camada (`return_layer_states=True`).
+2. **Fixes Reais de Hardware Turing (`sm_75`, Tesla T4):**
+   - [`src/llm2/architectures/triton_quarot.py`](../../src/llm2/architectures/triton_quarot.py): suporte explícito a Tensor Cores `FP16` (`USE_FP16_DOT`) além de `BF16`.
+   - [`src/llm2/architectures/triton_dplr.py`](../../src/llm2/architectures/triton_dplr.py): guardião em `can_use_triton_dplr` checando `shared_memory_per_block_optin` — descobriu-se na T4 que o kernel backward `64×64` requer `73.728–90.112 B` (> limite de `65.536 B` da `T4`, vs `102.400 B` na `L4`), redirecionando automaticamente para o fallback PyTorch sem erro de compilação.
+3. **Fase D — `MetaQueryBridge` para o `Nano Lumina` ([`src/llm2/multimodal/metaquery_head.py`](../../src/llm2/multimodal/metaquery_head.py)):**
+   - $Q=64$ `MetaQueries` aprendíveis + conector bidirecional Pre-Norm de 2 camadas (`RMSNorm` FP32 + `SDPA` + `SwiGLU`) + fusão de âncoras visuais `<img_end>` do `GRM`.
+   - Emite `seq_cond = (B, 64, 2048)` + `pooled_cond = (B, 768)` para imagem estática (`Anima 2B` / `DiT`) e `seq_cond = (B, F, 64, 2048)` para GIFs 3D animados mantendo estado $O(1)$ constante no backbone VLM congelado.
 
 ---
 
-## 2. Verificação de Testes e Ablação Pareada Controlada
+## 2. Verificações Executadas
 
-### 2.1 Suíte Unitária (`pytest`)
-- `python -m pytest -q tests/test_metaquery_bridge.py tests/test_phase_c_distill_ringue.py` → **`7 passed, 2 skipped in 10.04s`** (os 2 skips são exclusivamente os testes `@pytest.mark.cuda` quando executados na CPU local).
+### 2.1 Suítes `pytest` (CPU Local & Tesla T4 CUDA)
+- **CPU local:** `python -m pytest -q tests/test_metaquery_bridge.py tests/test_phase_c_distill_ringue.py` → **`7 passed, 2 skipped in 10.04s`** (skips são exclusivamente os 2 testes `@pytest.mark.cuda`). Pós-ajuste de `triton_dplr.py`, revalidada a suíte CPU (`tests/test_metaquery_bridge.py`, `tests/test_phase_c_distill_ringue.py`, `tests/test_fractal_v2_grm.py`).
+- **Colab `Tesla T4` (Stage 1 CUDA Gate):** `pytest -q -m cuda tests/test_phase_c_distill_ringue.py tests/test_metaquery_bridge.py` → **`2 passed, 7 deselected in 150.24s`**.
 
-### 2.2 Ablação Pareada Controlada (`60` passos, mesmo professor `TransformerLM` pré-treinado em `vocab=512`)
-Para testar isoladamente a hipótese de retenção de conhecimento FFN sob orçamento curto de destilação (onde a destilação enxerga apenas metade do vocabulário `[4, 256)` enquanto a avaliação cobra tanto o vocabulário completo `[4, 512)` quanto o subconjunto não visto durante a destilação `[256, 512)`):
+### 2.2 Ablação Pareada Controlada em Escala Pequena (`CPU`, `60` passos, `4L`, `vocab=512`)
+Comparando `Random-MLP` (receita C016) vs `Attention-Surgery 1:1` sobre o mesmo professor `TransformerLM` pré-treinado (`89.36s`), avaliando retenção inclusive em metade do vocabulário `[256, 512)` omitida da destilação:
 
-| Braço de Conversão (`FractalDelta V2`, `60` passos) | Params Treináveis / Congelados | Step-0 `KL` ↓ | Val Full `CE` ↓ | Val Full `KL` ↓ | Val Full `Top-1 Acc` ↑ | Acordo c/ Professor (Full) ↑ | Acordo c/ Professor (Vocab Não Visto) ↑ |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| **Professor (`TransformerLM` `4L`)** | `1.074.162` | — | `0.6904` | `0.0000` | `85.09%` | `100.00%` | `100.00%` |
-| **A. `Random-MLP` (Receita C016: só `warmstart_embed`)** | `1.074.162 / 0` | `2.4556` | `3.6030` | `2.8112` | `21.55%` | `23.86%` | `5.71%` (`KL 2.0770`) |
-| **B. `Attention-Surgery 1:1 + FFN Congelado` (C017)** | **`418.290 / 655.872`** | **`0.7677`** | **`1.0069`** | **`0.3782`** | **`75.00%`** | **`78.48%`** | **`48.83%` (`KL 0.5786`)** |
-| **B + `QuaRot W4A16` (`3.552×` compressão nas células)** | `0 / 1.074.162` (PTQ) | — | **`1.0031`** | **`0.3766`** | **`75.78%`** | **`79.36%`** | — |
-| **C. `Attention-Surgery 1:1 + Refino Conjunto` (FFN livre)** | `1.008.626 / 65.536` | `0.7677` | `1.0790` | `0.4524` | `73.89%` | `77.34%` | `47.95%` (`KL 0.5667`) |
+| Braço (`FractalDelta V2`, `4L`, `60` passos) | Params Treináveis / Congelados | Val Full `CE` ↓ | Val Full `KL` ↓ | Val `Top-1 Acc` ↑ | Acordo c/ Professor (Full) ↑ | Retenção em Vocab Não Visto ↑ |
+|---|---:|---:|---:|---:|---:|---:|
+| **Professor (`TransformerLM` `4L`)** | `1.074.162` | `0.6904` | `0.0000` | `85.09%` | `100.00%` | `100.00%` |
+| **A. `Random-MLP` (Receita C016: só `warmstart_embed`)** | `1.074.162 / 0` | `3.6030` | `2.8112` | `21.55%` | `23.86%` | `5.71%` (`KL 2.0770`) |
+| **B. `Attention-Surgery 1:1 + FFN Congelado`** | **`418.290 / 655.872`** | **`1.0069`** | **`0.3782`** | **`75.00%`** | **`78.48%`** | **`48.83%` (`KL 0.5786`)** |
+| **B + `QuaRot W4A16` (`3.552×` compressão nas células)** | `0 / 1.074.162` | **`1.0031`** | **`0.3766`** | **`75.78%`** | **`79.36%`** | — |
+| **C. `Attention-Surgery 1:1 + Refino Conjunto` (FFN livre)** | `1.008.626 / 65.536` | `1.0790` | `0.4524` | `73.89%` | `77.34%` | `47.95%` (`KL 0.5667`) |
 
-**Conclusões da Ablação:**
-1. **Salto de `+53.45` pontos percentuais em acurácia (`21.55% → 75.00%`) e redução de `7.43×` na divergência KL (`2.8112 → 0.3782`):** transplantar os `SwiGLU` FFNs, `RMSNorm`s e projeções `QKV/Out` do professor elimina o colapso semântico observado na C016.
-2. **Congelar os FFNs (`Braço B`) supera deixá-los livres (`Braço C`) em orçamento curto (`1.0069` vs `1.0790` CE):** além de cortar os parâmetros treináveis em **`61.1%` (`418K` vs `1.07M`)**, congelar os FFNs preserva o conhecimento pré-treinado em tokens não vistos durante a conversão (**`48.83%` vs `5.71%` de acordo com o professor, `8.55×` superior**).
-3. **Compatibilidade total com `QuaRot W4A16` (`3.552×` compressão):** o aluno cirúrgico quantizado em `INT4` manteve **`75.78%` Top-1 Acc** (`CE = 1.0031`), sem perda de qualidade.
-
-### 2.3 Verificação End-to-End da Fase D (`MetaQueryBridge`)
-Conectado ao aluno cirúrgico `FractalDelta V2` + `LuminaMultimodalWrapper`:
-- **Isolamento de Parâmetros (`freeze_backbone_for_metaquery`):** `701.056` parâmetros treináveis no `MetaQueryBridge` vs `1.210.610` parâmetros congelados no VLM (`backbone_mutated = False` após `40` passos de `AdamW`).
-- **Shapes de Condicionamento (`Anima 2B` / `DiT`):**
-  - Estático (`num_frames=1`): `seq_cond = (1, 64, 2048)`, `pooled_cond = (1, 768)`, `grm_segments = 1`.
-  - GIF 3D (`num_frames=8`): `seq_cond = (1, 8, 64, 2048)`, `pooled_cond = (1, 768)`, `grm_segments = 8`.
-- **Invariância Estrita $O(1)$:** `state_bytes_1_image = 91.264 B == state_bytes_8_gif_frames = 91.264 B` (`o1_state_invariant = True`).
-- **Convergência de Alinhamento (`40` passos):** perda híbrida `MSE + Cosine` caiu de **`0.5543 → 0.0180` (`−96.8%`)**.
+*Escopo:* prova de conceito sintética controlada mostrando transferência efetiva de conhecimento FFN com `61.1%` menos parâmetros treináveis; não prova sozinha fluência em linguagem natural nem `vocab=49K`.
 
 ---
 
-## 3. Limitações e Próxima Execução em GPU (`SmolLM2-135M` / `Qwen3-Base` na T4/L4)
+## 3. Execução Real em GPU (`Tesla T4`): `SmolLM2-135M` (`30L`, `vocab=49.152`) & `MetaQueryBridge` (`SigLIP 2`)
 
-- Durante o preparo desta campanha, o servidor MCP do Google Colab retornou `server name colab failed to load: sending "tools/call": Bad Request` (expiração de sessão OAuth após as 4 campanhas contínuas em GPU `95b0005`, `C014`, `C015` e `C016`). Nenhum runtime remoto ficou ativo.
-- Seguindo `AGENTS.md`, os testes `@pytest.mark.cuda` de `tests/test_metaquery_bridge.py` e `tests/test_phase_c_distill_ringue.py` são reportados honestamente como `2 skipped` nesta rodada local (o teste CUDA de `test_phase_c_distill_ringue.py` já havia sido aprovado na Tesla T4 na C016 em `be38b5b`).
-- O script completo de GPU para converter `HuggingFaceTB/SmolLM2-135M` (`30L`, `d=576`, `H=9`, `FFN=1536`, `vocab=49.152`) via `Attention-Surgery` 1:1 + Ringue + `MetaQueryBridge` com `SigLIP 2` real já está pronto e empacotado para execução imediata assim que a sessão do Colab for reconectada (ou na virada do mês junto com o `dataset_anima_vlm.jsonl`).
+### 3.1 Stage 2 & Stage 3 — `Attention-Surgery 1:1` de `SmolLM2-135M` + `O Ringue` (Eager `compile_fractal=False`)
+- **Configuração:** `SmolLM2-135M` (`134.5M`, `30L`, `d=576`, `H=9`, `FFN=1536`, `vocab=49.152`) convertido em 1:1 para `Lumina-V1-Surgery` (`163.15M` params únicos; `55.20M` treináveis / `107.96M` FFNs+Embeddings congelados), `240` passos (`245.760` tokens em `FineWeb-Edu` + SFT sem censura, `449.76s` em 2 passes, pico `8.523 GiB`): `CE 13.4495 → 6.7623`, `KL 12.5034 → 4.9939`, `Total 19.2445 → 8.3980`.
+
+| Modelo (`Tesla T4`, `compile_fractal=False` eager) | Quant | Params | VRAM Sessão (GiB)* | Estado/KV @16K (MiB) | `tok/s` | `mJ/tok` | `LAMBADA %` | `ARC-E %` | `HellaSwag %` | `Score` | `RULER 2K/8K/16K` |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| `SmolLM2-135M (Teacher Base)` | `fp16` | `134.5M` | `3.696*` | `360.0` | `31.1` | `1.399.6` | `34.0` | `48.0` | `48.0` | **`43.33`** | `0.17 / 0.28 / —` |
+| `Lumina-V1-Surgery (30L 1:1)` | `fp16` | `163.2M` | `3.714*` | **`5.3974`** (`66.7×`↓) | `11.0` | `3.290.6` | `0.0` | `10.0` | `22.0` | **`10.67`** | `3.69 / 29.59 / 38.14` |
+| `Lumina-V1-Surgery (30L 1:1)` | `quarot_w4a16` (`3.555×`) | `28.9M` | `3.714*` | **`5.3974`** | `7.3` | `4.713.9` | `0.0` | `16.0` | `34.0` | **`16.67`** | `11.91 / 25.30 / 35.08` |
+
+*\*Nota honesta de medição:* o `VRAM Pico` de `3.696–3.714 GiB` refletiu tensores da mesma sessão que permaneceram alocados do Stage 2 (não é VRAM isolada de inferência). Da mesma forma, `tok/s` caiu para `11.0` (`7.3` em `QuaRot`) porque `evaluate_native_contender` rodou com `compile_fractal=False` (Python eager em `30` camadas sem compartilhamento `Prelude-Core-Coda`, ao contrário dos `248.3 tok/s` compilados da C016 em `12L`).
+
+**Diagnóstico honesto do resultado linguístico na T4 (`Score 10.67` / `16.67`, texto repetitivo `"100000..."`):**
+Ao contrário do teste sintético (`4L`, `vocab=512`), a cirurgia 1:1 direta em um modelo Transformer real de `30` camadas e `vocab=49.152` com apenas `245K` tokens **não foi suficiente para preservar ou recuperar fluência linguística**. Os três gargalos técnicos identificados empiricamente foram:
+1. O passo 0 já partiu com `CE = 13.45` (pior que acaso $\ln(49152)=10.80$) porque `out_gate` aleatório × `RMSNorm(head_gamma)` alimenta os `o_proj` e FFNs congelados com ativações fora de escala através de 30 camadas em série.
+2. `245.760` tokens é uma fração mínima frente aos orçamentos reais de conversão `RADLADS`/`Jet-Nemotron` (centenas de milhões a bilhões de tokens), além de o modo `30L` sem compartilhamento triplicar o custo por token frente ao `Prelude-Core-Coda`.
+3. A substituição de `SelfAttention` (`1/√d_h` softmax) por `Gated DeltaNet-2` em 30 camadas profundas exige alinhamento de matriz de atenção ou inicialização residual com zero-gate na saída (`out_gate` aprendendo residual nulo no início) — trabalho técnico de evolução pós-V1.
+
+### 3.2 Stage 4 — Fase D `MetaQueryBridge` (`Nano Lumina`) na `Tesla T4` com `SigLIP 2` Real
+Executado diretamente sobre o backbone `Lumina` (`163.2M`) + `google/siglip2-base-patch16-224` e streams reais (`20` amostras de `HuggingFaceM4/FineVision` + `20` de `aipracticecafe/curated-danbooru-2026`):
+- **Congelamento (`freeze_backbone_for_metaquery`):** **`8.315.712` parâmetros treináveis** no `MetaQueryBridge` vs **`259.985.124` congelados** (backbone + `SigLIP 2` + `VisionSpatialProjector`).
+- **Shapes de saída `DiT` verificados em GPU:** `(1, 64, 2048)` + `(1, 768)` (1 imagem) e `(1, 8, 64, 2048)` + `(1, 768)` (GIF 3D de 8 frames).
+- **Medição empírica real dos bytes de estado recorrente:** `state_bytes_1_image = 5.659.628 B == state_bytes_8_gif_frames = 5.659.628 B` (`o1_state_invariant = True`), com pico de VRAM passando apenas de `3.957,89 MiB` (`1` img) para `4.033,21 MiB` (`8` frames, `+75 MiB`), e segmentos `GRM` `1` e `8`.
+- **Treino do conector (`40` passos com alvo substituto `siglip2_fixed_orthogonal_projection`):** perda híbrida `MSE + Cosine` caiu de **`0.8303 → 0.2189` (`−73.6%`)** com **`backbone_mutated = False`**. Como o gerador `Anima 2B / DiT` não estava carregado nesta etapa, isso valida o gradiente, as formas e a interface $O(1)$ da ponte — não a geração visual de imagens reais ainda.
