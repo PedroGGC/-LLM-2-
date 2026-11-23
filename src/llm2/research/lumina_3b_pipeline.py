@@ -343,15 +343,11 @@ def save_lumina_checkpoint(
     meta: dict | None = None,
     save_dtype: torch.dtype | None = None,
 ) -> Path:
-    """Save pure FractalDeltaMemory safetensors (preserving tied embedding/lm_head) + JSON config & metadata."""
+    """Save pure FractalDeltaMemory safetensors (preserving tied embedding/lm_head) with zero duplicate model RAM."""
     import gc
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
-    student_cpu = FractalDeltaMemory(student.config, student.research)
-    if save_dtype is not None:
-        student_cpu.to(dtype=save_dtype)
-        student_cpu.lm_head.weight = student_cpu.embedding.weight
     sd = {
         k: v.detach().to(
             device="cpu",
@@ -361,28 +357,36 @@ def save_lumina_checkpoint(
     }
     if "lm_head.weight" in sd and "embedding.weight" in sd:
         sd["lm_head.weight"] = sd["embedding.weight"]
-    student_cpu.load_state_dict(sd, strict=True)
-    student_cpu.lm_head.weight = student_cpu.embedding.weight
+    with torch.device("meta"):
+        student_meta = FractalDeltaMemory(student.config, student.research)
+    student_meta.load_state_dict(sd, strict=True, assign=True)
+    student_meta.lm_head.weight = student_meta.embedding.weight
     weights_path = out_path / "model.safetensors"
-    save_model(student_cpu, str(weights_path))
+    save_model(student_meta, str(weights_path))
     cfg_payload = {
         "model": asdict(student.config),
         "research": asdict(student.research),
         "meta": meta or {},
     }
     (out_path / "config.json").write_text(json.dumps(cfg_payload, indent=2), encoding="utf-8")
-    del student_cpu, sd
+    del student_meta, sd
     gc.collect()
     return weights_path
 
 
 def load_lumina_checkpoint(ckpt_dir: str | Path, *, device: str | torch.device = "cpu", dtype: torch.dtype | None = None) -> tuple[FractalDeltaMemory, dict]:
-    """Load saved Lumina-V1 checkpoint preserving shared embedding/lm_head tying."""
+    """Load saved Lumina-V1 checkpoint preserving shared embedding/lm_head tying with minimal RAM."""
     ckpt_path = Path(ckpt_dir)
     payload = json.loads((ckpt_path / "config.json").read_text(encoding="utf-8"))
     m_cfg = ModelConfig(**payload["model"])
     r_cfg = ResearchConfig(**payload["research"])
-    model = FractalDeltaMemory(m_cfg, r_cfg)
+    prev_dtype = torch.get_default_dtype()
+    try:
+        if dtype is not None:
+            torch.set_default_dtype(dtype)
+        model = FractalDeltaMemory(m_cfg, r_cfg)
+    finally:
+        torch.set_default_dtype(prev_dtype)
     load_model(model, str(ckpt_path / "model.safetensors"))
     model.lm_head.weight = model.embedding.weight
     if dtype is not None:

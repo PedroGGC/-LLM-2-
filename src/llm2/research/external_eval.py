@@ -220,6 +220,8 @@ def evaluate_hf_suite(
     *,
     max_examples: int = 100,
     ruler_lengths: Sequence[int] = (2048, 8192),
+    ruler_examples_per_len: int = 8,
+    run_segment_cache_ruler: bool = True,
 ) -> dict:
     """Run real HuggingFace LAMBADA, ARC-Easy, HellaSwag + RULER benchmarks with graceful per-task error capture."""
     from datasets import load_dataset
@@ -298,6 +300,11 @@ def evaluate_hf_suite(
     except Exception as exc:
         report["winogrande"] = {"error": str(exc)}
 
-    report["ruler_niah"] = evaluate_ruler_niah(model, tokenizer, device, lengths=ruler_lengths, examples_per_len=8, use_segment_cache=False)
-    report["ruler_niah_segment_cache"] = evaluate_ruler_niah(model, tokenizer, device, lengths=ruler_lengths, examples_per_len=8, use_segment_cache=True)
+    report["ruler_niah"] = evaluate_ruler_niah(
+        model, tokenizer, device, lengths=ruler_lengths, examples_per_len=ruler_examples_per_len, use_segment_cache=False
+    )
+    if run_segment_cache_ruler:
+        report["ruler_niah_segment_cache"] = evaluate_ruler_niah(
+            model, tokenizer, device, lengths=ruler_lengths, examples_per_len=ruler_examples_per_len, use_segment_cache=True
+        )
     return report
