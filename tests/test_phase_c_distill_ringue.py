@@ -26,7 +26,13 @@ from llm2.multimodal import (
     clean_civitai_prompt,
     train_vlm_stage,
 )
-from llm2.research.distill_convert import DistillConfig, run_distill_conversion, warmstart_student_embeddings
+from llm2.research.distill_convert import (
+    DistillConfig,
+    apply_surgery_freeze,
+    run_distill_conversion,
+    transplant_teacher_weights,
+    warmstart_student_embeddings,
+)
 from llm2.research.factory import build_backbone
 from llm2.research.ringue_eval import RingueEntry, _estimate_kv_cache_mib_16k, compute_composite_score, format_ringue_markdown
 
@@ -173,6 +179,57 @@ def test_rota1_distillation_svd_warmstart_and_safetensors_reload(tmp_path: Path)
     student.eval()
     with torch.no_grad():
         assert torch.allclose(student(bx).logits, reloaded(bx).logits, atol=1e-6)
+
+
+def test_attention_surgery_transplant_and_ffn_freeze():
+    torch.manual_seed(77)
+    teacher = build_backbone(_make_teacher_cfg("cpu", d_model=32, vocab_size=128)).eval()
+    s_cfg = _make_student_cfg("cpu", d_model=32, vocab_size=128)
+    s_cfg.model.n_layers = 3
+    s_cfg.research.share_scales = False
+    s_cfg.research.fractal_prelude_coda = False
+    student = build_backbone(s_cfg)
+
+    info = transplant_teacher_weights(teacher, student)
+    assert info["transplanted"] is True
+    assert info["ffn_cells_copied"] == 3 and info["qkv_cells_copied"] == 3
+    # Verify exact bit-for-bit FFN & embedding transplant
+    assert torch.equal(student.embedding.weight, teacher.embedding.weight)
+    assert torch.equal(student.cells[0].ffn.gate.weight, teacher.layers[0].ffn.gate.weight)
+    assert torch.equal(student.cells[2].ffn.down.weight, teacher.layers[2].ffn.down.weight)
+
+    emb_before = student.embedding.weight.detach().clone()
+    ffn_before = student.cells[0].ffn.gate.weight.detach().clone()
+    beta_before = student.cells[0].beta.weight.detach().clone()
+
+    bx = torch.randint(0, 128, (2, 16))
+    by = torch.roll(bx, shifts=-1, dims=1)
+    by[:, -1] = -100
+    rep = run_distill_conversion(
+        teacher,
+        student,
+        [(bx, by)] * 8,
+        DistillConfig(
+            max_steps=8,
+            lr=4e-3,
+            warmup_steps=1,
+            precision="fp32",
+            surgery_transplant=False,
+            freeze_ffn=True,
+            freeze_embeddings=True,
+            layer_mse_weight=1.0,
+        ),
+        torch.device("cpu"),
+        warmstart_embed=False,
+        log_interval=0,
+    )
+    assert rep["steps_completed"] == 8
+    assert "layer_mse" in rep["final_metrics"]
+    assert rep["final_metrics"]["total_loss"] < rep["initial_metrics"]["total_loss"]
+    # Transplanted embeddings and SwiGLU FFNs must stay 100% frozen while Gated DeltaNet-2 gates adapt
+    assert torch.equal(student.embedding.weight, emb_before)
+    assert torch.equal(student.cells[0].ffn.gate.weight, ffn_before)
+    assert not torch.equal(student.cells[0].beta.weight, beta_before)
 
 
 def test_ringue_leaderboard_and_o1_vs_ol_16k_state():

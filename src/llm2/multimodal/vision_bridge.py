@@ -280,28 +280,33 @@ class LuminaMultimodalWrapper(nn.Module):
         if prompt_ids.ndim != 2 or prompt_ids.shape[0] != 1:
             raise ValueError("prefill_multimodal requires batch=1")
         device = prompt_ids.device
-        dec = FractalDecode(self.backbone)
-        state = None
-        last_logits = None
-        last_hidden = None
+        was_training = self.backbone.training
+        self.backbone.eval()
+        try:
+            dec = FractalDecode(self.backbone)
+            state = None
+            last_logits = None
+            last_hidden = None
 
-        for idx, img in enumerate(images):
-            vis = self.encode_images(img.to(device=device)).to(dtype=self.backbone.embedding.weight.dtype)
+            for idx, img in enumerate(images):
+                vis = self.encode_images(img.to(device=device)).to(dtype=self.backbone.embedding.weight.dtype)
+                if state is None:
+                    out = self.backbone(inputs_embeds=vis, state=None, return_logits=False)
+                    state = out.state
+                    vis_hidden = out.hidden_states
+                else:
+                    _, vis_hidden, state = dec.step_hidden(inputs_embeds=vis, state=state, return_all_states=False)
+                if grm_cache is not None:
+                    tag = image_tags[idx] if (image_tags is not None and idx < len(image_tags)) else f"img_{idx}"
+                    grm_cache.record_segment(state, vis_hidden, tag=tag)
+
+            prompt_emb = self.backbone.embedding(prompt_ids)
             if state is None:
-                out = self.backbone(inputs_embeds=vis, state=None, return_logits=False)
-                state = out.state
-                vis_hidden = out.hidden_states
+                last_logits, last_hidden, state = dec.prefill_embeds(prompt_emb, capacity=self.backbone.config.max_seq_len)
             else:
-                _, vis_hidden, state = dec.step_hidden(inputs_embeds=vis, state=state, return_all_states=False)
-            if grm_cache is not None:
-                tag = image_tags[idx] if (image_tags is not None and idx < len(image_tags)) else f"img_{idx}"
-                grm_cache.record_segment(state, vis_hidden, tag=tag)
-
-        prompt_emb = self.backbone.embedding(prompt_ids)
-        if state is None:
-            last_logits, last_hidden, state = dec.prefill_embeds(prompt_emb, capacity=self.backbone.config.max_seq_len)
-        else:
-            logits_p, hidden_p, state = dec.step_hidden(inputs_embeds=prompt_emb, state=state, return_all_states=False)
-            last_logits = logits_p[:, -1:]
-            last_hidden = hidden_p[:, -1:]
-        return last_logits, last_hidden, state
+                logits_p, hidden_p, state = dec.step_hidden(inputs_embeds=prompt_emb, state=state, return_all_states=False)
+                last_logits = logits_p[:, -1:]
+                last_hidden = hidden_p[:, -1:]
+            return last_logits, last_hidden, state
+        finally:
+            self.backbone.train(was_training)

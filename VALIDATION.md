@@ -1,13 +1,14 @@
 # Validação vigente — 22/11/2026
 
-## Upgrades Pós-C013 (Local + Gate L4 Parcial): `gradient_checkpointing`, `CUDAGraph` em `Early-Exit` / `Confidence-Gated MTP`, Pipeline `FineWeb-Edu`, `external_eval` e `#7 Engram CPU-RAM` / `2:4 Sparsity`
+## Upgrades Pós-C013 e Fechamento Fases A–D (`Lumina V1` Multimodal + `O Ringue` + `Attention-Surgery` + `MetaQueryBridge`)
 
-Verificações reais executadas:
-- **CPU local pós-ajuste (`engram_offload.py`, Windows, Python 3.12.2, PyTorch 2.14.1+cpu):**
-  - `python -m pytest -q tests/test_phase3_upgrades.py tests/test_quarot_early_exit.py` → **10 passed, 3 skipped em 55,69 s** (skips são exclusivamente os `3` testes `@pytest.mark.cuda`; cobre paridade de gradientes do `gradient_checkpointing`, `Confidence-Gated MTP` compilado em bucket, `AdaptiveEarlyExitDecode` em 2 estágios, deduplicação SHA-256 + BPE train-only no `FineWeb-Edu`, harness zero-shot/`RULER` e gradiente em `EngramTableCPU`).
-- **Google Colab NVIDIA L4 (`l4-c014`, execução interrompida/encerrada para poupar unidades antes do treino `53,9M` em `FineWeb-Edu`, `list_runtimes() == {}`):**
-  - Em `tests/test_phase3_upgrades.py::test_phase3_cuda_cudagraph_and_checkpointing`: validados em `CUDA + BF16 + torch.compile` o `forward/backward` com `gradient_checkpointing=True`, `SelfSpeculativeMTPDecode` (`draft_confidence_threshold=0.25`, `cudagraph=True`) e `AdaptiveEarlyExitDecode` em 2 estágios (`cudagraph=True`, `mean_layers_executed == 2.0`). A chamada final de `EngramTableCPU` acusou mismatch `BFloat16 != float` antes de qualquer treino longo; corrigido localmente em `src/llm2/architectures/engram_offload.py` (`self.proj.weight.dtype`).
-- **Limitações declaradas:** após a correção de `engram_offload.py`, apenas a suíte CPU local foi reexecutada (`10 passed, 3 skipped`); os benchmarks em GPU L4 do `#7 Engram` em CUDA/BF16, economia numérica de VRAM do `gradient_checkpointing` em `53,9M`, vazão final em `tok/s` dos novos `CUDAGraph`s e esparsidade `2:4` aguardam o microbenchmark cirúrgico opcional de `~2–3 min`.
+Verificações reais executadas (detalhadas nas seções cronológicas ao final deste documento, linhas 1475+):
+- **CPU local (`Windows`, Python `3.12.2`, PyTorch `2.14.1+cpu`):**
+  - `python -m pytest -q tests/test_phase3_upgrades.py tests/test_quarot_early_exit.py` → **10 passed, 3 skipped em 55,69 s**.
+  - `python -m pytest -q tests/test_metaquery_bridge.py tests/test_phase_c_distill_ringue.py` → **7 passed, 2 skipped em 10,04 s** (skips são exclusivamente `@pytest.mark.cuda`; cobre `transplant_teacher_weights`, `apply_surgery_freeze`, `layer_mse_weight`, `MetaQueryBridge` estático `(1, 64, 2048)` e GIF 3D `(1, 8, 64, 2048)` com invariância $O(1)$ e fusão `GRM`).
+- **Google Colab NVIDIA L4 & Tesla T4 (`95b0005`, `C014` Fase A, `C015` Fase B, `C016` Fase C — todos os runtimes encerrados com `list_runtimes() == {}`):**
+  - Microbenchmark `95b0005` na L4 (`3 passed` CUDA, `53,90M` `gradient_checkpointing` `9,75 → 2,42 GiB`, `#7 EngramTableCPU` `297,4 µs`, `QuaRot Triton W4A16` `812,2 tok/s` / `66,68 mJ/tok`, paridade greedy FP32 `64/64` no MTP `CUDAGraph`, e descarte empírico de `2:4 Sparsity`).
+  - `Campanha 014` (`Fase A — FractalDelta V2` na L4), `Campanha 015` (`Fase B — Lumina V1 Multimodal` com `SigLIP 2` + `FineVision` + `curated-danbooru-2026` na L4), `Campanha 016` (`Fase C — Destilação Rota 1 + Primeiro Ringue` na Tesla T4) e `Campanha 017` (`Attention-Surgery 1:1 + Fase D MetaQueryBridge`). Veja os registros completos ao final deste arquivo.
 
 ## Roteiro Fase 2B (L4 + CPU): `#5` Profundidade Adaptativa (`Early-Exit`), `#6` QuaRot Triton `INT4/W4A8` + `SegmentMemoryCache` & `Confidence-Gated MTP` (`IA2 Campanha 013`)
 
@@ -1534,6 +1535,19 @@ ZIP original rehashado e preservado, `git diff --check` limpo.
   - Primeiro Ringue (`n=50`/tarefa, NVML): `SmolLM2-1.7B` (`3.362 GiB` VRAM, `3.072 MiB` KV@16K, `38.5 tok/s`, `1.755 mJ/tok`, `Score 68.0`, `20.23 Score/GiB`) vs `Lumina-V1-Proto FP16` (**`0.264 GiB` VRAM**, **`4.072 MiB` estado@16K [`754×` menor]**, **`248.3 tok/s` [`6.45×`]**, **`177.3 mJ/tok` [`9.9×` menos energia]**, `Score 14.0`, `53.03 Score/GiB`) vs `QuaRot Triton W4A16` (`223.7 tok/s`, `Score 14.0`, `3.556×` compressão).
 - **Limitações honestas:** `614K` tokens com MLPs inicializados aleatoriamente são insuficientes para consolidar linguagem sobre `vocab=49.152` (gerando repetições `"the top of the image shows..."` após Stage 2 multimodal); para qualidade competitiva real no Ringue em 1 GPU, o próximo passo é **Weight-Transfer / Attention-Surgery** copiando MLPs + embeddings pré-treinados do professor. Também registrado: `wallstoneai/civitai-top-nsfw-images-with-metadata` expõe só `['image']` em streaming, `multi-pixmo-cap` é gated e `Vezora/Mini_Orca_Code_Uncensored_alpaca_Format` retornou 404. Relatório completo em [IA2_CAMPAIGN_016_PHASE_C_RINGUE_T4.md](docs/results/IA2_CAMPAIGN_016_PHASE_C_RINGUE_T4.md).
 
+---
 
+### Campanha 017 — `Attention-Surgery` (`RADLADS` / `Jet-Nemotron` 1:1) + Fase D `MetaQueryBridge` (`Nano Lumina`, 22/11/2026)
 
-
+- **Alterações validadas:**
+  - `Attention-Surgery` 1:1 em `src/llm2/research/distill_convert.py`: `transplant_teacher_weights` (transplante literal de Embeddings, `RMSNorm`s, `SwiGLU` FFNs e projeções `QKV/Out` com expansão `GQA`), `apply_surgery_freeze` (congelamento seletivo de FFNs e Embeddings), e `layer_mse_weight` (`return_layer_states=True` em `ModelOutput`, `TransformerLM` e `FractalDeltaModel`).
+  - Suporte explícito a Tensor Cores `FP16` (`USE_FP16_DOT`) além de `BF16` em `src/llm2/architectures/triton_quarot.py` para GPUs Turing (`sm_75`, Tesla T4).
+  - Fase D `MetaQueryBridge` em `src/llm2/multimodal/metaquery_head.py`: `num_queries=64`, conector bidirecional Pre-Norm de 2 camadas (`_ConnectorBlock` com `RMSNorm` FP32 + `SwiGLU`), fusão de âncoras visuais `<img_end>` do `GRM`, condicionamento estático `(B, 64, 2048)` + `(B, 768)` e multi-frame 3D GIF `(B, F, 64, 2048)` com estado $O(1)$ constante, `freeze_backbone_for_metaquery` e `compute_metaquery_alignment_loss`.
+- **Testes executados (Windows, Python `3.12.2`, PyTorch `2.14.1+cpu`):**
+  - `python -m pytest -q tests/test_metaquery_bridge.py tests/test_phase_c_distill_ringue.py` → **`7 passed, 2 skipped em 10,04 s`** (`exit 0`; os `2 skipped` são exclusivamente os testes `@pytest.mark.cuda`, não contados como aprovação GPU nesta rodada).
+- **Ablação pareada controlada (`60` passos, professor `TransformerLM` pré-treinado em `vocab=512`, `89,36 s`):**
+  - `Random-MLP` (receita C016, só `warmstart_embed`): `val_ce = 3.6030`, `val_kl = 2.8112`, `val_top1_acc = 21.55%`, `teacher_agreement = 23.86%` (e apenas `5.71%` no vocabulário não visto durante a destilação).
+  - **`Attention-Surgery 1:1 + FFN Congelado` (receita C017, `418.290` params treináveis / `655.872` congelados):** **`val_ce = 1.0069` (`−72.1%`)**, **`val_kl = 0.3782` (`7.43×` menor)**, **`val_top1_acc = 75.00%` (`+53.45` pp)**, **`teacher_agreement = 78.48%`** (e **`48.83%` no vocabulário não visto, `8.55×` maior** que `Random-MLP`), superando também a cirurgia com FFNs livres (`val_ce = 1.0790`, `acc = 73.89%`).
+  - Pós-quantização **`QuaRot W4A16`** (`3.552×` compressão nas células): **`val_ce = 1.0031`, `val_kl = 0.3766`, `val_top1_acc = 75.78%`**.
+  - **Fase D `MetaQueryBridge` (`40` passos):** shapes `(1, 64, 2048)` / `(1, 768)` (1 imagem) e `(1, 8, 64, 2048)` / `(1, 768)` (GIF 8 frames), invariância $O(1)$ exata (`91.264 B == 91.264 B`, `grm_segments = 1` e `8`), perda de alinhamento **`0.5543 → 0.0180` (`−96.8%`)** e `backbone_mutated = False`.
+- **Limitações honestas:** durante o lançamento da C017 o servidor MCP do Colab retornou `server name colab failed to load: sending "tools/call": Bad Request` (sessão OAuth expirada após as 4 campanhas seguidas em GPU); nenhum runtime remoto permaneceu ativo. A conversão 1:1 de `HuggingFaceTB/SmolLM2-135M` (`30L`, `vocab=49.152`) em GPU está pronta para execução imediata após reconexão. Relatório completo em [IA2_CAMPAIGN_017_SURGERY_METAQUERY.md](docs/results/IA2_CAMPAIGN_017_SURGERY_METAQUERY.md).

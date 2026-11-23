@@ -14,6 +14,7 @@ class ModelOutput:
     state: Any = None
     intermediate_states: tuple[Tensor, ...] = ()
     exit_logits: tuple[Tensor, ...] = ()
+    layer_states: tuple[Tensor, ...] = ()
 
 
 @dataclass

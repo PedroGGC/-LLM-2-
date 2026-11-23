@@ -117,16 +117,23 @@ class TransformerLM(Backbone):
         if isinstance(module, (nn.Linear, nn.Embedding)):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, input_ids, *, state=None, return_logits=True):
+    def forward(self, input_ids, *, state=None, return_logits=True, return_layer_states: bool = False):
         if state is not None:
             raise ValueError("Transformer baseline has no recurrent state")
         if input_ids.ndim != 2 or not 0 < input_ids.shape[1] <= self.config.max_seq_len:
             raise ValueError("input_ids must be [batch, 1..max_seq_len]")
         x = self.embedding(input_ids)
+        layer_states = []
         for layer in self.layers:
             x = layer(x)
+            if return_layer_states:
+                layer_states.append(x)
         x = self.norm(x)
-        return ModelOutput(logits=self.lm_head(x) if return_logits else None, hidden_states=x)
+        return ModelOutput(
+            logits=self.lm_head(x) if return_logits else None,
+            hidden_states=x,
+            layer_states=tuple(layer_states),
+        )
 
 
 def count_parameters(model):

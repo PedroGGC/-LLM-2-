@@ -781,6 +781,7 @@ class FractalDeltaMemory(Backbone):
         state=None,
         return_logits=True,
         max_levels: int | None = None,
+        return_layer_states: bool = False,
     ):
         raw = self._resolve_raw_embeddings(input_ids, inputs_embeds)
         if state is not None:
@@ -807,6 +808,7 @@ class FractalDeltaMemory(Backbone):
         next_hybrid_windows = [None] * len(self.hybrid_windows) if self.hybrid_windows else None
         intermediate_states = []
         exit_logits = []
+        layer_states = []
         collect_inter = bool(
             (getattr(self.research, "intermediate_weight", 0.0) > 0 or getattr(self.research, "exit_gate_weight", 0.0) > 0)
             and self.depth > 1
@@ -884,6 +886,8 @@ class FractalDeltaMemory(Backbone):
                     hw_out, next_hw = hw_mod(x, prev_hw)
                 x = x + F.dropout(hw_out, p=self.config.dropout, training=self.training)
                 next_hybrid_windows[w_idx] = next_hw
+            if return_layer_states:
+                layer_states.append(x)
             if (collect_inter or collect_exit) and level < active_depth - 1:
                 inter_h = self.norm(x + assoc_drop)
                 if collect_inter:
@@ -907,6 +911,7 @@ class FractalDeltaMemory(Backbone):
             state=next_state,
             intermediate_states=tuple(intermediate_states),
             exit_logits=tuple(exit_logits),
+            layer_states=tuple(layer_states),
         )
 
     def state_bytes_per_sequence(self):

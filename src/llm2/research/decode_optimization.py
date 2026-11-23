@@ -977,7 +977,7 @@ class SegmentMemoryCache:
         weights = F.softmax(top_scores, dim=-1)  # (B, k)
         return top_idx, weights
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def query_grm_readout(
         self,
         query_hidden: torch.Tensor,

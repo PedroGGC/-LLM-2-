@@ -74,6 +74,7 @@ if HAS_TRITON:
         K: tl.constexpr,
         G: tl.constexpr,
         HAS_BIAS: tl.constexpr,
+        USE_FP16_DOT: tl.constexpr,
         USE_BF16_DOT: tl.constexpr,
         BLOCK_M: tl.constexpr,
         BLOCK_N: tl.constexpr,
@@ -89,7 +90,7 @@ if HAS_TRITON:
         n_groups = K // G
 
         acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-        dot_dtype = tl.bfloat16 if USE_BF16_DOT else tl.float32
+        dot_dtype = tl.float16 if USE_FP16_DOT else (tl.bfloat16 if USE_BF16_DOT else tl.float32)
         for kb0 in range(0, k_bytes, BLOCK_KB):
             offs_kb = kb0 + tl.arange(0, BLOCK_KB)
             mask_kb = offs_kb < k_bytes
@@ -108,7 +109,7 @@ if HAS_TRITON:
             w_even = (((b & 0x0F).to(tl.int32) - 8).to(tl.float32) * s).to(dot_dtype)
             w_odd = ((((b >> 4) & 0x0F).to(tl.int32) - 8).to(tl.float32) * s).to(dot_dtype)
 
-            if USE_BF16_DOT:
+            if USE_FP16_DOT or USE_BF16_DOT:
                 acc += tl.dot(x_even, tl.trans(w_even))
                 acc += tl.dot(x_odd, tl.trans(w_odd))
             else:
@@ -218,7 +219,8 @@ def _quarot_int4_linear_op(
             K=in_features,
             G=group_size,
             HAS_BIAS=has_bias,
-            USE_BF16_DOT=(x.dtype in (torch.bfloat16, torch.float16)),
+            USE_FP16_DOT=(x.dtype == torch.float16),
+            USE_BF16_DOT=(x.dtype == torch.bfloat16),
             BLOCK_M=block_m,
             BLOCK_N=block_n,
             BLOCK_KB=block_kb,

@@ -30,6 +30,10 @@ class DistillConfig:
     grad_accum_steps: int = 1
     grad_clip: float = 1.0
     precision: str = "fp32"  # fp32 | bf16
+    surgery_transplant: bool = False
+    freeze_ffn: bool = False
+    freeze_embeddings: bool = False
+    layer_mse_weight: float = 0.0
 
     def __post_init__(self):
         if self.temperature <= 0 or self.lr <= 0 or self.max_steps <= 0 or self.grad_accum_steps <= 0:
@@ -77,20 +81,191 @@ def warmstart_student_embeddings(teacher: nn.Module, student: nn.Module) -> dict
     return {"warmstarted": True, "mode": "svd_lowrank", "vocab": s_vocab, "teacher_dim": t_dim, "student_dim": s_dim}
 
 
-def _forward_teacher(teacher: nn.Module, input_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
+def _extract_teacher_layers_and_norm(teacher: nn.Module) -> tuple[list[nn.Module], nn.Module | None]:
+    if hasattr(teacher, "model") and hasattr(teacher.model, "layers"):
+        final_norm = getattr(teacher.model, "norm", None) or getattr(teacher.model, "final_layernorm", None)
+        return list(teacher.model.layers), final_norm
+    if hasattr(teacher, "layers"):
+        return list(teacher.layers), getattr(teacher, "norm", None)
+    return [], None
+
+
+def _copy_matching_or_slice(dst: torch.Tensor, src: torch.Tensor) -> None:
+    s = src.detach().float()
+    if dst.shape == s.shape:
+        dst.copy_(s.to(device=dst.device, dtype=dst.dtype))
+        return
+    # Safe top-left slice / zero-pad fallback when dimensions differ
+    out = torch.zeros_like(dst, dtype=torch.float32, device="cpu")
+    s_cpu = s.to(device="cpu")
+    if dst.ndim == 1:
+        m = min(dst.shape[0], s_cpu.shape[0])
+        out[:m] = s_cpu[:m]
+    else:
+        m0 = min(dst.shape[0], s_cpu.shape[0])
+        m1 = min(dst.shape[1], s_cpu.shape[1])
+        out[:m0, :m1] = s_cpu[:m0, :m1]
+    dst.copy_(out.to(device=dst.device, dtype=dst.dtype))
+
+
+def _expand_gqa_kv(weight: torch.Tensor, target_out: int) -> torch.Tensor:
+    w = weight.detach().float()
+    if w.shape[0] == target_out:
+        return w
+    if w.shape[0] > 0 and target_out % w.shape[0] == 0:
+        rep = target_out // w.shape[0]
+        return w.repeat_interleave(rep, dim=0)
+    return w
+
+
+@torch.no_grad()
+def transplant_teacher_weights(
+    teacher: nn.Module,
+    student: nn.Module,
+    *,
+    quiet_init_gates: bool = True,
+) -> dict:
+    """RADLADS / Jet-Nemotron Attention-Surgery: transplant pretrained Embeddings, RMSNorms, SwiGLU FFNs, and QKV/Out projections."""
+    emb_info = warmstart_student_embeddings(teacher, student)
+    t_layers, t_final_norm = _extract_teacher_layers_and_norm(teacher)
+    if not t_layers or not hasattr(student, "cells"):
+        return {"transplanted": False, "embedding": emb_info, "reason": "no_compatible_layers"}
+
+    if t_final_norm is not None and hasattr(t_final_norm, "weight") and hasattr(student, "norm"):
+        _copy_matching_or_slice(student.norm.weight, t_final_norm.weight)
+
+    n_t = len(t_layers)
+    n_c = len(student.cells)
+    d_s = student.config.d_model
+    ffn_copied = 0
+    qkv_copied = 0
+    norms_copied = 0
+
+    for c_idx, cell in enumerate(student.cells):
+        t_idx = 0 if n_c == 1 else round(c_idx * (n_t - 1) / max(n_c - 1, 1))
+        if n_c == 1:
+            t_idx = n_t // 2
+        t_layer = t_layers[t_idx]
+
+        # 1. Pre-attention and pre-FFN RMSNorm weights
+        anorm = getattr(t_layer, "input_layernorm", None) or getattr(t_layer, "attn_norm", None)
+        fnorm = getattr(t_layer, "post_attention_layernorm", None) or getattr(t_layer, "ffn_norm", None)
+        if anorm is not None and hasattr(anorm, "weight"):
+            _copy_matching_or_slice(cell.attn_norm.weight, anorm.weight)
+            norms_copied += 1
+        if fnorm is not None and hasattr(fnorm, "weight"):
+            _copy_matching_or_slice(cell.ffn_norm.weight, fnorm.weight)
+            norms_copied += 1
+
+        # 2. SwiGLU FFN weights (gate, up, down)
+        mlp = getattr(t_layer, "mlp", None) or getattr(t_layer, "ffn", None)
+        if mlp is not None:
+            g_proj = getattr(mlp, "gate_proj", None) or getattr(mlp, "gate", None)
+            u_proj = getattr(mlp, "up_proj", None) or getattr(mlp, "up", None)
+            d_proj = getattr(mlp, "down_proj", None) or getattr(mlp, "down", None)
+            if g_proj is not None and u_proj is not None and d_proj is not None:
+                _copy_matching_or_slice(cell.ffn.gate.weight, g_proj.weight)
+                _copy_matching_or_slice(cell.ffn.up.weight, u_proj.weight)
+                _copy_matching_or_slice(cell.ffn.down.weight, d_proj.weight)
+                ffn_copied += 1
+
+        # 3. QKV & Out projection initialization from teacher self-attention (HF q/k/v/o_proj or native llm2 attn.qkv/proj)
+        attn = getattr(t_layer, "self_attn", None) or getattr(t_layer, "attn", None) or getattr(t_layer, "attention", None)
+        if attn is not None and hasattr(cell.qkv, "weight") and hasattr(cell.out_proj, "weight"):
+            if hasattr(attn, "qkv") and hasattr(attn, "proj"):
+                _copy_matching_or_slice(cell.qkv.weight, attn.qkv.weight)
+                _copy_matching_or_slice(cell.out_proj.weight, attn.proj.weight)
+                qkv_copied += 1
+            else:
+                q_p = getattr(attn, "q_proj", None) or getattr(attn, "q", None)
+                k_p = getattr(attn, "k_proj", None) or getattr(attn, "k", None)
+                v_p = getattr(attn, "v_proj", None) or getattr(attn, "v", None)
+                o_p = getattr(attn, "o_proj", None) or getattr(attn, "out", None)
+                if q_p is not None and k_p is not None and v_p is not None and o_p is not None:
+                    qw = q_p.weight.detach().float()
+                    kw = _expand_gqa_kv(k_p.weight, qw.shape[0])
+                    vw = _expand_gqa_kv(v_p.weight, qw.shape[0])
+                    if qw.shape[0] == d_s and qw.shape[1] == d_s and kw.shape == qw.shape and vw.shape == qw.shape:
+                        qkv_cat = torch.cat((qw, kw, vw), dim=0)
+                        _copy_matching_or_slice(cell.qkv.weight, qkv_cat)
+                    _copy_matching_or_slice(cell.out_proj.weight, o_p.weight)
+                    qkv_copied += 1
+
+        if quiet_init_gates:
+            # Start depthwise conv as near-identity residual so transplanted QKV sees clean normed states at Step 0.
+            nn.init.normal_(cell.conv.weight, std=1e-4)
+            nn.init.zeros_(cell.conv.bias)
+
+    if quiet_init_gates and hasattr(student, "assoc_readout"):
+        nn.init.normal_(student.assoc_readout.weight, std=1e-4)
+    if quiet_init_gates and hasattr(student, "adapters"):
+        for ad in student.adapters:
+            if getattr(ad, "anchor_gate", None) is not None:
+                ad.anchor_gate.fill_(-8.0)
+    if quiet_init_gates and hasattr(student, "hybrid_windows"):
+        for hw in student.hybrid_windows:
+            nn.init.normal_(hw.out_proj.weight, std=1e-4)
+
+    return {
+        "transplanted": True,
+        "embedding": emb_info,
+        "teacher_layers": n_t,
+        "student_cells": n_c,
+        "ffn_cells_copied": ffn_copied,
+        "qkv_cells_copied": qkv_copied,
+        "norms_copied": norms_copied,
+    }
+
+
+def apply_surgery_freeze(
+    student: nn.Module,
+    *,
+    freeze_ffn: bool = True,
+    freeze_embeddings: bool = True,
+) -> dict[str, int]:
+    """Freeze transplanted SwiGLU FFNs and tied Embeddings so distillation focuses 100% on Gated DeltaNet-2 state conversion."""
+    student.requires_grad_(True)
+    if freeze_embeddings and hasattr(student, "embedding"):
+        student.embedding.requires_grad_(False)
+        if hasattr(student, "lm_head"):
+            student.lm_head.requires_grad_(False)
+    if freeze_ffn and hasattr(student, "cells"):
+        for cell in student.cells:
+            cell.ffn.requires_grad_(False)
+            cell.ffn_norm.requires_grad_(False)
+    trainable = sum(p.numel() for p in {p.data_ptr(): p for p in student.parameters() if p.requires_grad}.values())
+    frozen = sum(p.numel() for p in {p.data_ptr(): p for p in student.parameters() if not p.requires_grad}.values())
+    return {"trainable_params": trainable, "frozen_params": frozen}
+
+
+def _forward_teacher(
+    teacher: nn.Module,
+    input_ids: torch.Tensor,
+    *,
+    need_layer_states: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, ...]]:
     """Unified teacher forward supporting HuggingFace CausalLMs and native llm2 Backbones."""
     try:
         out = teacher(input_ids=input_ids, output_hidden_states=True, use_cache=False)
     except TypeError:
-        out = teacher(input_ids)
+        try:
+            out = teacher(input_ids, return_layer_states=need_layer_states)
+        except TypeError:
+            out = teacher(input_ids)
     logits = out.logits
     hidden = None
+    layers_h: tuple[torch.Tensor, ...] = ()
     if hasattr(out, "hidden_states") and out.hidden_states is not None:
         if isinstance(out.hidden_states, (tuple, list)):
             hidden = out.hidden_states[-1]
+            # HF hidden_states = (embed_out, layer_0, ..., layer_{L-1})
+            if len(out.hidden_states) > 1:
+                layers_h = tuple(out.hidden_states[1:])
         else:
             hidden = out.hidden_states
-    return logits, hidden
+    if not layers_h and getattr(out, "layer_states", ()):
+        layers_h = tuple(out.layer_states)
+    return logits, hidden, layers_h
 
 
 def compute_distill_loss(
@@ -104,14 +279,18 @@ def compute_distill_loss(
     mtp_heads: nn.ModuleList | None = None,
     use_amp: bool = False,
 ) -> tuple[torch.Tensor, dict[str, float]]:
-    """Compute FP32 RADLADS/LoopUS distillation loss (KL + CE + hidden alignment + Exit Gate + MTP)."""
+    """Compute FP32 RADLADS/LoopUS distillation loss (KL + CE + per-layer/final hidden alignment + Exit Gate + MTP)."""
     device_type = input_ids.device.type
+    need_layers = bool(cfg.layer_mse_weight > 0.0)
     with torch.no_grad():
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=use_amp):
-            t_logits, t_hidden = _forward_teacher(teacher, input_ids)
+            t_logits, t_hidden, t_layers = _forward_teacher(teacher, input_ids, need_layer_states=need_layers)
 
     with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=use_amp):
-        s_out = student(input_ids)
+        try:
+            s_out = student(input_ids, return_layer_states=need_layers)
+        except TypeError:
+            s_out = student(input_ids)
 
     valid_mask = targets != -100
     s_logits_f = s_out.logits.float()
@@ -146,6 +325,33 @@ def compute_distill_loss(
             hid_loss = F.mse_loss(s_norm, t_norm)
             total = total + cfg.hidden_mse_weight * hid_loss
             metrics["hidden_mse"] = float(hid_loss.detach().item())
+
+    # 3b. Per-layer RADLADS attention-replacement alignment (prevents depth snowball drift across transplanted FFNs)
+    s_layers = getattr(s_out, "layer_states", ())
+    if cfg.layer_mse_weight > 0.0 and t_layers and s_layers:
+        n_t = len(t_layers)
+        n_s = len(s_layers)
+        layer_losses = []
+        for s_idx, sh in enumerate(s_layers):
+            t_idx = 0 if n_s == 1 else round(s_idx * (n_t - 1) / max(n_s - 1, 1))
+            th_raw = t_layers[t_idx]
+            th = th_raw.detach().float()
+            use_normed_s = (
+                t_hidden is not None
+                and s_out.hidden_states is not None
+                and th_raw.data_ptr() == t_hidden.data_ptr()
+            )
+            sh_f = s_out.hidden_states.float() if use_normed_s else sh.float()
+            if hidden_adapter is not None and th.shape[-1] != sh_f.shape[-1]:
+                th = hidden_adapter(th.to(dtype=next(hidden_adapter.parameters()).dtype)).float()
+            if th.shape == sh_f.shape:
+                layer_losses.append(
+                    F.mse_loss(F.normalize(sh_f, dim=-1, eps=1e-6), F.normalize(th, dim=-1, eps=1e-6))
+                )
+        if layer_losses:
+            l_mse = torch.stack(layer_losses).mean()
+            total = total + cfg.layer_mse_weight * l_mse
+            metrics["layer_mse"] = float(l_mse.detach().item())
 
     # 4. Self-distilled Exit Gate supervision
     if cfg.exit_gate_weight > 0.0 and getattr(s_out, "exit_logits", ()) and getattr(s_out, "intermediate_states", ()) and valid_mask.any():
@@ -198,7 +404,18 @@ def run_distill_conversion(
     teacher.requires_grad_(False)
     student.train()
 
-    warm_info = warmstart_student_embeddings(teacher, student) if warmstart_embed else {"warmstarted": False}
+    if cfg.surgery_transplant:
+        warm_info = transplant_teacher_weights(teacher, student)
+    elif warmstart_embed:
+        warm_info = warmstart_student_embeddings(teacher, student)
+    else:
+        warm_info = {"warmstarted": False}
+
+    freeze_info = (
+        apply_surgery_freeze(student, freeze_ffn=cfg.freeze_ffn, freeze_embeddings=cfg.freeze_embeddings)
+        if (cfg.freeze_ffn or cfg.freeze_embeddings)
+        else None
+    )
 
     # Build linear hidden adapter automatically when teacher & student widths differ.
     hidden_adapter = None
@@ -264,7 +481,7 @@ def run_distill_conversion(
             print(
                 f"[Distill step={step+1}/{cfg.max_steps}] total={step_metrics['total_loss']:.4f} "
                 f"ce={step_metrics['ce_loss']:.4f} kl={step_metrics.get('kl_loss', 0.0):.4f} "
-                f"hid={step_metrics.get('hidden_mse', 0.0):.4f} elapsed={el:.1f}s",
+                f"hid={step_metrics.get('hidden_mse', 0.0):.4f} lyr={step_metrics.get('layer_mse', 0.0):.4f} elapsed={el:.1f}s",
                 flush=True,
             )
 
@@ -278,6 +495,7 @@ def run_distill_conversion(
 
     return {
         "warmstart": warm_info,
+        "surgery_freeze": freeze_info,
         "steps_completed": len(history),
         "tokens_processed": tokens_total,
         "elapsed_seconds": round(elapsed_s, 2),
