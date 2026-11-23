@@ -15,6 +15,7 @@ import torch
 from torch import nn
 
 from llm2.architectures.fractal_delta import CausalLocalWindow
+from llm2.architectures.quarot import quantize_model_quarot_int4
 from llm2.config import DataConfig, ExperimentConfig, ModelConfig, OptimizerConfig, ResearchConfig, TrainConfig
 from llm2.multimodal import (
     DEFAULT_TEXT_SFT_PRESETS,
@@ -28,13 +29,20 @@ from llm2.multimodal import (
 )
 from llm2.research.distill_convert import (
     DistillConfig,
+    _expand_gqa_kv,
     apply_surgery_freeze,
     run_distill_conversion,
     transplant_teacher_weights,
     warmstart_student_embeddings,
 )
 from llm2.research.factory import build_backbone
-from llm2.research.ringue_eval import RingueEntry, _estimate_kv_cache_mib_16k, compute_composite_score, format_ringue_markdown
+from llm2.research.ringue_eval import (
+    RingueEntry,
+    _count_logical_parameters,
+    _estimate_kv_cache_mib_16k,
+    compute_composite_score,
+    format_ringue_markdown,
+)
 
 
 def _make_teacher_cfg(device: str = "cpu", d_model: int = 64, vocab_size: int = 128) -> ExperimentConfig:
@@ -230,6 +238,17 @@ def test_attention_surgery_transplant_and_ffn_freeze():
     assert torch.equal(student.embedding.weight, emb_before)
     assert torch.equal(student.cells[0].ffn.gate.weight, ffn_before)
     assert not torch.equal(student.cells[0].beta.weight, beta_before)
+
+    # Verify GQA 3:1 head-block expansion preserves intact per-head slices (Bug #1 fix)
+    w_gqa = torch.arange(3 * 8 * 16, dtype=torch.float32).reshape(3 * 8, 16)
+    exp = _expand_gqa_kv(w_gqa, 9 * 8, head_dim=8).view(9, 8, 16)
+    assert torch.equal(exp[0], w_gqa[:8]) and torch.equal(exp[2], w_gqa[:8])
+    assert torch.equal(exp[3], w_gqa[8:16]) and torch.equal(exp[6], w_gqa[16:24])
+
+    # Verify logical parameter counting across QuaRot INT4 buffers (Bug #5 fix)
+    n_dense = _count_logical_parameters(student)
+    q_student, _ = quantize_model_quarot_int4(student, group_size=16, act_bits=16, inplace=False, use_triton=False)
+    assert _count_logical_parameters(q_student) == n_dense
 
 
 def test_ringue_leaderboard_and_o1_vs_ol_16k_state():

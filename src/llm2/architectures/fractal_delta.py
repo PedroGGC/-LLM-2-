@@ -377,6 +377,7 @@ class FractalDeltaCell(nn.Module):
         self.beta = nn.Linear(self.d_model, self.heads, bias=True)
         self.beta_write = nn.Linear(self.d_model, self.heads, bias=True) if self.decoupled_gates else None
         self.out_gate = _make_linear(self.d_model, self.d_model, self.weight_mode)
+        self.register_buffer("out_gate_bias", torch.zeros(()))
         self.head_gamma = nn.Parameter(torch.ones(self.d_model))
         self.out_proj = _make_linear(self.d_model, self.d_model, self.weight_mode)
         self.ffn_norm = RMSNorm(self.d_model, eps=config.norm_eps)
@@ -528,7 +529,8 @@ class FractalDeltaCell(nn.Module):
             y = y * torch.rsqrt(y.square().mean(-1, keepdim=True) + 1e-6) * gamma
             y = y.transpose(1, 2).contiguous().reshape(b, t, d).to(x.dtype)
 
-        gated = y * F.silu(self.out_gate(normed)).to(y.dtype)
+        gate_in = self.out_gate(normed) + self.out_gate_bias.to(dtype=normed.dtype)
+        gated = y * F.silu(gate_in).to(y.dtype)
         attn_update = F.dropout(self.out_proj(gated).to(x.dtype), p=self.dropout, training=self.training)
         if adapter is not None:
             attn_update = attn_update * adapter.euler_attn
@@ -913,6 +915,119 @@ class FractalDeltaMemory(Backbone):
             exit_logits=tuple(exit_logits),
             layer_states=tuple(layer_states),
         )
+
+    def forward_teacher_forced_layers(
+        self,
+        teacher_inputs: tuple[torch.Tensor, ...],
+        *,
+        norm_last: bool = False,
+    ) -> tuple[torch.Tensor, ...]:
+        """RADLADS Stage-1 parallel blockwise forward: feed clean teacher input h_l into each student level l."""
+        if not teacher_inputs:
+            return ()
+        n_in = len(teacher_inputs)
+        anchor = teacher_inputs[0].detach().to(dtype=self.embedding.weight.dtype)
+        cur_phase = (
+            anchor.new_zeros((anchor.shape[0],), dtype=torch.int64)
+            if self.golden_phase
+            else None
+        )
+        outputs = []
+        for level in range(self.depth):
+            t_idx = 0 if self.depth == 1 else round(level * (n_in - 1) / max(self.depth - 1, 1))
+            x = teacher_inputs[t_idx].detach().to(dtype=self.embedding.weight.dtype)
+            adapter = self.adapters[level] if self.depth > 1 else None
+            if adapter is not None and adapter.anchor_gate is not None:
+                x = x + adapter.anchor_gate.sigmoid() * anchor
+            cell = self.cells[self.cell_index(level)]
+            x, _ = cell(x, None, adapter=adapter, v0=None, phase_pos=cur_phase, anchor=anchor)
+            if level in self._hybrid_level_to_idx:
+                w_idx = self._hybrid_level_to_idx[level]
+                hw_out, _ = self.hybrid_windows[w_idx](x, None)
+                x = x + F.dropout(hw_out, p=self.config.dropout, training=self.training)
+            if norm_last and level == self.depth - 1:
+                x = self.norm(x)
+            outputs.append(x)
+        return tuple(outputs)
+
+    def forward_level_attn_delta(
+        self,
+        level: int,
+        h_in: torch.Tensor,
+        anchor: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Compute only the attention + hybrid-window delta of level l on clean teacher input h_in (skipping frozen FFN)."""
+        x = h_in.to(dtype=self.embedding.weight.dtype)
+        anc = x if anchor is None else anchor.to(dtype=x.dtype)
+        adapter = self.adapters[level] if self.depth > 1 else None
+        if adapter is not None and adapter.anchor_gate is not None:
+            x = x + adapter.anchor_gate.sigmoid() * anc
+        cell = self.cells[self.cell_index(level)]
+        b, t, d = x.shape
+        normed = cell.attn_norm(x)
+        if adapter is not None:
+            normed = normed * adapter.attn_scale + adapter.attn_shift
+        tail_width = cell.conv_kernel - 1
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            norm_f = normed.float().transpose(1, 2)
+            prefix = norm_f.new_zeros(b, d, tail_width)
+            padded = torch.cat((prefix, norm_f), dim=2)
+            conv_out = F.conv1d(padded, cell.conv.weight.float(), cell.conv.bias.float(), groups=d).transpose(1, 2)
+            local = (normed.float() + conv_out).to(normed.dtype)
+        q, k, v = cell.qkv(local).reshape(b, t, 3, cell.heads, cell.head_dim).unbind(2)
+        q, k, v = (tensor.transpose(1, 2) for tensor in (q, k, v))
+        if cell.kda:
+            decay_raw = cell.decay(F.silu(cell.decay_down(local))).reshape(b, t, cell.heads, cell.head_dim).permute(0, 2, 1, 3)
+        else:
+            decay_raw = cell.decay(local).transpose(1, 2)
+        beta_raw = cell.beta(local).transpose(1, 2)
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            key = F.normalize(k.float(), dim=-1, eps=1e-6)
+            query = F.normalize(q.float(), dim=-1, eps=1e-6)
+            if cell.golden_phase and cell.head_dim >= 2:
+                pos_steps = torch.arange(t, device=x.device, dtype=torch.int64)[None, :].double()
+                freq = cell.golden_inv_freq.double().view(1, 1, 1, -1)
+                if adapter is not None and adapter.phase_scale is not None:
+                    freq = freq * adapter.phase_scale.double().view(1, cell.heads, 1, 1)
+                angles = (pos_steps[:, None, :, None] * freq).remainder(2.0 * math.pi).float()
+                query = _apply_golden_phase(query, angles)
+                key = _apply_golden_phase(key, angles)
+            val_f = v.float()
+            decay_logits = decay_raw.float()
+            beta_logits = beta_raw.float()
+            if adapter is not None:
+                decay_bias = adapter.decay_bias.float().view(1, cell.heads, 1, 1) if cell.kda else adapter.decay_bias.float().view(1, cell.heads, 1)
+                decay_logits = decay_logits + decay_bias
+                beta_logits = beta_logits + adapter.beta_bias.float().view(1, cell.heads, 1)
+            log_w = F.logsigmoid(decay_logits) if cell.kda else F.logsigmoid(decay_logits).unsqueeze(-1)
+            beta_erase = (cell.beta_scale * beta_logits.sigmoid()).unsqueeze(-1)
+            if cell.beta_write is not None:
+                bw_logits = cell.beta_write(local).transpose(1, 2).float()
+                if adapter is not None and adapter.beta_write_bias is not None:
+                    bw_logits = bw_logits + adapter.beta_write_bias.float().view(1, cell.heads, 1)
+                beta_write = (cell.beta_scale * bw_logits.sigmoid()).unsqueeze(-1)
+            else:
+                beta_write = beta_erase
+            w = log_w.exp()
+            a = -w * beta_erase * key
+            values = beta_write * val_f
+            if cell.execution == "sequential" or t == 1:
+                y, _ = dplr_sequential(query, key, values, log_w, a, key, None)
+            else:
+                y, _ = dplr_chunked(query, key, values, log_w, a, key, None, chunk_size=cell.chunk_size)
+            gamma = cell.head_gamma.float().view(1, cell.heads, 1, cell.head_dim)
+            y = y * torch.rsqrt(y.square().mean(-1, keepdim=True) + 1e-6) * gamma
+            y = y.transpose(1, 2).contiguous().reshape(b, t, d).to(x.dtype)
+        gate_in = cell.out_gate(normed) + cell.out_gate_bias.to(dtype=normed.dtype)
+        gated = y * F.silu(gate_in).to(y.dtype)
+        s_delta = F.dropout(cell.out_proj(gated).to(x.dtype), p=cell.dropout, training=self.training)
+        if adapter is not None:
+            s_delta = s_delta * adapter.euler_attn
+        if level in self._hybrid_level_to_idx:
+            w_idx = self._hybrid_level_to_idx[level]
+            hw_out, _ = self.hybrid_windows[w_idx](h_in.to(dtype=x.dtype) + s_delta, None)
+            s_delta = s_delta + F.dropout(hw_out, p=self.config.dropout, training=self.training)
+        return s_delta
 
     def state_bytes_per_sequence(self):
         d = self.config.d_model

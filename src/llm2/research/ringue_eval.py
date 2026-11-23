@@ -72,6 +72,22 @@ def _estimate_kv_cache_mib_16k(model: torch.nn.Module) -> float | None:
     return round(bytes_16k / (1024**2), 2)
 
 
+def _count_logical_parameters(model: torch.nn.Module) -> int:
+    """Count unique parameters including 2 logical weights per byte in QuaRot INT4 packed_weight buffers."""
+    total = sum(p.numel() for p in {p.data_ptr(): p for p in model.parameters()}.values())
+    seen_bufs: set[int] = set()
+    for name, buf in model.named_buffers():
+        if name.endswith("packed_weight") and buf.dtype == torch.uint8 and buf.data_ptr() not in seen_bufs:
+            seen_bufs.add(buf.data_ptr())
+            total += int(buf.numel() * 2)
+    return total
+
+
+def _model_storage_bytes(model: torch.nn.Module) -> int:
+    tensors = {t.data_ptr(): t for t in list(model.parameters()) + list(model.buffers())}
+    return sum(int(t.numel() * t.element_size()) for t in tensors.values())
+
+
 @torch.inference_mode()
 def _measure_native_decode(
     model: torch.nn.Module,
@@ -84,6 +100,8 @@ def _measure_native_decode(
     if device.type == "cuda":
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats(device)
+    model_bytes = _model_storage_bytes(model)
+    base_alloc = 0
     is_fractal = isinstance(model, FractalDeltaMemory)
     if is_fractal:
         dec = CompiledDecode(FractalDecode(model), backend="inductor") if (compile_fractal and device.type == "cuda") else FractalDecode(model)
@@ -92,8 +110,10 @@ def _measure_native_decode(
         lg0, st0 = dec.prefill(prefix, cap)
         tok0 = torch.tensor([[int(lg0[0, -1].argmax().item())]], dtype=torch.long, device=device)
         _, _ = dec.step(tok0, st0)
+        del lg0, st0, tok0
         if device.type == "cuda":
             torch.cuda.synchronize(device)
+            base_alloc = int(torch.cuda.memory_allocated(device))
             torch.cuda.reset_peak_memory_stats(device)
         monitor = NVMLPowerMonitor(device) if device.type == "cuda" else None
         if monitor is not None:
@@ -118,6 +138,7 @@ def _measure_native_decode(
         _ = model.generate(prefix, max_new_tokens=4, do_sample=False, use_cache=True)
         if device.type == "cuda":
             torch.cuda.synchronize(device)
+            base_alloc = int(torch.cuda.memory_allocated(device))
             torch.cuda.reset_peak_memory_stats(device)
         monitor = NVMLPowerMonitor(device) if device.type == "cuda" else None
         if monitor is not None:
@@ -136,7 +157,11 @@ def _measure_native_decode(
     nvml = None if monitor is None else monitor.summary
     n_out = max(len(emitted), 1)
     mj = (nvml["energy_joules"] * 1000.0) / n_out if (nvml and nvml.get("energy_joules") is not None) else None
-    peak_gib = (torch.cuda.max_memory_allocated(device) / (1024**3)) if device.type == "cuda" else None
+    if device.type == "cuda":
+        decode_delta = max(0, int(torch.cuda.max_memory_allocated(device)) - base_alloc)
+        peak_gib = (model_bytes + decode_delta) / (1024**3)
+    else:
+        peak_gib = None
     return {
         "tokens": len(emitted),
         "decode_tok_per_s": round(len(emitted) / dt, 1),
@@ -176,7 +201,7 @@ def evaluate_native_contender(
     """Run full Ringue evaluation on a native PyTorch model (FractalDelta V2 or HuggingFace CausalLM)."""
     model.eval()
     tok = tokenizer if hasattr(tokenizer, "eos_id") and not hasattr(tokenizer, "is_fast") else _HFTokenizerAdapter(tokenizer)
-    unique_params = sum(p.numel() for p in {p.data_ptr(): p for p in model.parameters()}.values())
+    unique_params = _count_logical_parameters(model)
 
     # Wrap HF model so score_continuation_nll's model.config.max_seq_len works uniformly
     if not hasattr(model.config, "max_seq_len"):

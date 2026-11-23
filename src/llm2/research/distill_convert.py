@@ -34,6 +34,7 @@ class DistillConfig:
     freeze_ffn: bool = False
     freeze_embeddings: bool = False
     layer_mse_weight: float = 0.0
+    teacher_forced_ratio: float = 0.5
 
     def __post_init__(self):
         if self.temperature <= 0 or self.lr <= 0 or self.max_steps <= 0 or self.grad_accum_steps <= 0:
@@ -108,12 +109,20 @@ def _copy_matching_or_slice(dst: torch.Tensor, src: torch.Tensor) -> None:
     dst.copy_(out.to(device=dst.device, dtype=dst.dtype))
 
 
-def _expand_gqa_kv(weight: torch.Tensor, target_out: int) -> torch.Tensor:
+def _expand_gqa_kv(weight: torch.Tensor, target_out: int, head_dim: int | None = None) -> torch.Tensor:
     w = weight.detach().float()
     if w.shape[0] == target_out:
         return w
     if w.shape[0] > 0 and target_out % w.shape[0] == 0:
         rep = target_out // w.shape[0]
+        if head_dim is None:
+            for candidate_hd in (128, 96, 80, 64, 48, 32, 16, 8):
+                if w.shape[0] % candidate_hd == 0 and target_out % candidate_hd == 0:
+                    head_dim = candidate_hd
+                    break
+        if head_dim is not None and head_dim > 0 and w.shape[0] % head_dim == 0:
+            n_kv = w.shape[0] // head_dim
+            return w.reshape(n_kv, head_dim, -1).repeat_interleave(rep, dim=0).reshape(target_out, -1)
         return w.repeat_interleave(rep, dim=0)
     return w
 
@@ -171,10 +180,14 @@ def transplant_teacher_weights(
 
         # 3. QKV & Out projection initialization from teacher self-attention (HF q/k/v/o_proj or native llm2 attn.qkv/proj)
         attn = getattr(t_layer, "self_attn", None) or getattr(t_layer, "attn", None) or getattr(t_layer, "attention", None)
+        cell_hd = getattr(cell, "head_dim", None)
+        vw_for_scale: torch.Tensor | None = None
         if attn is not None and hasattr(cell.qkv, "weight") and hasattr(cell.out_proj, "weight"):
             if hasattr(attn, "qkv") and hasattr(attn, "proj"):
                 _copy_matching_or_slice(cell.qkv.weight, attn.qkv.weight)
                 _copy_matching_or_slice(cell.out_proj.weight, attn.proj.weight)
+                if attn.qkv.weight.shape[0] == 3 * d_s:
+                    vw_for_scale = attn.qkv.weight.detach().float()[2 * d_s : 3 * d_s]
                 qkv_copied += 1
             else:
                 q_p = getattr(attn, "q_proj", None) or getattr(attn, "q", None)
@@ -183,18 +196,29 @@ def transplant_teacher_weights(
                 o_p = getattr(attn, "o_proj", None) or getattr(attn, "out", None)
                 if q_p is not None and k_p is not None and v_p is not None and o_p is not None:
                     qw = q_p.weight.detach().float()
-                    kw = _expand_gqa_kv(k_p.weight, qw.shape[0])
-                    vw = _expand_gqa_kv(v_p.weight, qw.shape[0])
+                    kw = _expand_gqa_kv(k_p.weight, qw.shape[0], head_dim=cell_hd)
+                    vw = _expand_gqa_kv(v_p.weight, qw.shape[0], head_dim=cell_hd)
                     if qw.shape[0] == d_s and qw.shape[1] == d_s and kw.shape == qw.shape and vw.shape == qw.shape:
                         qkv_cat = torch.cat((qw, kw, vw), dim=0)
                         _copy_matching_or_slice(cell.qkv.weight, qkv_cat)
+                        vw_for_scale = vw
                     _copy_matching_or_slice(cell.out_proj.weight, o_p.weight)
                     qkv_copied += 1
 
         if quiet_init_gates:
-            # Start depthwise conv as near-identity residual so transplanted QKV sees clean normed states at Step 0.
+            # Start depthwise conv as near-identity residual and out_gate around SiLU(1.7844)=1.0 so transplanted W_O is not scrambled.
             nn.init.normal_(cell.conv.weight, std=1e-4)
             nn.init.zeros_(cell.conv.bias)
+            if hasattr(cell, "out_gate") and hasattr(cell.out_gate, "weight"):
+                nn.init.normal_(cell.out_gate.weight, std=1e-4)
+            if hasattr(cell, "out_gate_bias"):
+                cell.out_gate_bias.fill_(1.784376)
+            if hasattr(cell, "head_gamma"):
+                if vw_for_scale is not None and vw_for_scale.shape[0] == cell.head_gamma.shape[0]:
+                    v_rms = (0.35 * vw_for_scale.norm(dim=1)).clamp(min=0.04, max=0.50)
+                    cell.head_gamma.copy_(v_rms.to(device=cell.head_gamma.device, dtype=cell.head_gamma.dtype))
+                else:
+                    nn.init.constant_(cell.head_gamma, 0.15)
 
     if quiet_init_gates and hasattr(student, "assoc_readout"):
         nn.init.normal_(student.assoc_readout.weight, std=1e-4)
@@ -243,29 +267,99 @@ def _forward_teacher(
     input_ids: torch.Tensor,
     *,
     need_layer_states: bool = False,
-) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, ...]]:
-    """Unified teacher forward supporting HuggingFace CausalLMs and native llm2 Backbones."""
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor | None,
+    tuple[torch.Tensor, ...],
+    tuple[torch.Tensor, ...],
+    tuple[torch.Tensor, ...],
+]:
+    """Unified teacher forward returning (logits, final_hidden, layer_outputs, layer_inputs, attn_deltas)."""
+    u_captured: list[torch.Tensor] = []
+    hooks = []
+    if need_layer_states:
+        t_layers_list, _ = _extract_teacher_layers_and_norm(teacher)
+        for tl in t_layers_list:
+            fnorm = getattr(tl, "post_attention_layernorm", None) or getattr(tl, "ffn_norm", None)
+            if fnorm is not None:
+                hooks.append(fnorm.register_forward_pre_hook(lambda _m, args: u_captured.append(args[0].detach())))
     try:
-        out = teacher(input_ids=input_ids, output_hidden_states=True, use_cache=False)
-    except TypeError:
         try:
-            out = teacher(input_ids, return_layer_states=need_layer_states)
+            out = teacher(input_ids=input_ids, output_hidden_states=True, use_cache=False)
         except TypeError:
-            out = teacher(input_ids)
+            try:
+                out = teacher(input_ids, return_layer_states=need_layer_states)
+            except TypeError:
+                out = teacher(input_ids)
+    finally:
+        for h in hooks:
+            h.remove()
     logits = out.logits
     hidden = None
     layers_h: tuple[torch.Tensor, ...] = ()
+    layer_inputs: tuple[torch.Tensor, ...] = ()
     if hasattr(out, "hidden_states") and out.hidden_states is not None:
         if isinstance(out.hidden_states, (tuple, list)):
             hidden = out.hidden_states[-1]
             # HF hidden_states = (embed_out, layer_0, ..., layer_{L-1})
             if len(out.hidden_states) > 1:
                 layers_h = tuple(out.hidden_states[1:])
+                layer_inputs = tuple(out.hidden_states[:-1])
         else:
             hidden = out.hidden_states
     if not layers_h and getattr(out, "layer_states", ()):
         layers_h = tuple(out.layer_states)
-    return logits, hidden, layers_h
+        if hasattr(teacher, "embedding"):
+            h0 = teacher.embedding(input_ids)
+            layer_inputs = (h0, *layers_h[:-1])
+    attn_deltas: tuple[torch.Tensor, ...] = ()
+    if u_captured and len(u_captured) == len(layer_inputs):
+        attn_deltas = tuple(u.float() - hin.float() for u, hin in zip(u_captured, layer_inputs))
+    return logits, hidden, layers_h, layer_inputs, attn_deltas
+
+
+def _repr_alignment_loss(s_h: torch.Tensor, t_h: torch.Tensor) -> torch.Tensor:
+    """Dimension-invariant cosine distance + Smooth-L1 log-norm loss (immune to attention-sink outlier explosion)."""
+    cos_dist = (1.0 - F.cosine_similarity(s_h, t_h, dim=-1, eps=1e-6)).mean()
+    s_log_n = s_h.norm(dim=-1).clamp_min(1e-4).log()
+    t_log_n = t_h.norm(dim=-1).clamp_min(1e-4).log()
+    log_norm_loss = F.smooth_l1_loss(s_log_n, t_log_n)
+    return cos_dist + 0.25 * log_norm_loss
+
+
+def _attn_delta_loss(s_delta: torch.Tensor, t_delta: torch.Tensor) -> torch.Tensor:
+    """Direct RADLADS attention-delta alignment loss matching both cosine direction and relative L2 magnitude."""
+    cos_l = (1.0 - F.cosine_similarity(s_delta, t_delta, dim=-1, eps=1e-6)).mean()
+    mse_l = ((s_delta - t_delta).square().mean(dim=-1) / t_delta.square().mean(dim=-1).clamp_min(1e-4)).mean()
+    return 0.5 * (cos_l + mse_l)
+
+
+@torch.no_grad()
+def calibrate_surgery_attention_scales(
+    teacher: nn.Module,
+    student: nn.Module,
+    calib_input_ids: torch.Tensor,
+) -> None:
+    """Calibrate per-layer head_gamma on 1 batch so Step-0 student attention update norms match teacher attention norms."""
+    if not hasattr(student, "forward_level_attn_delta") or not hasattr(student, "cells"):
+        return
+    _, _, _, t_inputs, t_attn_deltas = _forward_teacher(teacher, calib_input_ids, need_layer_states=True)
+    if not t_inputs or not t_attn_deltas:
+        return
+    n_t = len(t_inputs)
+    n_s = getattr(student, "depth", len(student.cells))
+    anc = t_inputs[0].float()
+    for lvl in range(n_s):
+        t_idx = 0 if n_s == 1 else round(lvl * (n_t - 1) / max(n_s - 1, 1))
+        hin = t_inputs[t_idx].float()
+        t_attn = t_attn_deltas[t_idx].float()
+        s_attn = student.forward_level_attn_delta(lvl, hin, anc).float()
+        ratio = (t_attn.norm(dim=-1).mean() / s_attn.norm(dim=-1).mean().clamp_min(1e-6)).item()
+        cos_a = F.cosine_similarity(s_attn, t_attn, dim=-1, eps=1e-6).mean().item()
+        scale = max(0.02, min(10.0, ratio * max(0.25, cos_a)))
+        cell = student.cells[student.cell_index(lvl)] if hasattr(student, "cell_index") else student.cells[lvl]
+        if hasattr(cell, "head_gamma"):
+            cell.head_gamma.mul_(scale)
 
 
 def compute_distill_loss(
@@ -278,13 +372,45 @@ def compute_distill_loss(
     hidden_adapter: nn.Module | None = None,
     mtp_heads: nn.ModuleList | None = None,
     use_amp: bool = False,
+    teacher_forced: bool = False,
 ) -> tuple[torch.Tensor, dict[str, float]]:
-    """Compute FP32 RADLADS/LoopUS distillation loss (KL + CE + per-layer/final hidden alignment + Exit Gate + MTP)."""
+    """Compute FP32 RADLADS/LoopUS distillation loss (Subfase 1 attention-delta or Subfase 2 E2E KL+CE+layer_mse)."""
     device_type = input_ids.device.type
-    need_layers = bool(cfg.layer_mse_weight > 0.0)
+    need_layers = bool(cfg.layer_mse_weight > 0.0 or teacher_forced)
     with torch.no_grad():
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=use_amp):
-            t_logits, t_hidden, t_layers = _forward_teacher(teacher, input_ids, need_layer_states=need_layers)
+            t_logits, t_hidden, t_layers, t_inputs, t_attn_deltas = _forward_teacher(
+                teacher, input_ids, need_layer_states=need_layers
+            )
+
+    # Subfase 1 (RADLADS parallel attention-delta alignment, skipping frozen FFNs)
+    if (
+        teacher_forced
+        and t_inputs
+        and t_attn_deltas
+        and hasattr(student, "forward_level_attn_delta")
+        and int(getattr(student.config, "d_model", -1)) == int(t_inputs[0].shape[-1])
+    ):
+        n_t = len(t_inputs)
+        n_s = getattr(student, "depth", len(getattr(student, "cells", ())))
+        anc = t_inputs[0].detach().float()
+        delta_losses = []
+        with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=use_amp):
+            for lvl in range(n_s):
+                t_idx = 0 if n_s == 1 else round(lvl * (n_t - 1) / max(n_s - 1, 1))
+                hin = t_inputs[t_idx].detach().float()
+                t_delta = t_attn_deltas[t_idx].detach().float()
+                s_delta = student.forward_level_attn_delta(lvl, hin, anc).float()
+                delta_losses.append(_attn_delta_loss(s_delta, t_delta))
+        d_loss = torch.stack(delta_losses).mean()
+        val_d = float(d_loss.detach().item())
+        return d_loss, {
+            "ce_loss": val_d,
+            "kl_loss": val_d,
+            "hidden_mse": val_d,
+            "layer_mse": val_d,
+            "total_loss": val_d,
+        }
 
     with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=use_amp):
         try:
@@ -313,16 +439,14 @@ def compute_distill_loss(
         total = total + cfg.kl_weight * kl_loss
         metrics["kl_loss"] = float(kl_loss.detach().item())
 
-    # 3. Hidden-state representation alignment (normalized MSE)
+    # 3. Hidden-state representation alignment (dimension-invariant cosine + scale-matched L2)
     if cfg.hidden_mse_weight > 0.0 and t_hidden is not None and s_out.hidden_states is not None:
         s_h = s_out.hidden_states.float()
         t_h = t_hidden.detach().float()
         if hidden_adapter is not None:
             t_h = hidden_adapter(t_h.to(dtype=next(hidden_adapter.parameters()).dtype)).float()
         if t_h.shape == s_h.shape:
-            s_norm = F.normalize(s_h, dim=-1, eps=1e-6)
-            t_norm = F.normalize(t_h, dim=-1, eps=1e-6)
-            hid_loss = F.mse_loss(s_norm, t_norm)
+            hid_loss = _repr_alignment_loss(s_h, t_h)
             total = total + cfg.hidden_mse_weight * hid_loss
             metrics["hidden_mse"] = float(hid_loss.detach().item())
 
@@ -345,9 +469,7 @@ def compute_distill_loss(
             if hidden_adapter is not None and th.shape[-1] != sh_f.shape[-1]:
                 th = hidden_adapter(th.to(dtype=next(hidden_adapter.parameters()).dtype)).float()
             if th.shape == sh_f.shape:
-                layer_losses.append(
-                    F.mse_loss(F.normalize(sh_f, dim=-1, eps=1e-6), F.normalize(th, dim=-1, eps=1e-6))
-                )
+                layer_losses.append(_repr_alignment_loss(sh_f, th))
         if layer_losses:
             l_mse = torch.stack(layer_losses).mean()
             total = total + cfg.layer_mse_weight * l_mse
@@ -449,13 +571,20 @@ def run_distill_conversion(
     tokens_total = 0
     t0 = time.perf_counter()
 
+    tf_steps = int(cfg.max_steps * max(0.0, min(1.0, float(cfg.teacher_forced_ratio)))) if cfg.surgery_transplant else 0
+    calibrated_scales = False
+
     for step in range(cfg.max_steps):
         optimizer.zero_grad(set_to_none=True)
         step_metrics: dict[str, float] = {}
+        use_tf_step = bool(step < tf_steps)
         for _ in range(cfg.grad_accum_steps):
             bx, by = next(it)
             bx = bx.to(device=device)
             by = by.to(device=device)
+            if cfg.surgery_transplant and not calibrated_scales:
+                calibrate_surgery_attention_scales(teacher, student, bx)
+                calibrated_scales = True
             loss, m = compute_distill_loss(
                 teacher,
                 student,
@@ -465,6 +594,7 @@ def run_distill_conversion(
                 hidden_adapter=hidden_adapter,
                 mtp_heads=mtp_heads,
                 use_amp=use_amp,
+                teacher_forced=use_tf_step,
             )
             if not torch.isfinite(loss):
                 raise RuntimeError(f"Non-finite distillation loss at step {step}")
