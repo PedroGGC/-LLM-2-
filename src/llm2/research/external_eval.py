@@ -275,7 +275,15 @@ def evaluate_hf_suite(
         report["hellaswag"] = {"error": str(exc)}
 
     try:
-        ds = load_dataset("ybisk/piqa", split="validation", trust_remote_code=False)
+        ds = None
+        for repo in ("baber/piqa", "lighteval/piqa", "gimmaru/piqa", "ybisk/piqa"):
+            try:
+                ds = load_dataset(repo, split="validation")
+                break
+            except Exception:
+                continue
+        if ds is None:
+            raise RuntimeError("No Parquet PIQA mirror loaded")
         examples = []
         for i in range(min(max_examples, len(ds))):
             row = ds[i]
