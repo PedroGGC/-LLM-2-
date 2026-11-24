@@ -118,6 +118,7 @@ class HadamardLinearINT4(nn.Module):
         seed: int = 1729,
         qat: bool = False,
         use_triton: bool = True,
+        rotate_input: bool = True,
     ):
         super().__init__()
         if in_features % 2 != 0:
@@ -132,6 +133,7 @@ class HadamardLinearINT4(nn.Module):
         self.block_size = largest_pow2_divisor(self.in_features, max_block)
         self.qat = bool(qat)
         self.use_triton = bool(use_triton)
+        self.rotate_input = bool(rotate_input)
 
         self.register_buffer("signs", rademacher_signs(self.in_features, seed=seed))
         self.register_buffer("hadamard_block", hadamard_matrix(self.block_size))
@@ -159,8 +161,8 @@ class HadamardLinearINT4(nn.Module):
 
     @torch.no_grad()
     def pack_from_float_weight(self, weight: torch.Tensor, bias: torch.Tensor | None = None) -> None:
-        """Rotate float weights offline by Block-Hadamard and pack into 2xINT4 per uint8 byte."""
-        w_rot = apply_hadamard_rotation(weight.detach().float(), self.signs, self.hadamard_block)
+        """Rotate float weights offline by Block-Hadamard (when rotate_input=True) and pack into 2xINT4 per uint8 byte."""
+        w_rot = apply_hadamard_rotation(weight.detach().float(), self.signs, self.hadamard_block) if self.rotate_input else weight.detach().float()
         grouped = w_rot.view(self.out_features, self.n_groups, self.group_size)
         scale = (grouped.abs().amax(dim=-1) / 7.0).clamp_min(1e-6)
         q = (grouped / scale.unsqueeze(-1)).round().clamp(-7.0, 7.0).to(torch.int8).view(self.out_features, self.in_features)
@@ -187,6 +189,7 @@ class HadamardLinearINT4(nn.Module):
         max_block: int = 128,
         seed: int = 1729,
         use_triton: bool = True,
+        rotate_input: bool = True,
     ) -> HadamardLinearINT4:
         layer = cls(
             linear.in_features,
@@ -198,6 +201,7 @@ class HadamardLinearINT4(nn.Module):
             seed=seed,
             qat=False,
             use_triton=use_triton,
+            rotate_input=rotate_input,
         ).to(device=linear.weight.device)
         layer.pack_from_float_weight(linear.weight, linear.bias)
         return layer
@@ -220,11 +224,11 @@ class HadamardLinearINT4(nn.Module):
         return int(self.out_features * self.in_features * dtype_bytes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x_rot = apply_hadamard_rotation(x, self.signs, self.hadamard_block)
+        x_rot = apply_hadamard_rotation(x, self.signs, self.hadamard_block) if self.rotate_input else x
         if self.act_bits == 8:
             x_rot = quantize_int8_dynamic(x_rot, group_size=self.group_size)
         if self.qat and self.weight is not None:
-            w_rot = apply_hadamard_rotation(self.weight.to(x_rot.dtype), self.signs, self.hadamard_block)
+            w_rot = apply_hadamard_rotation(self.weight.to(x_rot.dtype), self.signs, self.hadamard_block) if self.rotate_input else self.weight.to(x_rot.dtype)
             grouped = w_rot.float().view(self.out_features, self.n_groups, self.group_size)
             scale = (grouped.abs().amax(dim=-1, keepdim=True) / 7.0).clamp_min(1e-6)
             w_q = ((grouped / scale).round().clamp(-7.0, 7.0) * scale).view(self.out_features, self.in_features).to(x_rot.dtype)
@@ -252,7 +256,7 @@ def quantize_model_quarot_int4(
     model: nn.Module,
     *,
     group_size: int = 32,
-    act_bits: int = 8,
+    act_bits: int = 16,
     max_block: int = 128,
     include_assoc: bool = True,
     inplace: bool = True,

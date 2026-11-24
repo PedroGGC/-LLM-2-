@@ -214,17 +214,24 @@ def transplant_teacher_weights(
                         _copy_matching_or_slice(cell.k_proj.weight, k_p.weight)
                         _copy_matching_or_slice(cell.v_proj.weight, v_p.weight)
                     _copy_matching_or_slice(cell.out_proj.weight, o_p.weight)
+                    qn = getattr(attn, "q_norm", None)
+                    kn = getattr(attn, "k_norm", None)
+                    if qn is not None and getattr(cell, "q_norm", None) is not None and hasattr(qn, "weight"):
+                        _copy_matching_or_slice(cell.q_norm.weight, qn.weight)
+                    if kn is not None and getattr(cell, "k_norm", None) is not None and hasattr(kn, "weight"):
+                        _copy_matching_or_slice(cell.k_norm.weight, kn.weight)
                     swa_copied += 1
             continue
 
         cell_hd = getattr(cell, "head_dim", None)
+        cell_ad = getattr(cell, "attn_dim", d_s)
         vw_for_scale: torch.Tensor | None = None
         if attn is not None and hasattr(cell, "qkv") and hasattr(cell.qkv, "weight") and hasattr(cell.out_proj, "weight"):
             if hasattr(attn, "qkv") and hasattr(attn, "proj"):
                 _copy_matching_or_slice(cell.qkv.weight, attn.qkv.weight)
                 _copy_matching_or_slice(cell.out_proj.weight, attn.proj.weight)
-                if attn.qkv.weight.shape[0] == 3 * d_s:
-                    vw_for_scale = attn.qkv.weight.detach().float()[2 * d_s : 3 * d_s]
+                if attn.qkv.weight.shape[0] == 3 * cell_ad:
+                    vw_for_scale = attn.qkv.weight.detach().float()[2 * cell_ad : 3 * cell_ad]
                 qkv_copied += 1
             else:
                 q_p = getattr(attn, "q_proj", None) or getattr(attn, "q", None)
@@ -235,17 +242,25 @@ def transplant_teacher_weights(
                     qw = q_p.weight.detach().float()
                     kw = _expand_gqa_kv(k_p.weight, qw.shape[0], head_dim=cell_hd)
                     vw = _expand_gqa_kv(v_p.weight, qw.shape[0], head_dim=cell_hd)
-                    if qw.shape[0] == d_s and qw.shape[1] == d_s and kw.shape == qw.shape and vw.shape == qw.shape:
+                    if qw.shape[0] == cell_ad and qw.shape[1] == d_s and kw.shape == qw.shape and vw.shape == qw.shape:
                         qkv_cat = torch.cat((qw, kw, vw), dim=0)
                         _copy_matching_or_slice(cell.qkv.weight, qkv_cat)
                         vw_for_scale = vw
                     _copy_matching_or_slice(cell.out_proj.weight, o_p.weight)
+                    qn = getattr(attn, "q_norm", None)
+                    kn = getattr(attn, "k_norm", None)
+                    if qn is not None and getattr(cell, "q_norm", None) is not None and hasattr(qn, "weight"):
+                        _copy_matching_or_slice(cell.q_norm.weight, qn.weight)
+                    if kn is not None and getattr(cell, "k_norm", None) is not None and hasattr(kn, "weight"):
+                        _copy_matching_or_slice(cell.k_norm.weight, kn.weight)
                     qkv_copied += 1
 
         if quiet_init_gates and hasattr(cell, "conv"):
             # Start depthwise conv as near-identity residual and out_gate around SiLU(1.7844)=1.0 so transplanted W_O is not scrambled.
             nn.init.normal_(cell.conv.weight, std=1e-4)
             nn.init.zeros_(cell.conv.bias)
+            if getattr(cell, "out_gate_down", None) is not None:
+                nn.init.normal_(cell.out_gate_down.weight, std=0.02)
             if hasattr(cell, "out_gate") and hasattr(cell.out_gate, "weight"):
                 nn.init.normal_(cell.out_gate.weight, std=1e-4)
             if hasattr(cell, "out_gate_bias"):
@@ -258,7 +273,7 @@ def transplant_teacher_weights(
                     nn.init.constant_(cell.head_gamma, 0.15)
 
     swa_lvls = getattr(student, "swa_levels", frozenset())
-    if quiet_init_gates and hasattr(student, "assoc_readout"):
+    if quiet_init_gates and getattr(student, "assoc_readout", None) is not None:
         nn.init.normal_(student.assoc_readout.weight, std=1e-4)
     if quiet_init_gates and hasattr(student, "adapters"):
         for lvl_i, ad in enumerate(student.adapters):
@@ -306,8 +321,8 @@ def apply_surgery_freeze(
                 cell.ffn.requires_grad_(False)
                 cell.ffn_norm.requires_grad_(False)
             if freeze_deltanet_proj:
-                for attr in ("qkv", "out_proj", "out_gate"):
-                    if hasattr(cell, attr):
+                for attr in ("qkv", "out_proj", "out_gate", "out_gate_down"):
+                    if getattr(cell, attr, None) is not None:
                         getattr(cell, attr).requires_grad_(False)
     trainable = sum(p.numel() for p in {p.data_ptr(): p for p in student.parameters() if p.requires_grad}.values())
     frozen = sum(p.numel() for p in {p.data_ptr(): p for p in student.parameters() if not p.requires_grad}.values())

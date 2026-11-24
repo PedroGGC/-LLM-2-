@@ -177,6 +177,8 @@ class _HFTokenizerAdapter:
     def __init__(self, hf_tok):
         self._tok = hf_tok
         self.eos_id = int(hf_tok.eos_token_id) if getattr(hf_tok, "eos_token_id", None) is not None else 0
+        raw_bos = getattr(hf_tok, "bos_token_id", None)
+        self.bos_id = int(raw_bos) if raw_bos is not None else None
 
     def encode(self, text: str) -> list[int]:
         return list(self._tok.encode(text, add_special_tokens=False))

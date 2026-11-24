@@ -28,8 +28,13 @@ def score_continuation_nll(
     cont_ids = tokenizer.encode(continuation)
     if not cont_ids:
         return 0.0, 0, True
-    bos = getattr(tokenizer, "eos_id", 0)
-    seq = [bos, *ctx_ids, *cont_ids]
+    bos = getattr(tokenizer, "bos_id", None)
+    if bos is not None:
+        seq = [int(bos), *ctx_ids, *cont_ids]
+    elif ctx_ids:
+        seq = [*ctx_ids, *cont_ids]
+    else:
+        seq = [getattr(tokenizer, "eos_id", 0), *cont_ids]
     cap = model.config.max_seq_len if max_seq_len is None else min(int(max_seq_len), model.config.max_seq_len)
     if len(seq) > cap + 1:
         seq = seq[-(cap + 1) :]
@@ -264,12 +269,22 @@ def evaluate_hf_suite(
         report["arc_challenge"] = {"error": str(exc)}
 
     try:
+        import re
+
+        def _clean_hs(text: str) -> str:
+            t = text.strip().replace(" [title]", ". ")
+            t = re.sub(r"\[.*?\]", "", t)
+            return t.replace("  ", " ").strip()
+
         ds = load_dataset("Rowan/hellaswag", split="validation")
         examples = []
         for i in range(min(max_examples, len(ds))):
             row = ds[i]
             if str(row["label"]).isdigit():
-                examples.append((row["ctx"], row["endings"], int(row["label"])))
+                act = row.get("activity_label", "")
+                ctx = _clean_hs(f"{act}: {row['ctx']}" if act else row["ctx"])
+                endings = [_clean_hs(e) for e in row["endings"]]
+                examples.append((ctx, endings, int(row["label"])))
         report["hellaswag"] = evaluate_multiple_choice(model, tokenizer, examples, device)
     except Exception as exc:
         report["hellaswag"] = {"error": str(exc)}

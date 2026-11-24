@@ -199,6 +199,13 @@ class ResearchConfig:
     fractal_swa_sinks: int = 4
     fractal_swa_rope: bool = False
     fractal_deltanet_rope: bool = False
+    fractal_head_dim: int = 0
+    fractal_qk_norm: bool = False
+    fractal_swa_levels: list[int] | None = None
+    fractal_swa_global: bool = False
+    fractal_kv_quant: str = "none"
+    fractal_out_gate_rank: int = 0
+    fractal_assoc_channel: bool = True
     fractal_exit_gate: bool = False
     exit_gate_weight: float = 0.0
 
@@ -255,22 +262,40 @@ class ResearchConfig:
         if self.fractal_decoupled_gates and self.architecture != "fractal_delta":
             raise ValueError("fractal_decoupled_gates requires fractal_delta")
         if self.fractal_hybrid_stride != 0 and (
-            self.architecture != "fractal_delta" or self.fractal_window < 4 or self.fractal_hybrid_stride < 2
+            self.architecture != "fractal_delta"
+            or (self.fractal_window < 4 and not self.fractal_swa_global)
+            or self.fractal_hybrid_stride < 2
         ):
-            raise ValueError("fractal_hybrid_stride requires fractal_delta with fractal_window >= 4 and stride >= 2")
+            raise ValueError("fractal_hybrid_stride requires fractal_delta with fractal_window >= 4 (or fractal_swa_global=True) and stride >= 2")
+        has_swa_schedule = self.fractal_hybrid_stride >= 2 or (self.fractal_swa_levels is not None and len(self.fractal_swa_levels) > 0)
         if self.fractal_hybrid_swa and (
             self.architecture != "fractal_delta"
-            or self.fractal_hybrid_stride < 2
+            or not has_swa_schedule
             or self.share_scales
             or self.fractal_prelude_coda
         ):
-            raise ValueError("fractal_hybrid_swa requires untied fractal_delta with fractal_hybrid_stride >= 2")
+            raise ValueError("fractal_hybrid_swa requires untied fractal_delta with fractal_hybrid_stride >= 2 or non-empty fractal_swa_levels")
         if self.fractal_swa_kv_heads < 0 or (self.fractal_swa_kv_heads > 0 and not self.fractal_hybrid_swa):
             raise ValueError("fractal_swa_kv_heads must be 0 or positive with fractal_hybrid_swa=True")
         if not 0 <= self.fractal_swa_sinks <= 16:
             raise ValueError("fractal_swa_sinks must be in 0..16")
         if self.fractal_swa_rope and not self.fractal_hybrid_swa:
             raise ValueError("fractal_swa_rope requires fractal_hybrid_swa=True")
+        if self.fractal_swa_global and not self.fractal_hybrid_swa:
+            raise ValueError("fractal_swa_global requires fractal_hybrid_swa=True")
+        if self.fractal_kv_quant not in ("none", "fp8", "int4"):
+            raise ValueError("fractal_kv_quant must be none|fp8|int4")
+        if self.fractal_kv_quant != "none" and not self.fractal_hybrid_swa:
+            raise ValueError("fractal_kv_quant requires fractal_hybrid_swa=True")
+        if self.fractal_head_dim < 0 or (self.fractal_head_dim > 0 and self.fractal_head_dim % 2 != 0):
+            raise ValueError("fractal_head_dim must be 0 or a positive even integer")
+        if self.fractal_out_gate_rank < 0:
+            raise ValueError("fractal_out_gate_rank must be nonnegative")
+        if self.fractal_swa_levels is not None:
+            if not self.fractal_hybrid_swa:
+                raise ValueError("fractal_swa_levels requires fractal_hybrid_swa=True")
+            if any(lvl < 0 for lvl in self.fractal_swa_levels):
+                raise ValueError("fractal_swa_levels entries must be nonnegative")
         if self.fractal_exit_gate and self.architecture != "fractal_delta":
             raise ValueError("fractal_exit_gate requires fractal_delta")
         if self.exit_gate_weight < 0:

@@ -186,8 +186,8 @@ def _quarot_int4_linear_op(
     out = torch.empty((m, out_features), device=x.device, dtype=x.dtype)
 
     if m == 1:
-        block_n = 8
-        block_kb = 128 if in_features >= 256 else 64
+        block_n = 32 if out_features >= 512 else 8
+        block_kb = 64 if in_features >= 256 else 32
         grid = (triton.cdiv(out_features, block_n),)
         _quarot_int4_matvec_kernel[grid](
             x_2d,

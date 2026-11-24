@@ -1,5 +1,15 @@
 # Validação vigente — 24/11/2026
 
+## Fase 0 — Preparação `Lumina 1` (`HALO`, Global+KV `INT4/FP8`, `QK-Norm`, `Top-K KL`, `OPD`, `QuaRot W4A16`) + `Titans / TTT` (CPU local; GPU preparada, não executada)
+
+Plano e protocolo em [docs/technical/TITANS_TTT_COLAB_PLAN.md](docs/technical/TITANS_TTT_COLAB_PLAN.md) e harness GPU em [scripts/bench_lumina1_halo_opd_and_titans.py](scripts/bench_lumina1_halo_opd_and_titans.py).
+
+Verificações reais executadas:
+- **CPU local (`Windows`, Python `3.12.2`, PyTorch `2.14.1+cpu`):**
+  - `rtk pytest -q tests/test_lumina1_upgrades.py tests/test_lumina_3b_hybrid.py tests/test_phase_c_distill_ringue.py tests/test_fractal_v2_grm.py tests/test_quarot_early_exit.py` → **`29 passed, 0 failed, 4 skipped`** (todos os `4 skipped` são testes `@pytest.mark.cuda` na máquina Windows sem GPU local).
+  - Cobre: extração `rope_parameters["rope_theta"]` (`transformers 5.x`, ex. `5_000_000.0`), arquitetura Qwen3 com `head_dim != d_model // n_heads` + `qk_norm` + `out_gate_rank` + `assoc_channel=False` com paridade passo-0 `cos > 0.99999` e `parameter_formula()` exata, sonda `HALO` (`probe_halo_layer_sensitivity`), atenção global sem evicção com cache KV `none`/`fp8`/`int4` (causalidade e equivalência streaming), `Top-K` sparse KL fora do `grad_checkpoint`, loop `On-Policy Distillation (OPD)` (`run_on_policy_distill`), `QuaRot` W4A16 padrão (`act_bits=16`, `rotate_input=False`, kernel Triton `block_n=32`), correções de BOS/HellaSwag no `external_eval.py`, e módulo experimental `TitansMemoryCell` (`src/llm2/architectures/titans_ttt.py` — causalidade, equivalência streaming, bytes $O(1)$ e gradientes externos finitos).
+- **Limitações declaradas:** **nenhum kernel GPU (Kaggle ou Colab) foi disparado nesta etapa** (conforme solicitação de preparar e discutir primeiro a escolha do professor); validação empírica de `HALO`, `OPD`, `QuaRot` Triton `block_n=32` e `Titans / TTT` em GPU real (`2× T4` e Colab `L4 / A100`) permanece pendente.
+
 ## Etapa 1 — `Lumina-V1-3B` na Kaggle `2× Tesla T4` (`IA2 Campanha 018`)
 
 Relatório detalhado em [docs/results/IA2_CAMPAIGN_018_LUMINA_3B_KAGGLE.md](docs/results/IA2_CAMPAIGN_018_LUMINA_3B_KAGGLE.md).

@@ -28,6 +28,20 @@ from .distill_convert import (
 )
 
 
+def _extract_rope_theta(hf_cfg) -> float:
+    """Extract rope_theta across both transformers v4 (rope_theta) and v5 (rope_parameters['rope_theta'])."""
+    rope_params = getattr(hf_cfg, "rope_parameters", None)
+    if isinstance(rope_params, dict) and rope_params.get("rope_theta") is not None:
+        return float(rope_params["rope_theta"])
+    rope_scaling = getattr(hf_cfg, "rope_scaling", None)
+    if isinstance(rope_scaling, dict) and rope_scaling.get("rope_theta") is not None:
+        return float(rope_scaling["rope_theta"])
+    theta = getattr(hf_cfg, "rope_theta", None)
+    if theta is not None:
+        return float(theta)
+    return 10000.0
+
+
 def build_lumina_3b_config_from_hf(
     hf_cfg,
     *,
@@ -38,16 +52,28 @@ def build_lumina_3b_config_from_hf(
     gradient_checkpointing: bool = False,
     swa_rope: bool | None = None,
     deltanet_rope: bool = True,
+    swa_levels: list[int] | None = None,
+    swa_global: bool = False,
+    kv_quant: str = "none",
+    out_gate_rank: int = 0,
+    assoc_channel: bool = True,
+    qk_norm: bool | None = None,
+    head_dim: int | None = None,
 ) -> tuple[ModelConfig, ResearchConfig]:
-    """Build exact Lumina-V1 True 3:1 Hybrid (ModelConfig, ResearchConfig) from a HuggingFace CausalLM config."""
+    """Build exact Lumina 1 Hybrid (ModelConfig, ResearchConfig) from a HuggingFace CausalLM config."""
     d_model = int(getattr(hf_cfg, "hidden_size"))
     n_layers = int(getattr(hf_cfg, "num_hidden_layers"))
     n_heads = int(getattr(hf_cfg, "num_attention_heads"))
     n_kv = int(getattr(hf_cfg, "num_key_value_heads", n_heads))
     hidden_dim = int(getattr(hf_cfg, "intermediate_size"))
     vocab_size = int(getattr(hf_cfg, "vocab_size"))
-    rope_theta = float(getattr(hf_cfg, "rope_theta", 10000.0))
+    rope_theta = _extract_rope_theta(hf_cfg)
     norm_eps = float(getattr(hf_cfg, "rms_norm_eps", 1e-6))
+
+    hf_hd = getattr(hf_cfg, "head_dim", None)
+    resolved_hd = int(head_dim) if head_dim is not None else (int(hf_hd) if hf_hd is not None and int(hf_hd) != d_model // n_heads else 0)
+    model_type = str(getattr(hf_cfg, "model_type", "")).lower()
+    use_qk_norm = bool(qk_norm) if qk_norm is not None else (model_type in ("qwen3", "qwen3_moe", "gemma3"))
 
     # Auto-detect SmolLM3 NoPE on every 4th layer (no_rope_layer_interval == hybrid_stride -> SWA layers are NoPE).
     if swa_rope is None:
@@ -75,16 +101,23 @@ def build_lumina_3b_config_from_hf(
         state_chunk_size=32,
         gradient_checkpointing=gradient_checkpointing,
         fractal_beta_scale=2.0,
-        fractal_window=int(window),
-        fractal_hybrid_stride=int(hybrid_stride),
+        fractal_window=0 if swa_global else int(window),
+        fractal_hybrid_stride=0 if swa_levels else int(hybrid_stride),
         fractal_hybrid_swa=True,
         fractal_swa_kv_heads=n_kv,
-        fractal_swa_sinks=int(sinks),
+        fractal_swa_sinks=0 if swa_global else int(sinks),
         fractal_swa_rope=use_swa_rope,
         fractal_deltanet_rope=bool(deltanet_rope),
         fractal_golden_phase=not bool(deltanet_rope),
+        fractal_head_dim=resolved_hd,
+        fractal_qk_norm=use_qk_norm,
+        fractal_swa_levels=list(swa_levels) if swa_levels else None,
+        fractal_swa_global=bool(swa_global),
+        fractal_kv_quant=str(kv_quant),
+        fractal_out_gate_rank=int(out_gate_rank),
+        fractal_assoc_channel=bool(assoc_channel),
         fractal_decoupled_gates=True,
-        fractal_assoc_delta=True,
+        fractal_assoc_delta=bool(assoc_channel),
         fractal_exit_gate=False,
     )
     return m_cfg, r_cfg
@@ -110,15 +143,16 @@ def build_student_for_surgery(
     for mod in student.modules():
         if hasattr(mod, "weight") and mod.weight is not None and mod.weight.ndim == 1:
             nn.init.ones_(mod.weight)
-    nn.init.normal_(student.local_conv.weight, std=0.02)
-    nn.init.normal_(student.assoc_address.weight, std=0.02)
-    nn.init.normal_(student.assoc_value.weight, std=0.02)
-    nn.init.normal_(student.assoc_write_gate.weight, std=0.02)
-    nn.init.constant_(student.assoc_write_gate.bias, -2.0)
-    nn.init.normal_(student.assoc_readout.weight, std=1e-4)
-    student.assoc_scale.fill_(1.0)
-    if student.assoc_lag_mix is not None:
-        student.assoc_lag_mix.zero_()
+    if student.use_assoc_channel:
+        nn.init.normal_(student.local_conv.weight, std=0.02)
+        nn.init.normal_(student.assoc_address.weight, std=0.02)
+        nn.init.normal_(student.assoc_value.weight, std=0.02)
+        nn.init.normal_(student.assoc_write_gate.weight, std=0.02)
+        nn.init.constant_(student.assoc_write_gate.bias, -2.0)
+        nn.init.normal_(student.assoc_readout.weight, std=1e-4)
+        student.assoc_scale.fill_(1.0)
+        if student.assoc_lag_mix is not None:
+            student.assoc_lag_mix.zero_()
     for lvl_i, ad in enumerate(student.adapters):
         ad.attn_scale.fill_(1.0)
         ad.attn_shift.zero_()
@@ -160,6 +194,8 @@ def build_student_for_surgery(
         if cell.beta_write is not None:
             nn.init.normal_(cell.beta_write.weight, std=0.02)
             nn.init.constant_(cell.beta_write.bias, -1.0)
+        if cell.out_gate_down is not None:
+            nn.init.normal_(cell.out_gate_down.weight, std=0.02)
         nn.init.normal_(cell.out_gate.weight, std=1e-4)
         cell.out_gate_bias = torch.tensor(1.784376, dtype=dtype)
         cell.head_gamma.fill_(0.15)
@@ -314,8 +350,9 @@ def _chunked_hidden_ce_kl_loss(
     ce_weight: float,
     kl_weight: float,
     chunk_tokens: int = 256,
+    kl_topk: int = 0,
 ) -> tuple[torch.Tensor, float, float]:
-    """Exact FP32 CE + KL from teacher & student final hidden states without materializing full (N, V) logits."""
+    """Exact FP32 CE + full or Top-K sparse KL from hidden states with teacher computed ONCE outside grad_checkpoint."""
     n_tok = int(s_hidden_flat.shape[0])
     total_valid = int((targets_flat != -100).sum().item())
     if total_valid <= 0:
@@ -323,25 +360,39 @@ def _chunked_hidden_ce_kl_loss(
     inv_t = 1.0 / float(temperature)
     t_sq = float(temperature) ** 2
     v_common = min(int(s_lm_head.weight.shape[0]), int(t_lm_head.weight.shape[0]))
+    use_topk = bool(kl_topk > 0 and kl_topk < v_common)
     ce_acc = s_hidden_flat.new_zeros((), dtype=torch.float32)
     kl_acc = s_hidden_flat.new_zeros((), dtype=torch.float32)
     s_dev = s_hidden_flat.device
     t_dev = t_lm_head.weight.device
 
-    def _chunk_fn(hs_c: torch.Tensor, ht_c: torch.Tensor, y_c: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def _chunk_full(hs_c: torch.Tensor, log_pt_c: torch.Tensor, y_c: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         s_log = s_lm_head(hs_c.to(dtype=s_lm_head.weight.dtype)).float()
         ce_c = F.cross_entropy(s_log, y_c, ignore_index=-100, reduction="sum")
         vm = y_c != -100
         if kl_weight > 0.0 and vm.any():
-            with torch.no_grad():
-                ht_in = ht_c.to(device=t_dev, dtype=t_lm_head.weight.dtype)
-                t_log = t_lm_head(ht_in).float()
-                vm_t = vm.to(device=t_dev) if t_dev != vm.device else vm
-                log_pt = F.log_softmax(t_log[:, :v_common][vm_t] * inv_t, dim=-1)
-                if log_pt.device != s_dev:
-                    log_pt = log_pt.to(device="cpu").to(device=s_dev)
             log_ps = F.log_softmax(s_log[:, :v_common][vm] * inv_t, dim=-1)
-            kl_c = F.kl_div(log_ps, log_pt, reduction="sum", log_target=True)
+            kl_c = F.kl_div(log_ps, log_pt_c, reduction="sum", log_target=True)
+        else:
+            kl_c = s_log.new_zeros(())
+        return ce_c, kl_c
+
+    def _chunk_topk(
+        hs_c: torch.Tensor, top_idx_c: torch.Tensor, top_lp_c: torch.Tensor, tail_p_c: torch.Tensor, y_c: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        s_log = s_lm_head(hs_c.to(dtype=s_lm_head.weight.dtype)).float()
+        ce_c = F.cross_entropy(s_log, y_c, ignore_index=-100, reduction="sum")
+        vm = y_c != -100
+        if kl_weight > 0.0 and vm.any():
+            s_scaled = s_log[:, :v_common][vm] * inv_t
+            s_lse = torch.logsumexp(s_scaled, dim=-1, keepdim=True)
+            s_top_lp = torch.gather(s_scaled, dim=-1, index=top_idx_c) - s_lse
+            t_top_p = top_lp_c.exp()
+            kl_top = (t_top_p * (top_lp_c - s_top_lp)).sum()
+            s_tail_p = (1.0 - s_top_lp.exp().sum(dim=-1)).clamp_min(1e-7)
+            t_tail_p = tail_p_c.clamp_min(1e-7)
+            kl_tail = (tail_p_c * (t_tail_p.log() - s_tail_p.log())).sum()
+            kl_c = kl_top + kl_tail
         else:
             kl_c = s_log.new_zeros(())
         return ce_c, kl_c
@@ -352,10 +403,46 @@ def _chunked_hidden_ce_kl_loss(
         hs_c = s_hidden_flat[start:end]
         ht_c = t_hidden_flat[start:end].detach()
         y_c = targets_flat[start:end]
-        if use_ckpt:
-            ce_c, kl_c = grad_checkpoint(_chunk_fn, hs_c, ht_c, y_c, use_reentrant=False)
+        vm = y_c != -100
+
+        if use_topk:
+            if kl_weight > 0.0 and vm.any():
+                with torch.no_grad():
+                    ht_in = ht_c.to(device=t_dev, dtype=t_lm_head.weight.dtype)
+                    t_log = t_lm_head(ht_in).float()
+                    vm_t = vm.to(device=t_dev) if t_dev != vm.device else vm
+                    t_scaled = t_log[:, :v_common][vm_t] * inv_t
+                    t_lse = torch.logsumexp(t_scaled, dim=-1, keepdim=True)
+                    top_vals, top_idx = torch.topk(t_scaled, k=int(kl_topk), dim=-1)
+                    top_lp = top_vals - t_lse
+                    tail_p = (1.0 - top_lp.exp().sum(dim=-1)).clamp_min(0.0)
+                    top_idx = _xfer_tensor(top_idx, s_dev, torch.int64)
+                    top_lp = _xfer_tensor(top_lp, s_dev, torch.float32)
+                    tail_p = _xfer_tensor(tail_p, s_dev, torch.float32)
+            else:
+                top_idx = y_c.new_zeros((0, 1))
+                top_lp = hs_c.new_zeros((0, 1), dtype=torch.float32)
+                tail_p = hs_c.new_zeros((0,), dtype=torch.float32)
+            ce_c, kl_c = (
+                grad_checkpoint(_chunk_topk, hs_c, top_idx, top_lp, tail_p, y_c, use_reentrant=False)
+                if use_ckpt
+                else _chunk_topk(hs_c, top_idx, top_lp, tail_p, y_c)
+            )
         else:
-            ce_c, kl_c = _chunk_fn(hs_c, ht_c, y_c)
+            if kl_weight > 0.0 and vm.any():
+                with torch.no_grad():
+                    ht_in = ht_c.to(device=t_dev, dtype=t_lm_head.weight.dtype)
+                    t_log = t_lm_head(ht_in).float()
+                    vm_t = vm.to(device=t_dev) if t_dev != vm.device else vm
+                    log_pt = F.log_softmax(t_log[:, :v_common][vm_t] * inv_t, dim=-1)
+                    log_pt = _xfer_tensor(log_pt, s_dev, torch.float32)
+            else:
+                log_pt = hs_c.new_zeros((0, 1), dtype=torch.float32)
+            ce_c, kl_c = (
+                grad_checkpoint(_chunk_full, hs_c, log_pt, y_c, use_reentrant=False)
+                if use_ckpt
+                else _chunk_full(hs_c, log_pt, y_c)
+            )
         ce_acc = ce_acc + ce_c
         kl_acc = kl_acc + kl_c
 
@@ -367,7 +454,7 @@ def _chunked_hidden_ce_kl_loss(
 
 def _move_cell_attn_only(cell: FractalDeltaCell, device: torch.device, dtype: torch.dtype) -> None:
     """Move only the DeltaNet attention submodules of a cell to device (keeping frozen SwiGLU FFN on CPU in Subfase 1)."""
-    for name in ("attn_norm", "conv", "qkv", "decay_down", "decay", "beta", "beta_write", "out_gate", "out_proj", "fe_norm", "fe_down", "fe_up"):
+    for name in ("attn_norm", "conv", "qkv", "q_norm", "k_norm", "decay_down", "decay", "beta", "beta_write", "out_gate_down", "out_gate", "out_proj", "fe_norm", "fe_down", "fe_up"):
         mod = getattr(cell, name, None)
         if mod is not None:
             mod.to(device=device, dtype=dtype)
@@ -419,9 +506,10 @@ def _place_student_split(
         mod = getattr(student, name, None)
         if mod is not None:
             _cast_module_by_grad(mod, head_dev)
-    student.assoc_scale.data = student.assoc_scale.data.to(
-        device=head_dev, dtype=trainable_dtype if student.assoc_scale.requires_grad else frozen_dtype
-    )
+    if student.assoc_scale is not None:
+        student.assoc_scale.data = student.assoc_scale.data.to(
+            device=head_dev, dtype=trainable_dtype if student.assoc_scale.requires_grad else frozen_dtype
+        )
     if student.assoc_lag_mix is not None:
         student.assoc_lag_mix.data = student.assoc_lag_mix.data.to(
             device=head_dev, dtype=trainable_dtype if student.assoc_lag_mix.requires_grad else frozen_dtype
@@ -750,6 +838,7 @@ def run_subfase2_dual_gpu(
     ce_weight: float = 0.5,
     layer_mse_weight: float = 0.25,
     logit_chunk_tokens: int = 256,
+    kl_topk: int = 0,
     precision: str = "fp16",
     lora_rank: int = 0,
     lora_alpha: float = 32.0,
@@ -830,6 +919,7 @@ def run_subfase2_dual_gpu(
                     ce_weight=ce_weight,
                     kl_weight=kl_weight,
                     chunk_tokens=logit_chunk_tokens,
+                    kl_topk=kl_topk,
                 )
 
                 l_mse_v = 0.0
@@ -916,6 +1006,177 @@ def run_subfase2_dual_gpu(
         "tokens_processed": tokens_total,
         "elapsed_seconds": round(elapsed_s, 2),
         "tok_per_s": round(tokens_total / max(elapsed_s, 1e-9), 1),
+        "initial_metrics": history[0] if history else {},
+        "final_metrics": history[-1] if history else {},
+    }
+
+
+@torch.no_grad()
+def probe_halo_layer_sensitivity(
+    teacher: nn.Module,
+    probe_ids: torch.Tensor,
+    *,
+    num_global_layers: int,
+    always_keep: tuple[int, ...] = (),
+    use_amp: bool = False,
+    amp_dtype: torch.dtype = torch.float16,
+) -> dict:
+    """HALO layer sensitivity probe: measure output KL impact of zeroing each layer's self-attention to select global layers."""
+    t_layers, _ = _extract_teacher_layers_and_norm(teacher)
+    n_layers = len(t_layers)
+    t_lm_head = _get_teacher_lm_head(teacher)
+    dev = next(teacher.parameters()).device
+    ids = probe_ids.to(dev)
+
+    teacher.eval()
+    base_h, _, _, _ = _teacher_forward_hidden_and_deltas(teacher, ids, need_attn_deltas=False, use_amp=use_amp, amp_dtype=amp_dtype)
+    base_lp = F.log_softmax(t_lm_head(base_h.to(dtype=t_lm_head.weight.dtype)).float(), dim=-1)
+    base_p = base_lp.exp()
+
+    scores: list[tuple[int, float]] = []
+    for idx, tl in enumerate(t_layers):
+        attn = getattr(tl, "self_attn", None) or getattr(tl, "attn", None) or getattr(tl, "attention", None)
+        if attn is None:
+            scores.append((idx, 0.0))
+            continue
+
+        def _zero_attn_hook(_mod, _inp, output):
+            if isinstance(output, tuple):
+                return (torch.zeros_like(output[0]), *output[1:])
+            return torch.zeros_like(output)
+
+        handle = attn.register_forward_hook(_zero_attn_hook)
+        try:
+            abl_h, _, _, _ = _teacher_forward_hidden_and_deltas(teacher, ids, need_attn_deltas=False, use_amp=use_amp, amp_dtype=amp_dtype)
+            abl_lp = F.log_softmax(t_lm_head(abl_h.to(dtype=t_lm_head.weight.dtype)).float(), dim=-1)
+            kl = float((base_p * (base_lp - abl_lp)).sum(dim=-1).mean().item())
+        finally:
+            handle.remove()
+        scores.append((idx, round(kl, 6)))
+
+    ranked = sorted(scores, key=lambda kv: kv[1], reverse=True)
+    selected: list[int] = [int(i) for i in always_keep if 0 <= int(i) < n_layers]
+    for idx, _ in ranked:
+        if len(selected) >= int(num_global_layers):
+            break
+        if idx not in selected:
+            selected.append(idx)
+    selected.sort()
+    return {
+        "selected_global_levels": selected,
+        "layer_kl_scores": scores,
+        "ranked_levels": [idx for idx, _ in ranked],
+    }
+
+
+def run_on_policy_distill(
+    teacher: nn.Module,
+    student: FractalDeltaMemory,
+    prompt_batches: Iterable[torch.Tensor],
+    *,
+    dev0: torch.device,
+    dev1: torch.device,
+    max_steps: int,
+    rollout_tokens: int = 32,
+    sample_temperature: float = 0.8,
+    kl_temperature: float = 1.0,
+    kl_topk: int = 128,
+    lr: float = 5e-5,
+    weight_decay: float = 0.01,
+    grad_clip: float = 1.0,
+    precision: str = "fp16",
+    logit_chunk_tokens: int = 128,
+    freeze_deltanet_proj: bool = True,
+    lora_rank: int = 0,
+    lora_alpha: float = 16.0,
+) -> dict:
+    """On-Policy Distillation (OPD / GKD): student rolls out continuations on its own policy; teacher supervises rollout tokens via Top-K KL."""
+    from ..architectures.fractal_delta import FractalDecode
+
+    use_amp = precision in ("fp16", "bf16") and dev1.type == "cuda"
+    amp_dtype = torch.float16 if precision == "fp16" else torch.bfloat16
+    frozen_dtype = amp_dtype if use_amp else torch.float32
+    head_dev = dev1
+    teacher.eval()
+    teacher.requires_grad_(False)
+    t_lm_head = _get_teacher_lm_head(teacher)
+
+    apply_surgery_freeze(student, freeze_ffn=True, freeze_embeddings=True, freeze_swa=True, freeze_deltanet_proj=freeze_deltanet_proj)
+    lora_info = attach_ffn_swa_lora(student, rank=lora_rank, alpha=lora_alpha) if lora_rank > 0 else None
+    _place_student_split(student, dev0, dev1, 0, frozen_dtype=frozen_dtype, trainable_dtype=torch.float32)
+
+    with _cuda_dev_ctx(head_dev):
+        unique_params = list({p.data_ptr(): p for p in student.parameters() if p.requires_grad}.values())
+        optimizer = CompactAdamW(unique_params, lr=lr, weight_decay=weight_decay) if (precision == "fp16" and head_dev.type == "cuda") else torch.optim.AdamW(unique_params, lr=lr, weight_decay=weight_decay, foreach=False)
+        scaler = torch.amp.GradScaler("cuda", init_scale=1024.0, enabled=(precision == "fp16" and head_dev.type == "cuda"))
+        it = iter(prompt_batches)
+        history: list[dict[str, float]] = []
+        rollout_tok_total = 0
+
+        for step in range(max_steps):
+            prompts = next(it).to(device=head_dev)
+            p_len = int(prompts.shape[1])
+
+            # 1. On-policy student rollout (eval mode, zero dropout, streaming FractalDecode)
+            student.eval()
+            with torch.inference_mode():
+                dec = FractalDecode(student)
+                cap = min(student.config.max_seq_len, p_len + rollout_tokens + 2)
+                logits, st = dec.prefill(prompts, capacity=cap)
+                gen_cols = []
+                for _ in range(rollout_tokens):
+                    step_lg = logits[:, -1].float()
+                    if sample_temperature > 0.0:
+                        probs = F.softmax(step_lg / float(sample_temperature), dim=-1)
+                        nxt = torch.multinomial(probs, num_samples=1)
+                    else:
+                        nxt = step_lg.argmax(dim=-1, keepdim=True)
+                    gen_cols.append(nxt)
+                    logits, st = dec.step(nxt, st)
+                full_seq = torch.cat([prompts, *gen_cols], dim=1)
+            bx = full_seq[:, :-1].clone()
+            by = full_seq[:, 1:].clone()
+            # Mask prompt tokens so OPD loss supervises ONLY student-generated rollout tokens!
+            if p_len > 1:
+                by[:, : p_len - 1] = -100
+
+            # 2. Teacher scores the student's own trajectory
+            with _cuda_dev_ctx(dev0):
+                bx_t = bx.to(device=dev0)
+                t_final_h, _, _, _ = _teacher_forward_hidden_and_deltas(teacher, bx_t, need_attn_deltas=False, use_amp=use_amp, amp_dtype=amp_dtype)
+
+            # 3. Student forward + Top-K KL backward strictly on rollout positions
+            student.train()
+            optimizer.zero_grad(set_to_none=True)
+            s_hidden, _ = _forward_student_split(student, bx, dev0, dev1, 0, use_amp=use_amp, amp_dtype=amp_dtype, return_layer_states=False)
+            loss, _, kl_v = _chunked_hidden_ce_kl_loss(
+                s_hidden.flatten(0, 1),
+                student.lm_head,
+                t_final_h.detach().flatten(0, 1),
+                t_lm_head,
+                by.flatten(),
+                temperature=kl_temperature,
+                ce_weight=0.0,
+                kl_weight=1.0,
+                chunk_tokens=logit_chunk_tokens,
+                kl_topk=kl_topk,
+            )
+            if not torch.isfinite(loss):
+                raise RuntimeError(f"Non-finite OPD loss at step {step}")
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(unique_params, grad_clip, foreach=False)
+            scaler.step(optimizer)
+            scaler.update()
+            rollout_tok_total += int((by != -100).sum().item())
+            history.append({"opd_kl": kl_v})
+
+        merged = merge_and_remove_lora(student) if lora_rank > 0 else 0
+    return {
+        "lora": lora_info,
+        "merged_lora_layers": merged,
+        "steps_completed": len(history),
+        "rollout_tokens": rollout_tok_total,
         "initial_metrics": history[0] if history else {},
         "final_metrics": history[-1] if history else {},
     }
