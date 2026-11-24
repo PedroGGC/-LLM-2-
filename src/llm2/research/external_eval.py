@@ -35,7 +35,8 @@ def score_continuation_nll(
         seq = [*ctx_ids, *cont_ids]
     else:
         seq = [getattr(tokenizer, "eos_id", 0), *cont_ids]
-    cap = model.config.max_seq_len if max_seq_len is None else min(int(max_seq_len), model.config.max_seq_len)
+    model_cap = int(getattr(model.config, "max_seq_len", getattr(model.config, "max_position_embeddings", 4096)))
+    cap = model_cap if max_seq_len is None else min(int(max_seq_len), model_cap)
     if len(seq) > cap + 1:
         seq = seq[-(cap + 1) :]
     x = torch.tensor([seq[:-1]], dtype=torch.long, device=device)
