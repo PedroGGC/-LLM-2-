@@ -17,7 +17,7 @@ from llm2.architectures.quarot import quantize_model_quarot_int4
 from llm2.config import ModelConfig, ResearchConfig
 from llm2.model import RMSNorm, SwiGLU
 from llm2.research.decode_optimization import SegmentMemoryCache
-from llm2.research.distill_convert import LoRALinear, transplant_teacher_weights
+from llm2.research.distill_convert import LoRALinear, apply_surgery_freeze, transplant_teacher_weights
 from llm2.research.lumina_3b_pipeline import (
     _chunked_hidden_ce_kl_loss,
     build_lumina_3b_config_from_hf,
@@ -344,6 +344,10 @@ def test_smollm3_style_gqa_3to1_surgery_subfase1_2_lora_merge_and_ckpt(tmp_path)
     assert s2a["final_metrics"]["total_loss"] < s2a["initial_metrics"]["total_loss"]
 
     ckpt_dir = tmp_path / "lumina_test_ckpt"
+    assert (
+        apply_surgery_freeze(student, freeze_deltanet_proj=True)["trainable_params"]
+        < apply_surgery_freeze(student, freeze_deltanet_proj=False)["trainable_params"]
+    )
     s2b = run_subfase2_dual_gpu(
         teacher,
         student,
@@ -357,6 +361,7 @@ def test_smollm3_style_gqa_3to1_surgery_subfase1_2_lora_merge_and_ckpt(tmp_path)
         logit_chunk_tokens=8,
         precision="fp32",
         lora_rank=4,
+        freeze_deltanet_proj=True,
         compact_optimizer=True,
         log_interval=0,
         ckpt_dir=ckpt_dir,

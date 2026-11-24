@@ -753,6 +753,7 @@ def run_subfase2_dual_gpu(
     precision: str = "fp16",
     lora_rank: int = 0,
     lora_alpha: float = 32.0,
+    freeze_deltanet_proj: bool = False,
     compact_optimizer: bool | None = None,
     log_interval: int = 10,
     ckpt_dir: str | Path | None = None,
@@ -770,7 +771,13 @@ def run_subfase2_dual_gpu(
     teacher.requires_grad_(False)
     t_lm_head = _get_teacher_lm_head(teacher)
 
-    apply_surgery_freeze(student, freeze_ffn=True, freeze_embeddings=True, freeze_swa=True)
+    apply_surgery_freeze(
+        student,
+        freeze_ffn=True,
+        freeze_embeddings=True,
+        freeze_swa=True,
+        freeze_deltanet_proj=freeze_deltanet_proj,
+    )
     lora_info = None
     if lora_rank > 0:
         lora_info = attach_ffn_swa_lora(student, rank=lora_rank, alpha=lora_alpha, include_ffn=True, include_swa=True)

@@ -286,6 +286,7 @@ def apply_surgery_freeze(
     freeze_ffn: bool = True,
     freeze_embeddings: bool = True,
     freeze_swa: bool = True,
+    freeze_deltanet_proj: bool = False,
 ) -> dict[str, int]:
     """Freeze transplanted SwiGLU FFNs, SWA layers, and tied Embeddings so distillation focuses on Gated DeltaNet-2 conversion."""
     student.requires_grad_(True)
@@ -300,9 +301,14 @@ def apply_surgery_freeze(
                 cell.requires_grad_(False)
                 if hasattr(student, "adapters") and lvl_i < len(student.adapters):
                     student.adapters[lvl_i].requires_grad_(False)
-            elif freeze_ffn:
+                continue
+            if freeze_ffn:
                 cell.ffn.requires_grad_(False)
                 cell.ffn_norm.requires_grad_(False)
+            if freeze_deltanet_proj:
+                for attr in ("qkv", "out_proj", "out_gate"):
+                    if hasattr(cell, attr):
+                        getattr(cell, attr).requires_grad_(False)
     trainable = sum(p.numel() for p in {p.data_ptr(): p for p in student.parameters() if p.requires_grad}.values())
     frozen = sum(p.numel() for p in {p.data_ptr(): p for p in student.parameters() if not p.requires_grad}.values())
     return {"trainable_params": trainable, "frozen_params": frozen}
