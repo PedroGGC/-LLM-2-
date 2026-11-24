@@ -695,6 +695,10 @@ Para orientar o roadmap de engenharia do LLM 2 / **`Lumina V1`**, as tecnologias
 4. `[x]` **Fase D (`MetaQueryBridge` para `Nano Lumina`, Campanha 017):** `64` `MetaQueries` + conector bidirecional de 2 camadas + fusão `GRM` emitindo tensores `(B, 64, 2048)` / `(B, 768)` para imagens estáticas (`Anima 2B` / `DiT`) e `(B, F, 64, 2048)` para GIFs 3D com estado $O(1)$ invariante e `backbone_mutated=False`.
 5. `[x]` **Atualizar `README.md`** com a síntese consolidada da bateria completa (`IA2 001–017`).
 
+#### Etapa 1 (`Lumina-V1-3B` na Kaggle `2× Tesla T4`, Campanha 018 — `24/11/2026`)
+1. `[x]` **Arquitetura Híbrida `3:1` em Escala Real (`3.362.026.449` params):** `27` `FractalDeltaCell` (`Gated DeltaNet-2`) + `9` NoPE `SlidingWindowGQACell` (`W=1024, S=4`), destilada em `6,47M` tokens SFW via `CompactAdamW` + `freeze_deltanet_proj=True` (`cuda:1` pico `8,691 GiB` em `seq=1536`) e merge limpo de `144` LoRAs ([`IA2_CAMPAIGN_018_LUMINA_3B_KAGGLE.md`](../results/IA2_CAMPAIGN_018_LUMINA_3B_KAGGLE.md)).
+2. `[x]` **`CompiledDecode` & `QuaRot W4A16` em `1× Tesla T4`:** `FP16 Compiled` atingiu **`27,0 tok/s` (`2.361,86 mJ/tok`, `−59,4%` energia)** com estado fixo **`45,78 MiB` $O(1)$** (`6,352 GiB` VRAM); `QuaRot Triton W4A16` reduziu o modelo para **`2,135 GiB` (`−65,9%`)** e **`2,236 GiB` pico VRAM** (`LAMBADA 61,3%`, `PIQA 79,3%`, `ARC-C 52,7%`, `Winogrande 62,7%`).
+
 ---
 
 ## Conclusão e Diretrizes Finais

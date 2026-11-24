@@ -23,7 +23,13 @@ Este checkout contém a pesquisa fractal: **`experiment/fractal-lrm`**.
 A implementação fractal permanece isolada. O identificador `fractal` em uma configuração
 não instala esse código na branch comum. Confira `git branch --show-current` antes de trabalhar.
 
-## Estado atual — 22/11/2026 (`Lumina V1` Multimodal + Eficiência Extrema `IA2 001–017`)
+## Estado atual — 24/11/2026 (`Lumina-V1-3B` Etapa 1 na Kaggle `2× T4`, `IA2 018`)
+
+- **Etapa 1 — Base Textual `Lumina-V1-3B` ([C018 na Kaggle 2× T4](docs/results/IA2_CAMPAIGN_018_LUMINA_3B_KAGGLE.md)):** escalamento da arquitetura híbrida `3:1` (`27` camadas `FractalDeltaCell` + `9` NoPE `SlidingWindowGQACell` `W=1024, S=4`, **`3.362.026.449` parâmetros exatos**) via `Attention-Surgery` em `SmolLM3-3B-Base` com `6,47M` tokens SFW (EN Edu + Wikipédia PT-BR + FineMath) e `CompactAdamW` + `freeze_deltanet_proj`. Mantendo estado constante $O(1)$ de **`45.78 MiB`** até `16K+` (`25,2×` menor que o KV-cache `1.152 MiB` do professor em `16K`), atingiu em `1× Tesla T4`:
+  - **`FP16 Compiled` (`6.262 GiB`):** **`27.0 tok/s`** (`2.361,86 mJ/tok` = **−59,4% energia/token** vs `11.8 tok/s` eager), **`LAMBADA 64.0% (PPL 4.15)`**, `ARC-E 74.0%`, `ARC-C 52.0%`, `HellaSwag 58.7%`, **`PIQA 79.3%`**, **`Winogrande 61.3%`**.
+  - **`QuaRot Triton W4A16` (`2.135 GiB`, `−65.9%`):** pico VRAM **`2.236 GiB`** (`36.91 W`), preservando **`LAMBADA 61.3%`**, `ARC-E 73.3%`, `ARC-C 52.7%`, `HellaSwag 58.7%`, `PIQA 79.3%` e `Winogrande 62.7%` (`RULER NIAH` ainda `0.0%` antes de SFT de agulha longo).
+
+### Anterior — 22/11/2026 (`Lumina V1` Multimodal + Eficiência Extrema `IA2 001–017`)
 
 As campanhas **IA2 001 a 017** evoluíram o `FractalDeltaMemory` (`fractal_golden`) em uma arquitetura multimodal recorrente completa de estado $O(1)$ (**`Lumina V1`** + ponte de geração **`MetaQueryBridge` para o `Nano Lumina`**), validada empiricamente em GPUs **NVIDIA L4** e **NVIDIA Tesla T4**:
 

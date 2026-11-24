@@ -1,6 +1,19 @@
-# Validação vigente — 22/11/2026
+# Validação vigente — 24/11/2026
 
-## Upgrades Pós-C013 e Fases A–D (`Lumina V1` Multimodal + `O Ringue` + `Attention-Surgery` + `MetaQueryBridge`)
+## Etapa 1 — `Lumina-V1-3B` na Kaggle `2× Tesla T4` (`IA2 Campanha 018`)
+
+Relatório detalhado em [docs/results/IA2_CAMPAIGN_018_LUMINA_3B_KAGGLE.md](docs/results/IA2_CAMPAIGN_018_LUMINA_3B_KAGGLE.md).
+
+Verificações reais executadas:
+- **CPU local (`Windows`, Python `3.12.2`, PyTorch `2.14.1+cpu`):**
+  - `rtk pytest -q tests/test_lumina_3b_hybrid.py tests/test_phase_c_distill_ringue.py` (após `freeze_deltanet_proj`) → **10 passed, 0 failed, 1 skipped** (`@pytest.mark.cuda` local). Valida arquitetura híbrida `3:1`, `SWAState`, causalidade, equivalência de decodificação em fluxo, contagem exata `parameter_formula()`, bytes $O(1)$ constantes, `CompactAdamW`, LoRA merge e quantização `QuaRot`.
+- **Kaggle `2× NVIDIA Tesla T4` (`14.56 GiB`/GPU, PyTorch `2.11.0+cu130`, `FP16`, corpus 100% SFW EN Edu + Wikipédia PT-BR + FineMath):**
+  - **`Lumina-V1-3B`** (`3,362,026,449` parâmetros exatos; `27` `FractalDeltaCell` + `9` NoPE `SlidingWindowGQACell` `W=1024, S=4`), destilado de `HuggingFaceTB/SmolLM3-3B-Base` em **`6,47M` tokens** (`Subfase 1` `550` passos `cos 0.1183 → 0.9409` em `aitherl/lumina-v1-lab` v9; `Subfase 2a` `180` passos `kl=0.3260`; `Subfase 2b` `40` passos `seq=1536` com `LoRA r=8` nas 144 camadas + `freeze_deltanet_proj=True`, pico `8.691 GiB` na `cuda:1`, merge para `subfase2b_merged` em `aitherl/lumina-v1-stage-2b-eval`).
+  - **`eval_fp16` (`1× T4`, `638.1s`, `150` ex/tarefa QA):** `6.262 GiB`, estado fixo $O(1)$ **`45.78 MiB`**, decode `11.8 tok/s` eager → **`27.0 tok/s` compilado** (`2361.86 mJ/tok`, `65.54 W`, `6.352 GiB` pico = **2.29× mais rápido e −59.4% energia**). `LAMBADA 64.0% (PPL 4.15)`, `ARC-Easy 74.0%`, `ARC-Challenge 52.0%`, `HellaSwag 58.7%`, `PIQA 79.3%`, `Winogrande 61.3%`, `RULER 2K/8K/16K = 0.0%` (`NLL 4.12–4.41`), com gerações greedy coerentes em EN, PT-BR e Python.
+  - **`eval_quarot_w4a16` (`aitherl/lumina-v1-quarot-eval` v3, `STATUS: COMPLETE` em `2082.7s`, `226` matrizes `INT4`, `3.556×` comp. células):** **`2.135 GiB`** (`−65.9%`), pico VRAM **`2.236 GiB`** (`2.575 GiB` suíte), `5.1 tok/s` eager (`36.91 W`), preservando **`LAMBADA 61.3% (PPL 4.84)`**, **`ARC-Easy 67.3% norm (73.3% acc)`**, **`ARC-Challenge 52.7%`**, **`HellaSwag 58.7%`**, **`PIQA 79.3%`** e **`Winogrande 62.7%`** (`RULER 2K/8K/16K = 0.0%`, `NLL 4.32–4.50`).
+- **Limitações declaradas:** `torch.compile` sobre `QuaRot W4A16 Triton` estourou `3600s` na T4 (`decode_compiled` não validado em INT4); `RULER NIAH` permanece em `0.0%` antes de currículo/SFT longo dedicado.
+
+## Upgrades Pós-C013 e Fases A–D (`Lumina V1` Multimodal + `O Ringue` + `Attention-Surgery` + `MetaQueryBridge`) — 22/11/2026
 
 Verificações reais executadas (detalhadas nas seções cronológicas ao final deste documento, linhas 1475+):
 - **CPU local (`Windows`, Python `3.12.2`, PyTorch `2.14.1+cpu`):**
