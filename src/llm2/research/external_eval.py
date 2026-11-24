@@ -116,6 +116,7 @@ def evaluate_lambada(
 
 
 @torch.inference_mode()
+@torch.inference_mode()
 def evaluate_ruler_niah(
     model,
     tokenizer,

@@ -716,7 +716,7 @@ def run_subfase1_dual_gpu(
                     if p.requires_grad:
                         trainable_params.append(p)
         unique_params = list({p.data_ptr(): p for p in trainable_params}.values())
-        optimizer = torch.optim.AdamW(unique_params, lr=lr, weight_decay=weight_decay, foreach=False)
+        optimizer = CompactAdamW(unique_params, lr=lr, weight_decay=weight_decay) if (precision == "fp16" and dev1.type == "cuda") else torch.optim.AdamW(unique_params, lr=lr, weight_decay=weight_decay, foreach=False)
         scheduler = torch.optim.lr_scheduler.LambdaLR(
             optimizer, lambda s: _cosine_lr_scale(s, warmup_steps, max_steps, min_lr_ratio)
         )
@@ -1029,30 +1029,31 @@ def probe_halo_layer_sensitivity(
     ids = probe_ids.to(dev)
 
     teacher.eval()
-    base_h, _, _, _ = _teacher_forward_hidden_and_deltas(teacher, ids, need_attn_deltas=False, use_amp=use_amp, amp_dtype=amp_dtype)
-    base_lp = F.log_softmax(t_lm_head(base_h.to(dtype=t_lm_head.weight.dtype)).float(), dim=-1)
-    base_p = base_lp.exp()
+    with torch.no_grad():
+        base_h, _, _, _ = _teacher_forward_hidden_and_deltas(teacher, ids, need_attn_deltas=False, use_amp=use_amp, amp_dtype=amp_dtype)
+        base_lp = F.log_softmax(t_lm_head(base_h.to(dtype=t_lm_head.weight.dtype)).float(), dim=-1)
+        base_p = base_lp.exp()
 
-    scores: list[tuple[int, float]] = []
-    for idx, tl in enumerate(t_layers):
-        attn = getattr(tl, "self_attn", None) or getattr(tl, "attn", None) or getattr(tl, "attention", None)
-        if attn is None:
-            scores.append((idx, 0.0))
-            continue
+        scores: list[tuple[int, float]] = []
+        for idx, tl in enumerate(t_layers):
+            attn = getattr(tl, "self_attn", None) or getattr(tl, "attn", None) or getattr(tl, "attention", None)
+            if attn is None:
+                scores.append((idx, 0.0))
+                continue
 
-        def _zero_attn_hook(_mod, _inp, output):
-            if isinstance(output, tuple):
-                return (torch.zeros_like(output[0]), *output[1:])
-            return torch.zeros_like(output)
+            def _zero_attn_hook(_mod, _inp, output):
+                if isinstance(output, tuple):
+                    return (torch.zeros_like(output[0]), *output[1:])
+                return torch.zeros_like(output)
 
-        handle = attn.register_forward_hook(_zero_attn_hook)
-        try:
-            abl_h, _, _, _ = _teacher_forward_hidden_and_deltas(teacher, ids, need_attn_deltas=False, use_amp=use_amp, amp_dtype=amp_dtype)
-            abl_lp = F.log_softmax(t_lm_head(abl_h.to(dtype=t_lm_head.weight.dtype)).float(), dim=-1)
-            kl = float((base_p * (base_lp - abl_lp)).sum(dim=-1).mean().item())
-        finally:
-            handle.remove()
-        scores.append((idx, round(kl, 6)))
+            handle = attn.register_forward_hook(_zero_attn_hook)
+            try:
+                abl_h, _, _, _ = _teacher_forward_hidden_and_deltas(teacher, ids, need_attn_deltas=False, use_amp=use_amp, amp_dtype=amp_dtype)
+                abl_lp = F.log_softmax(t_lm_head(abl_h.to(dtype=t_lm_head.weight.dtype)).float(), dim=-1)
+                kl = float((base_p * (base_lp - abl_lp)).sum(dim=-1).mean().item())
+            finally:
+                handle.remove()
+            scores.append((idx, round(kl, 6)))
 
     ranked = sorted(scores, key=lambda kv: kv[1], reverse=True)
     selected: list[int] = [int(i) for i in always_keep if 0 <= int(i) < n_layers]
@@ -1089,6 +1090,7 @@ def run_on_policy_distill(
     freeze_deltanet_proj: bool = True,
     lora_rank: int = 0,
     lora_alpha: float = 16.0,
+    log_every: int = 10,
 ) -> dict:
     """On-Policy Distillation (OPD / GKD): student rolls out continuations on its own policy; teacher supervises rollout tokens via Top-K KL."""
     from ..architectures.fractal_delta import FractalDecode
@@ -1112,14 +1114,15 @@ def run_on_policy_distill(
         it = iter(prompt_batches)
         history: list[dict[str, float]] = []
         rollout_tok_total = 0
+        t0 = time.perf_counter()
 
         for step in range(max_steps):
             prompts = next(it).to(device=head_dev)
             p_len = int(prompts.shape[1])
 
-            # 1. On-policy student rollout (eval mode, zero dropout, streaming FractalDecode)
+            # 1. On-policy student rollout (eval mode, zero dropout, streaming FractalDecode under AMP)
             student.eval()
-            with torch.inference_mode():
+            with torch.inference_mode(), torch.autocast(device_type=head_dev.type, dtype=amp_dtype, enabled=use_amp):
                 dec = FractalDecode(student)
                 cap = min(student.config.max_seq_len, p_len + rollout_tokens + 2)
                 logits, st = dec.prefill(prompts, capacity=cap)
@@ -1136,9 +1139,8 @@ def run_on_policy_distill(
                 full_seq = torch.cat([prompts, *gen_cols], dim=1)
             bx = full_seq[:, :-1].clone()
             by = full_seq[:, 1:].clone()
-            # Mask prompt tokens so OPD loss supervises ONLY student-generated rollout tokens!
-            if p_len > 1:
-                by[:, : p_len - 1] = -100
+            # Slice strictly on rollout positions to avoid wasted lm_head compute on prompt tokens
+            r_start = max(0, p_len - 1)
 
             # 2. Teacher scores the student's own trajectory
             with _cuda_dev_ctx(dev0):
@@ -1149,12 +1151,15 @@ def run_on_policy_distill(
             student.train()
             optimizer.zero_grad(set_to_none=True)
             s_hidden, _ = _forward_student_split(student, bx, dev0, dev1, 0, use_amp=use_amp, amp_dtype=amp_dtype, return_layer_states=False)
+            s_roll = s_hidden[:, r_start:, :].contiguous()
+            t_roll = t_final_h.detach()[:, r_start:, :].contiguous()
+            y_roll = by[:, r_start:].contiguous()
             loss, _, kl_v = _chunked_hidden_ce_kl_loss(
-                s_hidden.flatten(0, 1),
+                s_roll.flatten(0, 1),
                 student.lm_head,
-                t_final_h.detach().flatten(0, 1),
+                t_roll.flatten(0, 1),
                 t_lm_head,
-                by.flatten(),
+                y_roll.flatten(),
                 temperature=kl_temperature,
                 ce_weight=0.0,
                 kl_weight=1.0,
@@ -1168,8 +1173,11 @@ def run_on_policy_distill(
             torch.nn.utils.clip_grad_norm_(unique_params, grad_clip, foreach=False)
             scaler.step(optimizer)
             scaler.update()
-            rollout_tok_total += int((by != -100).sum().item())
+            rollout_tok_total += int(y_roll.numel())
             history.append({"opd_kl": kl_v})
+            if log_every > 0 and ((step + 1) % log_every == 0 or step == 0 or (step + 1) == max_steps):
+                dt = max(1e-3, time.perf_counter() - t0)
+                print(f"[OPD] step {step+1}/{max_steps} | opd_kl={kl_v:.4f} | rollout_tok={rollout_tok_total} | {rollout_tok_total/dt:.1f} tok/s", flush=True)
 
         merged = merge_and_remove_lora(student) if lora_rank > 0 else 0
     return {
