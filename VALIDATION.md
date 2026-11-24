@@ -1,5 +1,24 @@
 # Validação vigente — 24/11/2026
 
+## A/B Controlados em GPU Real (`Kaggle 2× Tesla T4`): `HALO + HyPE (Global KV-INT4/FP8)`, `OPD / GKD` (`Qwen3-4B`) e `Titans / TTT` vs `Gated DeltaNet-2`
+
+Relatórios brutos em [ab_halo_opd_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_ab_halo_opd_v2/ab_halo_opd_report.json) e [ab_titans_ttt_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_ab_titans_v1/ab_titans_ttt_report.json).
+
+Verificações reais executadas na **Kaggle `2× NVIDIA Tesla T4`** (`14.56 GiB`/GPU, PyTorch `2.11.0+cu130`, `FP16`/`FP32` — sem `BF16` nativo em hardware):
+- **A/B 1 — `HALO + HyPE (Global KV-INT4/FP8)` vs `3:1 Uniforme + SWA W=1024 NoPE` em escala real `4B` (`Qwen/Qwen3-4B-Instruct-2507`, `aitherl/lumina-1-ab-halo-hype-opd-4b` v2, mesmos `200` passos Stage-1 / `409.6K` tok SFW):**
+  - **Professor (`Qwen3-4B-Instruct-2507` FP16, `7.492 GiB`, `rope_theta=5e6`):** `LAMBADA 53.3% (PPL 4.09)`, `ARC-E 85.0%`, `ARC-C 68.3% norm`, `HellaSwag 55.0% norm`, `PIQA 80.0%`, `Winogrande 75.0% norm`, `RULER 2K/4K = 100% / 100%` (`NLL 0.126 / 0.112`), `rep4 = 0.044`.
+  - **Sonda `HALO` (36 camadas):** selecionou `[0, 1, 6, 7, 12, 23, 24, 34, 35]` (camada `0` KL `1.831` vs média `~0.03`).
+  - **Controle (`3:1` + `SWA W=1024 NoPE`):** `LAMBADA 0.0% (PPL 137.629)`, `ARC-E 33.3%`, `ARC-C 35.0% norm`, `HellaSwag 35.0% norm`, `PIQA 41.7% norm`, `RULER 2K/4K/8K = 0%/0%/0%` (`NLL 4.01 / 3.91 / 4.18`).
+  - **Tratamento (`HALO + HyPE Global KV-INT4`):** **`LAMBADA 20.0% (PPL 126.1)`**, **`ARC-E 73.3% (+40.0 pp)`**, **`ARC-C 41.7% norm`**, **`HellaSwag 43.3% norm`**, **`PIQA 70.0% norm (+28.3 pp)`**, `RULER NLL 2.24 / 2.42 / 2.36`.
+  - **Sweep zero-custo de precisão do cache KV no mesmo checkpoint `HALO`:** **`KV-FP8` empatou 100% com `KV-FP16`** (`RULER 2K/4K/8K NLL 1.50 / 1.72 / 1.97`, já atingindo **`12.5%` exact match em `4096`** com só 200 passos!), enquanto `KV-INT4` degradou `~0.7 NLL`. **Decisão:** adotar **`HALO + HyPE Global KV-FP8`**.
+- **A/B 2 — `Off-Policy Top-K KL` vs `On-Policy Distillation (OPD)` (mesmo checkpoint Stage-1 `HALO`, `80` passos, `LoRA r=8`):**
+  - **`Off-Policy Top-K KL` (`80` passos = `81.9K` tok, `440s`):** `LAMBADA 20.0% → 33.3% (PPL 29.2)`, `ARC-C 46.7%`, `HellaSwag 50.0% norm`, `PIQA 71.7% norm`, **`RULER 8192 = 25.0% exact match` (`NLL 1.58`)**.
+  - **`OPD / GKD` (`80` passos = `3.84K` tok de rollout, `21×` menos tokens):** `opd_kl 0.466 → 0.287`, `LAMBADA 23.3% (PPL 58.1)`, `Winogrande 53.3%`, `RULER 8192 = 0% (NLL 2.02)`. **Conclusão:** `OPD` não substitui `Stage 2 Off-Policy` em modelo ainda sub-treinado (`cos=0.71`, `rep4=0.77`); entra como **Stage 3 de polimento** após `Stage 2` convergir.
+- **A/B 3 — `Titans / TTT` vs `Gated DeltaNet-2` (`aitherl/lumina-1-ab-titans-ttt-vs-deltanet2` `COMPLETE`, paralelo `cuda:0` vs `cuda:1`):**
+  - `Gated DeltaNet-2` (`46.7M`, FineWeb-Edu `seq=1024`, `500` passos): **100% estável em `FP16`** (`loss 508.9 → 7.79`, `val_nll 7.88`), **`13.218 tok/s` treino**, `76.3 tok/s` decode, **`0.75 MiB/seq`** estado $O(1)$, `6.155 MiB` pico VRAM.
+  - `Titans / TTT` (`45.9M`, mesma config): **`NaN` sob `FP16` na T4** (backprop de 2ª ordem pelo MLP interno estourou `FP16` sem `BF16` nativo), **`5.934 tok/s` treino (`2.23×` mais lento)** em PyTorch puro, `76.2 tok/s` decode, **`6.00 MiB/seq` estado (`8×` maior)**, `6.730 MiB` pico VRAM. **Decisão:** manter `Gated DeltaNet-2` no `Lumina-1-4B`; re-testar `Titans / TTT` apenas na Colab `L4/A100` (`BF16`) com clipping interno.
+- **Limitações declaradas:** Fase 4 (`QuaRot W4A16`) do Kernel 1 não concluiu antes do erro final do worker (Fases 0–3B salvas integralmente); `Titans / TTT` foi afetado por ausência de `BF16` na T4 (`sm_75`) e falta de kernel Triton fundido; `Lumina-1-4B` ficou em `4.50B` (`+480M` vs professor `4.02B`) por `tie_word_embeddings` ainda não ativado no aluno (ponto de corte imediato antes do treino final).
+
 ## Fase 0 — Preparação `Lumina 1` (`HALO`, Global+KV `INT4/FP8`, `QK-Norm`, `Top-K KL`, `OPD`, `QuaRot W4A16`) + `Titans / TTT` (CPU local; GPU preparada, não executada)
 
 Plano e protocolo em [docs/technical/TITANS_TTT_COLAB_PLAN.md](docs/technical/TITANS_TTT_COLAB_PLAN.md) e harness GPU em [scripts/bench_lumina1_halo_opd_and_titans.py](scripts/bench_lumina1_halo_opd_and_titans.py).
