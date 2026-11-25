@@ -736,10 +736,22 @@ class SlidingWindowGQACell(nn.Module):
                     k_all = torch.cat((k_prev, k), dim=2)
                     v_all = torch.cat((v_prev, v), dim=2)
                     pos_all = torch.cat((st.pos_tail[:, :s0], new_pos), dim=1)
-                    pq = new_pos[:, :, None]
-                    pk = pos_all[:, None, :]
-                    mask = ((pk >= 0) & (pk <= pq)).unsqueeze(1)
-                    attn = self._sdpa(q, k_all, v_all, attn_mask=mask, dropout_p=drop_p)
+                    # Micro-tile Q in blocks of 128 when context >= 8K so math-SDPA fallback on SM75 stays <2.5 GiB even at 64K.
+                    q_tile = 128 if (s0 + t) >= 8192 and t > 128 else t
+                    if q_tile < t:
+                        attn_chunks = []
+                        pk = pos_all[:, None, :]
+                        for qs in range(0, t, q_tile):
+                            qe = min(qs + q_tile, t)
+                            pq_sub = new_pos[:, qs:qe, None]
+                            mask_sub = ((pk >= 0) & (pk <= pq_sub)).unsqueeze(1)
+                            attn_chunks.append(self._sdpa(q[:, :, qs:qe, :], k_all, v_all, attn_mask=mask_sub, dropout_p=drop_p))
+                        attn = torch.cat(attn_chunks, dim=2)
+                    else:
+                        pq = new_pos[:, :, None]
+                        pk = pos_all[:, None, :]
+                        mask = ((pk >= 0) & (pk <= pq)).unsqueeze(1)
+                        attn = self._sdpa(q, k_all, v_all, attn_mask=mask, dropout_p=drop_p)
                     end = min(s0 + t, cap)
                     w_len = max(0, end - s0)
                     if w_len > 0:
