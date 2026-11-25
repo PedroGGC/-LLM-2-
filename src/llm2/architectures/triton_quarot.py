@@ -185,47 +185,48 @@ def _quarot_int4_linear_op(
     b_c = bias.contiguous() if has_bias else w_c.new_empty((1,), dtype=x.dtype)
     out = torch.empty((m, out_features), device=x.device, dtype=x.dtype)
 
-    if m == 1:
-        block_n = 16 if out_features >= 512 else 8
-        block_kb = 128 if in_features >= 512 else (64 if in_features >= 256 else 32)
-        grid = (triton.cdiv(out_features, block_n),)
-        _quarot_int4_matvec_kernel[grid](
-            x_2d,
-            w_c,
-            s_c,
-            b_c,
-            out,
-            N=out_features,
-            K=in_features,
-            G=group_size,
-            HAS_BIAS=has_bias,
-            BLOCK_N=block_n,
-            BLOCK_KB=block_kb,
-            num_warps=4,
-        )
-    else:
-        block_m = 32 if m >= 32 else 16
-        block_n = 32
-        block_kb = 32
-        grid = (triton.cdiv(m, block_m), triton.cdiv(out_features, block_n))
-        _quarot_int4_matmul_kernel[grid](
-            x_2d,
-            w_c,
-            s_c,
-            b_c,
-            out,
-            M=m,
-            N=out_features,
-            K=in_features,
-            G=group_size,
-            HAS_BIAS=has_bias,
-            USE_FP16_DOT=(x.dtype == torch.float16),
-            USE_BF16_DOT=(x.dtype == torch.bfloat16),
-            BLOCK_M=block_m,
-            BLOCK_N=block_n,
-            BLOCK_KB=block_kb,
-            num_warps=4,
-        )
+    with torch.cuda.device(x.device):
+        if m == 1:
+            block_n = 16 if out_features >= 512 else 8
+            block_kb = 128 if in_features >= 512 else (64 if in_features >= 256 else 32)
+            grid = (triton.cdiv(out_features, block_n),)
+            _quarot_int4_matvec_kernel[grid](
+                x_2d,
+                w_c,
+                s_c,
+                b_c,
+                out,
+                N=out_features,
+                K=in_features,
+                G=group_size,
+                HAS_BIAS=has_bias,
+                BLOCK_N=block_n,
+                BLOCK_KB=block_kb,
+                num_warps=4,
+            )
+        else:
+            block_m = 32 if m >= 32 else 16
+            block_n = 32
+            block_kb = 32
+            grid = (triton.cdiv(m, block_m), triton.cdiv(out_features, block_n))
+            _quarot_int4_matmul_kernel[grid](
+                x_2d,
+                w_c,
+                s_c,
+                b_c,
+                out,
+                M=m,
+                N=out_features,
+                K=in_features,
+                G=group_size,
+                HAS_BIAS=has_bias,
+                USE_FP16_DOT=(x.dtype == torch.float16),
+                USE_BF16_DOT=(x.dtype == torch.bfloat16),
+                BLOCK_M=block_m,
+                BLOCK_N=block_n,
+                BLOCK_KB=block_kb,
+                num_warps=4,
+            )
     return out.reshape(*orig_shape[:-1], out_features)
 
 
@@ -289,20 +290,21 @@ def quarot_int4_linear(
             out = torch.empty((*x.shape[:-1], out_features), device=x.device, dtype=x.dtype)
             block_n = 16 if out_features >= 512 else 8
             block_kb = 128 if in_features >= 512 else (64 if in_features >= 256 else 32)
-            _quarot_int4_matvec_kernel[(triton.cdiv(out_features, block_n),)](
-                x_2d,
-                w_c,
-                s_c,
-                b_c,
-                out,
-                N=out_features,
-                K=in_features,
-                G=group_size,
-                HAS_BIAS=has_bias,
-                BLOCK_N=block_n,
-                BLOCK_KB=block_kb,
-                num_warps=4,
-            )
+            with torch.cuda.device(x.device):
+                _quarot_int4_matvec_kernel[(triton.cdiv(out_features, block_n),)](
+                    x_2d,
+                    w_c,
+                    s_c,
+                    b_c,
+                    out,
+                    N=out_features,
+                    K=in_features,
+                    G=group_size,
+                    HAS_BIAS=has_bias,
+                    BLOCK_N=block_n,
+                    BLOCK_KB=block_kb,
+                    num_warps=4,
+                )
             return out
         return _quarot_int4_linear_op(x, packed_weight, weight_scale, bias, group_size)
     return _quarot_int4_pytorch_linear(x, packed_weight, weight_scale, bias, group_size)
