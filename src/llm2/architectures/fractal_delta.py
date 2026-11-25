@@ -192,6 +192,7 @@ class SWAState:
     seen: torch.Tensor
     k_scale: torch.Tensor | None = None
     v_scale: torch.Tensor | None = None
+    is_static: bool = False
 
 
 def _quantize_kv_cache(t: torch.Tensor, mode: str) -> tuple[torch.Tensor, torch.Tensor | None]:
@@ -211,13 +212,13 @@ def _quantize_kv_cache(t: torch.Tensor, mode: str) -> tuple[torch.Tensor, torch.
 
 
 def _dequantize_kv_cache(q: torch.Tensor, scale: torch.Tensor | None, mode: str, dtype: torch.dtype) -> torch.Tensor:
-    """Reconstruct KV cache back to target compute dtype before SDPA."""
+    """Reconstruct KV cache back to target compute dtype before SDPA (exact int8/int4 -> compute dtype)."""
     if mode == "none" or scale is None or q.shape[2] == 0:
-        return q.to(dtype)
+        return q if q.dtype == dtype else q.to(dtype)
     if mode == "fp8":
-        return (q.float() * scale.float()).to(dtype)
+        return q.to(dtype) * scale.to(dtype)
     if mode == "int4":
-        return (unpack_int4_signed(q).float() * scale.float()).to(dtype)
+        return unpack_int4_signed(q).to(dtype) * scale.to(dtype)
     raise ValueError(f"unsupported kv_quant mode: {mode}")
 
 
@@ -606,6 +607,54 @@ class SlidingWindowGQACell(nn.Module):
             return k, v
         return k.repeat_interleave(self.kv_groups, dim=1), v.repeat_interleave(self.kv_groups, dim=1)
 
+    def _sdpa(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *, attn_mask=None, is_causal: bool = False, dropout_p: float = 0.0) -> torch.Tensor:
+        if self.kv_groups == 1:
+            return F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, is_causal=is_causal, dropout_p=dropout_p)
+        try:
+            return F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, is_causal=is_causal, dropout_p=dropout_p, enable_gqa=True
+            )
+        except TypeError:
+            k_exp, v_exp = self._expand_kv(k, v)
+            return F.scaled_dot_product_attention(q, k_exp, v_exp, attn_mask=attn_mask, is_causal=is_causal, dropout_p=dropout_p)
+
+    def pad_state_static(self, st: SWAState, capacity: int) -> SWAState:
+        """Preallocate fixed-capacity static KV buffers for Global attention (CUDAGraph-safe decode)."""
+        if not self.global_attn:
+            return st
+        cur_len = st.k_tail.shape[2]
+        cap = max(int(capacity), cur_len)
+        if st.is_static and cur_len == cap:
+            return st
+        b = st.k_tail.shape[0]
+        device = st.k_tail.device
+        sd = self._stored_dim()
+        sdt = st.k_tail.dtype
+        k_buf = torch.zeros(b, self.kv_heads, cap, sd, device=device, dtype=sdt)
+        v_buf = torch.zeros(b, self.kv_heads, cap, sd, device=device, dtype=sdt)
+        pos_buf = torch.full((b, cap), -1, device=device, dtype=torch.int64)
+        k_sc = torch.ones(b, self.kv_heads, cap, 1, device=device, dtype=torch.float16) if self.kv_quant != "none" else None
+        v_sc = torch.ones(b, self.kv_heads, cap, 1, device=device, dtype=torch.float16) if self.kv_quant != "none" else None
+        if cur_len > 0:
+            k_buf[:, :, :cur_len, :].copy_(st.k_tail)
+            v_buf[:, :, :cur_len, :].copy_(st.v_tail)
+            pos_buf[:, :cur_len].copy_(st.pos_tail)
+            if k_sc is not None and st.k_scale is not None:
+                k_sc[:, :, :cur_len, :].copy_(st.k_scale)
+                v_sc[:, :, :cur_len, :].copy_(st.v_scale)
+        return SWAState(
+            st.k_sinks,
+            st.v_sinks,
+            st.pos_sinks,
+            k_buf,
+            v_buf,
+            pos_buf,
+            st.seen.clone(),
+            k_sc,
+            v_sc,
+            is_static=True,
+        )
+
     def forward_attn_delta(
         self,
         x: torch.Tensor,
@@ -627,7 +676,7 @@ class SlidingWindowGQACell(nn.Module):
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
         st = self.empty_state(b, x.device, k.dtype) if state is None else state
-        new_pos = st.seen[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :]
+        new_pos = st.seen[:, None] if t == 1 else (st.seen[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :])
         if self.use_rope:
             with torch.autocast(device_type=x.device.type, enabled=False):
                 angles = (new_pos[:, None, :, None].double() * self.rope_inv_freq.double().view(1, 1, 1, -1)).float()
@@ -635,9 +684,78 @@ class SlidingWindowGQACell(nn.Module):
                 k = _apply_split_half_rope(k.float(), angles).to(k.dtype)
 
         drop_p = self.dropout if self.training else 0.0
-        if state is None and (self.global_attn or t <= self.window) and not return_all_states:
-            k_exp, v_exp = self._expand_kv(k, v)
-            attn = F.scaled_dot_product_attention(q, k_exp, v_exp, is_causal=True, dropout_p=drop_p)
+        if st.is_static and self.global_attn and not return_all_states:
+            cap = st.k_tail.shape[2]
+            kq, ks = _quantize_kv_cache(k, self.kv_quant)
+            vq, vs = _quantize_kv_cache(v, self.kv_quant)
+            if t == 1:
+                # Sync-free, zero-allocation in-place static Global KV update (CUDAGraph-safe).
+                slot = st.seen.clamp(0, cap - 1)
+                idx_kv = slot.view(b, 1, 1, 1).expand(b, self.kv_heads, 1, self._stored_dim())
+                st.k_tail.scatter_(2, idx_kv, kq)
+                st.v_tail.scatter_(2, idx_kv, vq)
+                st.pos_tail.scatter_(1, slot[:, None], new_pos)
+                if self.kv_quant != "none":
+                    idx_sc = slot.view(b, 1, 1, 1).expand(b, self.kv_heads, 1, 1)
+                    st.k_scale.scatter_(2, idx_sc, ks)
+                    st.v_scale.scatter_(2, idx_sc, vs)
+                k_all = _dequantize_kv_cache(st.k_tail, st.k_scale, self.kv_quant, k.dtype)
+                v_all = _dequantize_kv_cache(st.v_tail, st.v_scale, self.kv_quant, v.dtype)
+                mask = (st.pos_tail >= 0)[:, None, None, :]
+                attn = self._sdpa(q, k_all, v_all, attn_mask=mask, dropout_p=drop_p)
+                st.seen.add_(1)
+                next_state = st
+            else:
+                # Chunked prefill into preallocated static Global KV buffer (no O(L) cat reallocation).
+                s0 = int(st.seen[0].item())
+                if s0 == 0 and (b == 1 or bool((st.seen == s0).all().item())):
+                    attn = self._sdpa(q, k, v, is_causal=True, dropout_p=drop_p)
+                    end = min(s0 + t, cap)
+                    w_len = end - s0
+                    st.k_tail[:, :, s0:end, :].copy_(kq[:, :, :w_len, :])
+                    st.v_tail[:, :, s0:end, :].copy_(vq[:, :, :w_len, :])
+                    st.pos_tail[:, s0:end].copy_(new_pos[:, :w_len])
+                    if self.kv_quant != "none":
+                        st.k_scale[:, :, s0:end, :].copy_(ks[:, :, :w_len, :])
+                        st.v_scale[:, :, s0:end, :].copy_(vs[:, :, :w_len, :])
+                    st.seen.add_(t)
+                    next_state = st
+                elif b == 1 or bool((st.seen == s0).all().item()):
+                    k_prev = _dequantize_kv_cache(
+                        st.k_tail[:, :, :s0, :],
+                        None if st.k_scale is None else st.k_scale[:, :, :s0, :],
+                        self.kv_quant,
+                        k.dtype,
+                    )
+                    v_prev = _dequantize_kv_cache(
+                        st.v_tail[:, :, :s0, :],
+                        None if st.v_scale is None else st.v_scale[:, :, :s0, :],
+                        self.kv_quant,
+                        v.dtype,
+                    )
+                    k_all = torch.cat((k_prev, k), dim=2)
+                    v_all = torch.cat((v_prev, v), dim=2)
+                    pos_all = torch.cat((st.pos_tail[:, :s0], new_pos), dim=1)
+                    pq = new_pos[:, :, None]
+                    pk = pos_all[:, None, :]
+                    mask = ((pk >= 0) & (pk <= pq)).unsqueeze(1)
+                    attn = self._sdpa(q, k_all, v_all, attn_mask=mask, dropout_p=drop_p)
+                    end = min(s0 + t, cap)
+                    w_len = max(0, end - s0)
+                    if w_len > 0:
+                        st.k_tail[:, :, s0:end, :].copy_(kq[:, :, :w_len, :])
+                        st.v_tail[:, :, s0:end, :].copy_(vq[:, :, :w_len, :])
+                        st.pos_tail[:, s0:end].copy_(new_pos[:, :w_len])
+                        if self.kv_quant != "none":
+                            st.k_scale[:, :, s0:end, :].copy_(ks[:, :, :w_len, :])
+                            st.v_scale[:, :, s0:end, :].copy_(vs[:, :, :w_len, :])
+                    st.seen.add_(t)
+                    next_state = st
+                else:
+                    raise ValueError("static Global KV multi-token prefill requires uniform batch seen offsets")
+        elif state is None and (self.global_attn or t <= self.window) and not return_all_states:
+            attn = self._sdpa(q, k, v, is_causal=True, dropout_p=drop_p)
+            next_state = self._update_state_block(st, k, v, new_pos, return_all_states=return_all_states)
         else:
             k_prev = _dequantize_kv_cache(st.k_tail, st.k_scale, self.kv_quant, k.dtype)
             v_prev = _dequantize_kv_cache(st.v_tail, st.v_scale, self.kv_quant, v.dtype)
@@ -655,10 +773,9 @@ class SlidingWindowGQACell(nn.Module):
                 mask = ((pk >= 0) & (pk <= pq)).unsqueeze(1)
             else:
                 mask = ((pk >= 0) & (pk <= pq) & ((pk < self.sink_tokens) | ((pq - pk) < self.window))).unsqueeze(1)
-            k_exp, v_exp = self._expand_kv(k_all, v_all)
-            attn = F.scaled_dot_product_attention(q, k_exp, v_exp, attn_mask=mask, dropout_p=drop_p)
+            attn = self._sdpa(q, k_all, v_all, attn_mask=mask, dropout_p=drop_p)
+            next_state = self._update_state_block(st, k, v, new_pos, return_all_states=return_all_states)
 
-        next_state = self._update_state_block(st, k, v, new_pos, return_all_states=return_all_states)
         out = attn.transpose(1, 2).contiguous().reshape(b, t, self.attn_dim).to(x.dtype)
         attn_update = F.dropout(self.out_proj(out).to(x.dtype), p=self.dropout, training=self.training)
         if adapter is not None:
@@ -924,7 +1041,7 @@ class FractalDeltaCell(nn.Module):
             query = F.normalize(q.float(), dim=-1, eps=1e-6)
             if self.golden_phase and self.head_dim >= 2:
                 base_pos = x.new_zeros((b,), dtype=torch.int64) if phase_pos is None else phase_pos
-                pos_steps = (base_pos[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :]).double()
+                pos_steps = (base_pos[:, None] if t == 1 else (base_pos[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :])).double()
                 freq = self.golden_inv_freq.double().view(1, 1, 1, -1)
                 if adapter is not None and adapter.phase_scale is not None:
                     ps = adapter.phase_scale.double()
@@ -938,7 +1055,7 @@ class FractalDeltaCell(nn.Module):
                     key = _apply_golden_phase(key, angles)
             elif self.deltanet_rope and self.head_dim >= 2:
                 base_pos = x.new_zeros((b,), dtype=torch.int64) if phase_pos is None else phase_pos
-                pos_steps = (base_pos[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :]).double()
+                pos_steps = (base_pos[:, None] if t == 1 else (base_pos[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :])).double()
                 angles = (pos_steps[:, None, :, None] * self.rope_inv_freq.double().view(1, 1, 1, -1)).float()
                 query = _apply_split_half_rope(query, angles)
                 key = _apply_split_half_rope(key, angles)
@@ -1769,6 +1886,56 @@ class FractalDecode:
     def prefill(self, ids=None, capacity: int | None = None, *, inputs_embeds=None):
         logits, _, state = self.prefill_hidden(ids, capacity, inputs_embeds=inputs_embeds)
         return logits, state
+
+    def pad_global_state_static(self, state: FractalDeltaState, capacity: int) -> FractalDeltaState:
+        """Convert dynamic Global SWAState levels into fixed-capacity static buffers for CUDAGraph decode."""
+        levels = []
+        for level, lvl_state in enumerate(state.levels):
+            cell = self.step_cells[self.model.cell_index(level)]
+            if isinstance(cell, SlidingWindowGQACell) and isinstance(lvl_state, SWAState) and cell.global_attn:
+                levels.append(cell.pad_state_static(lvl_state, capacity))
+            else:
+                levels.append(lvl_state)
+        return FractalDeltaState(
+            tuple(levels),
+            state.assoc_memory,
+            state.local_tail,
+            state.window,
+            state.phase_pos,
+            state.hybrid_windows,
+        )
+
+    def prefill_static(
+        self,
+        ids=None,
+        capacity: int | None = None,
+        *,
+        inputs_embeds=None,
+        chunk_size: int = 1024,
+    ):
+        """Prefill into static-capacity Global KV buffers, chunking long prompts (16K-64K+) via fast chunked DPLR."""
+        seq_len = ids.shape[1] if ids is not None else (0 if inputs_embeds is None else inputs_embeds.shape[1])
+        cap = seq_len if capacity is None else int(capacity)
+        if not 0 < seq_len <= cap <= self.model.config.max_seq_len:
+            raise ValueError("invalid prefill capacity")
+        first_end = min(seq_len, max(1, int(chunk_size)))
+        out = self.model(
+            None if ids is None else ids[:, :first_end],
+            inputs_embeds=None if inputs_embeds is None else inputs_embeds[:, :first_end],
+            return_logits=False,
+        )
+        state = self.pad_global_state_static(out.state, cap)
+        for start in range(first_end, seq_len, max(1, int(chunk_size))):
+            end = min(start + max(1, int(chunk_size)), seq_len)
+            out = self.model(
+                None if ids is None else ids[:, start:end],
+                inputs_embeds=None if inputs_embeds is None else inputs_embeds[:, start:end],
+                state=state,
+                return_logits=False,
+            )
+            state = out.state
+        last_hidden = out.hidden_states[:, -1:]
+        return self.model.lm_head(last_hidden), state
 
     def prefill_embeds(self, inputs_embeds: torch.Tensor, capacity: int | None = None):
         return self.prefill_hidden(None, capacity, inputs_embeds=inputs_embeds)

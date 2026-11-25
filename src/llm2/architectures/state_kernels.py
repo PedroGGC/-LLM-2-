@@ -22,6 +22,21 @@ def dplr_sequential(q, k, v, log_w, a, b, state=None, *, return_all_states=False
         kv_heads = k.shape[1]
         g_mult = q_heads // kv_heads
         memory = v.new_zeros(batch, kv_heads, v.shape[-1], k_dim) if state is None else state.float()
+        if seq_len == 1 and not return_all_states:
+            # Fast single-step decode path: direct batched matmul (no einsum parsing or list/stack overhead).
+            a0 = a[:, :, 0]
+            b0 = b[:, :, 0]
+            k0 = k[:, :, 0]
+            v0 = v[:, :, 0]
+            w0 = log_w[:, :, 0].exp().unsqueeze(-2)
+            removed = torch.matmul(memory, a0.unsqueeze(-1))
+            memory = memory * w0 + removed * b0.unsqueeze(-2) + v0.unsqueeze(-1) * k0.unsqueeze(-2)
+            if g_mult == 1:
+                out = torch.matmul(memory, q[:, :, 0].unsqueeze(-1)).transpose(-1, -2)
+            else:
+                qg_t = q[:, :, 0].reshape(batch, kv_heads, g_mult, k_dim).transpose(-1, -2)
+                out = torch.matmul(memory, qg_t).transpose(-1, -2).reshape(batch, q_heads, 1, v.shape[-1])
+            return out, memory
         outputs = []
         states = [] if return_all_states else None
         for t in range(seq_len):
