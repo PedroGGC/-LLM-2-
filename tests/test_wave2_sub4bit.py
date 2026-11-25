@@ -107,3 +107,33 @@ def test_model_quantizers_smoke():
     q_pq, info_pq = quantize_model_paretoq(m, mode="ternary", qat=False, inplace=False)
     assert info_e8["replaced_count"] == 2 and torch.isfinite(q_e8(x)).all()
     assert info_pq["replaced_count"] == 2 and torch.isfinite(q_pq(x)).all()
+
+
+def test_e8_and_kintsugi_qad_reduces_error():
+    torch.manual_seed(23)
+    ref = nn.Sequential(nn.Linear(64, 64, bias=False), nn.SiLU(), nn.Linear(64, 64, bias=False))
+    for mod in ref.modules():
+        if isinstance(mod, nn.Linear):
+            nn.init.normal_(mod.weight, std=0.05)
+    q_m, _ = quantize_model_kintsugi_mixed(ref, high_bit_fraction=0.5, inplace=False, use_triton=False)
+    qad_params = []
+    for mod in q_m.modules():
+        if hasattr(mod, "enable_qad"):
+            qad_params.extend(mod.enable_qad())
+    assert len(qad_params) == 3  # 1 INT4 scale + 1 E8 codebook + 1 E8 scale
+    opt = torch.optim.AdamW(qad_params, lr=5e-3)
+    x = torch.randn(8, 64)
+    with torch.no_grad():
+        target = ref(x)
+    loss0 = (q_m(x) - target).square().mean().item()
+    for _ in range(25):
+        opt.zero_grad()
+        loss = (q_m(x) - target).square().mean()
+        loss.backward()
+        opt.step()
+    loss_end = (q_m(x) - target).square().mean().item()
+    assert loss_end < loss0 * 0.5, f"QAD did not reduce error: {loss0:.5f} -> {loss_end:.5f}"
+    for mod in q_m.modules():
+        if hasattr(mod, "freeze_qad"):
+            mod.freeze_qad()
+    assert torch.isfinite(q_m(x)).all()

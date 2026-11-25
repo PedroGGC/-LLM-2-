@@ -213,6 +213,23 @@ class HadamardLinearINT4(nn.Module):
         w_rot = (q.view(self.out_features, self.n_groups, self.group_size) * scale).view(self.out_features, self.in_features)
         return w_rot.to(dtype)
 
+    def enable_qad(self) -> list[nn.Parameter]:
+        """Make packed INT4 group scales trainable in FP32 for zero-overhead QAD recovery."""
+        if self.weight_scale is None:
+            return []
+        sc_p = nn.Parameter(self.weight_scale.detach().float())
+        del self._buffers["weight_scale"]
+        self.weight_scale = sc_p
+        return [sc_p]
+
+    @torch.no_grad()
+    def freeze_qad(self) -> None:
+        """Cast trained INT4 group scales back to compact FP16 buffer."""
+        if isinstance(self.weight_scale, nn.Parameter):
+            sc_buf = self.weight_scale.detach().to(torch.float16).contiguous()
+            del self._parameters["weight_scale"]
+            self.register_buffer("weight_scale", sc_buf)
+
     def weight_memory_bytes(self) -> int:
         if self.qat and self.weight is not None:
             return self.weight.numel() * self.weight.element_size()
@@ -235,7 +252,11 @@ class HadamardLinearINT4(nn.Module):
             w_eff = w_rot + (w_q - w_rot).detach()
             bias = None if self.bias is None else self.bias.to(x_rot.dtype)
             return F.linear(x_rot, w_eff, bias)
-        if self.use_triton and can_use_triton_quarot(self.in_features, self.group_size, x_rot.device):
+        if (
+            self.use_triton
+            and not isinstance(self.weight_scale, nn.Parameter)
+            and can_use_triton_quarot(self.in_features, self.group_size, x_rot.device)
+        ):
             return quarot_int4_linear(
                 x_rot,
                 self.packed_weight,

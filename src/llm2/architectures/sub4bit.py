@@ -169,6 +169,29 @@ class E8Linear2Bit(nn.Module):
         w = w8.view(self.out_features, self.n_groups, self.group_size)
         return (w * self.weight_scale.to(dtype).unsqueeze(-1)).view(self.out_features, self.in_features)
 
+    def enable_qad(self) -> list[nn.Parameter]:
+        """Convert codebook (256x8) and weight_scale to trainable FP32 Parameters for zero-overhead AQLM-style QAD."""
+        cb_p = nn.Parameter(self.codebook.detach().float())
+        sc_p = nn.Parameter(self.weight_scale.detach().float())
+        # Remove buffers first before assigning Parameters of the same name
+        del self._buffers["codebook"]
+        del self._buffers["weight_scale"]
+        self.codebook = cb_p
+        self.weight_scale = sc_p
+        return [cb_p, sc_p]
+
+    @torch.no_grad()
+    def freeze_qad(self) -> None:
+        """Cast trained QAD codebook and weight_scale back to compact FP16 buffers."""
+        if isinstance(self.codebook, nn.Parameter):
+            cb_buf = self.codebook.detach().to(torch.float16).contiguous()
+            del self._parameters["codebook"]
+            self.register_buffer("codebook", cb_buf)
+        if isinstance(self.weight_scale, nn.Parameter):
+            sc_buf = self.weight_scale.detach().to(torch.float16).contiguous()
+            del self._parameters["weight_scale"]
+            self.register_buffer("weight_scale", sc_buf)
+
     def weight_memory_bytes(self) -> int:
         return int(
             self.idx1.numel() * self.idx1.element_size()
