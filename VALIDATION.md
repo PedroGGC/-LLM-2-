@@ -1,5 +1,26 @@
 # Validação vigente — 25/11/2026
 
+## Onda 1 (`Kaggle 1× Tesla T4`, `KernelWorkerStatus.COMPLETE`, `1041.4s`): `CUDAGraphs Eager` + `Global KV-FP8` Estático + Varredura `16K → 32K → 64K` (`GQA-DeltaNet 4.071B`)
+
+Relatório completo salvo em [lumina1_wave1_cudagraph_ctx_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_wave1_v2/lumina1_wave1_cudagraph_ctx_report.json) (kernel `aitherl/lumina-1-wave-1-cudagraph-context-scaling-bench` v2, encerramento 100% limpo sem `os._exit` nem travamento de cota).
+
+- **CPU local (`Windows`, Python `3.12.2`, PyTorch `2.14.1+cpu`, commit `f5e490c`):** `rtk pytest -q tests/test_wave1_cudagraph_static_kv.py tests/test_lumina1_upgrades.py tests/test_lumina_3b_hybrid.py tests/test_quarot_early_exit.py tests/test_phase_c_distill_ringue.py` → **`28 passed, 0 failed, 3 skipped`** (3 testes CUDA pulados na CPU; paridade exata `prefill_static == prefill`, chunked prefill, `dplr_sequential t==1` fast matmul e escalamento linear `16K/32K/64K`).
+- **Kaggle `Tesla T4` (`14.56 GiB`, PyTorch `2.11.0+cu130`, NVML real, `4.071.233.512` params = fórmula exata):**
+  - **Fase 1A — FP16 (`7.583 GiB`, `seq=32`, `63` tokens steady-state):**
+    - `dynamic_eager`: `10.57 tok/s`, `5.746,1 mJ/tok` (`61.14 W`), `7.630 GiB` pico.
+    - **`cudagraph_eager` (`capture = 0.42s`):** **`20.08 tok/s` (`1.90×`)**, **`3.440,3 mJ/tok` (`−40.1%` energia)**, `7.632 GiB` pico, paridade exata vs `static_eager` = **`64/64` (`max_logit_diff = 0.00000`)**. *(Já supera `Qwen3-4B-Instruct-2507` FP16 denso na mesma T4: `18.0–18.4 tok/s` e `3.777–3.801 mJ/tok`!)*
+  - **Fase 1B — `W4A16 Fast` (`2.676 GiB` armazenamento = `2.8×` menos VRAM que `Qwen3-4B`, `252` lineares Triton):**
+    - `dynamic_eager`: `9.00 tok/s`, `6.361,1 mJ/tok`, `2.732 GiB` pico.
+    - **`cudagraph_eager` (`capture = 0.48s`):** **`19.89 tok/s` (`2.21×`)**, **`3.430,3 mJ/tok` (`−46.1%` energia)**, **`2.724 GiB` pico**, paridade exata vs `static_eager` = **`64/64` (`max_logit_diff = 0.00000`)**. *(Mais rápido, `2.76×` menor em VRAM e `−9.2%` menos energia que o `Qwen3-4B` denso FP16 na mesma T4!)*
+  - **Fase 2 — Varredura Real de Contexto `16K → 32K → 64K` (`W4A16 Fast + CUDAGraphs Eager`, `chunk_size=1024`):**
+    - **`16K` (`16.384` tok):** estado `307.9 MiB`, **`decode VRAM = 3.010 GiB`**, `prefill = 156.8s (104.5 tok/s)`, `pico prefill = 8.372 GiB`, `capture = 0.93s`, `decode = 6.42 tok/s` (`10.656 mJ/tok`).
+    - **`32K` (`32.768` tok):** estado `601.5 MiB`, **`decode VRAM = 3.297 GiB`**, `prefill = 344.6s (95.1 tok/s)`, `pico prefill = 13.956 GiB`, `capture = 1.46s`, `decode = 3.87 tok/s` (`17.529 mJ/tok`).
+    - **`64K` (`65.496` tok):** **OOM no prefill** (`13.76 / 14.56 GiB` tentando alocar `1.024 MiB`), apesar do estado analítico ser apenas `1.188,8 MiB` (`~3.88 GiB` total no decode).
+- **Diagnóstico empírico dos gargalos em `16K–64K` (acionável para Ondas 2–3):**
+  1. **Pico de prefill (`+5.37 GiB @ 16K`, `+10.68 GiB @ 32K`, OOM `@ 64K`):** na Tesla T4 (`sm_75`), passar `attn_mask` booleano + `enable_gqa=True` ao `F.scaled_dot_product_attention` desativa Flash/MemEff SDPA e cai em `math` SDPA (`O(chunk × L)` em FP32 = `~10.7 GiB` em `32K`). Reduzir `chunk_size` para `256` ou usar SDPA em blocos sem fallback `math` resolve o `64K` prefill dentro de `~4.5 GiB` na T4.
+  2. **Queda de `tok/s` no decode longo (`19.89 → 6.42 @ 16K → 3.87 @ 32K`):** dequantizar todo o buffer `KV-FP8` para FP16 a cada token + `math` SDPA lê `~2.3 GiB/tok` de HBM em `32K`. A **Onda 3** (`Gemma 4 K=V` + `Cross-Layer KV-Sharing 2×`, cortando o KV `4×`: `64K = 307.9 MiB`, `512K = 2.36 GiB` FP8 / `1.19 GiB` INT4) e um kernel Triton fundido de atenção `KV-FP8` atacam exatamente esse gargalo.
+- **Limitações declaradas:** `static_eager` vs `dynamic_eager` divergiu em greedy (`5/64` FP16, `12/64` W4A16) em modelo recém-transplantado sem treino Stage 1/2 porque `static_eager` quantiza o token atual para `FP8` antes da autoatenção (enquanto `dynamic_eager` o mantinha em FP16 por 1 passo); `cudagraph_eager` empatou bit-a-bit (`64/64`, `0.00000`) com `static_eager`. `64K` ainda exige correção do fallback `math` SDPA no prefill em blocos.
+
 ## Benchmark Real de Eficiência (`Kaggle 1×/2× Tesla T4`): `GQA-DeltaNet (4.08B)` + `6` Globais `KV-FP8` + `W4A16 Fast` + `Early-Exit` vs `Qwen3-4B-Instruct-2507`
 
 Relatórios salvos em [gqa_w4a16_eff_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_gqa_eff_v2/gqa_w4a16_eff_report.json) (v2, 80 passos Stage-1) e [gqa_w4a16_infer_showdown.json](file:///c:/Users/Lux/Downloads/chibi/gqa_w4a16_infer_showdown.json) (v4, duelo puro de inferência na mesma Tesla T4, NVML real).
