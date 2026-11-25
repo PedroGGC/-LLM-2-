@@ -57,6 +57,7 @@ def build_lumina_3b_config_from_hf(
     kv_quant: str = "none",
     out_gate_rank: int = 0,
     assoc_channel: bool = True,
+    delta_gqa: bool = False,
     qk_norm: bool | None = None,
     head_dim: int | None = None,
 ) -> tuple[ModelConfig, ResearchConfig]:
@@ -116,6 +117,7 @@ def build_lumina_3b_config_from_hf(
         fractal_kv_quant=str(kv_quant),
         fractal_out_gate_rank=int(out_gate_rank),
         fractal_assoc_channel=bool(assoc_channel),
+        fractal_delta_gqa=bool(delta_gqa),
         fractal_decoupled_gates=True,
         fractal_assoc_delta=bool(assoc_channel),
         fractal_exit_gate=False,
@@ -186,9 +188,9 @@ def build_student_for_surgery(
         nn.init.normal_(cell.decay.weight, std=0.02)
         if cell.kda:
             nn.init.normal_(cell.decay_down.weight, std=0.02)
-            cell.decay.bias.copy_(_init_decay_bias(cell.heads).repeat_interleave(cell.head_dim).to(dtype=cell.decay.bias.dtype))
+            cell.decay.bias.copy_(_init_decay_bias(cell.kv_heads).repeat_interleave(cell.head_dim).to(dtype=cell.decay.bias.dtype))
         else:
-            cell.decay.bias.copy_(_init_decay_bias(cell.heads).to(dtype=cell.decay.bias.dtype))
+            cell.decay.bias.copy_(_init_decay_bias(cell.kv_heads).to(dtype=cell.decay.bias.dtype))
         nn.init.normal_(cell.beta.weight, std=0.02)
         nn.init.constant_(cell.beta.bias, -1.0)
         if cell.beta_write is not None:

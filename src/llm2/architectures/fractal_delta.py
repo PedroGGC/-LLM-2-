@@ -765,6 +765,13 @@ class FractalDeltaCell(nn.Module):
         self.heads = config.n_heads
         self.head_dim = research.fractal_head_dim if research.fractal_head_dim > 0 else (self.d_model // self.heads)
         self.attn_dim = self.heads * self.head_dim
+        req_kv = int(research.fractal_swa_kv_heads) if research.fractal_delta_gqa else 0
+        if req_kv > 0 and req_kv < self.heads and self.heads % req_kv == 0:
+            self.kv_heads = req_kv
+        else:
+            self.kv_heads = self.heads
+        self.kv_dim = self.kv_heads * self.head_dim
+        self.kv_groups = self.heads // self.kv_heads
         self.hidden_dim = config.hidden_dim
         self.conv_kernel = 4
         self.dropout = config.dropout
@@ -782,19 +789,19 @@ class FractalDeltaCell(nn.Module):
 
         self.attn_norm = RMSNorm(self.d_model, eps=config.norm_eps)
         self.conv = nn.Conv1d(self.d_model, self.d_model, self.conv_kernel, groups=self.d_model)
-        self.qkv = _make_linear(self.d_model, 3 * self.attn_dim, self.weight_mode)
+        self.qkv = _make_linear(self.d_model, self.attn_dim + 2 * self.kv_dim, self.weight_mode)
         self.q_norm = RMSNorm(self.head_dim, eps=config.norm_eps) if self.qk_norm else None
         self.k_norm = RMSNorm(self.head_dim, eps=config.norm_eps) if self.qk_norm else None
         if self.kda:
-            self.decay_rank = max(16, self.heads)
+            self.decay_rank = max(16, self.kv_heads)
             self.decay_down = nn.Linear(self.d_model, self.decay_rank, bias=False)
-            self.decay = nn.Linear(self.decay_rank, self.attn_dim, bias=True)
+            self.decay = nn.Linear(self.decay_rank, self.kv_dim, bias=True)
         else:
             self.decay_rank = 0
             self.decay_down = None
-            self.decay = nn.Linear(self.d_model, self.heads, bias=True)
-        self.beta = nn.Linear(self.d_model, self.heads, bias=True)
-        self.beta_write = nn.Linear(self.d_model, self.heads, bias=True) if self.decoupled_gates else None
+            self.decay = nn.Linear(self.d_model, self.kv_heads, bias=True)
+        self.beta = nn.Linear(self.d_model, self.kv_heads, bias=True)
+        self.beta_write = nn.Linear(self.d_model, self.kv_heads, bias=True) if self.decoupled_gates else None
         if self.out_gate_rank > 0:
             self.out_gate_down = nn.Linear(self.d_model, self.out_gate_rank, bias=False)
             self.out_gate = nn.Linear(self.out_gate_rank, self.attn_dim, bias=False)
@@ -839,11 +846,11 @@ class FractalDeltaCell(nn.Module):
             nn.init.normal_(self.decay_down.weight, std=0.02)
             nn.init.normal_(self.decay.weight, std=0.02)
             with torch.no_grad():
-                self.decay.bias.copy_(_init_decay_bias(self.heads).repeat_interleave(self.head_dim))
+                self.decay.bias.copy_(_init_decay_bias(self.kv_heads).repeat_interleave(self.head_dim))
         else:
             nn.init.normal_(self.decay.weight, std=0.02)
             with torch.no_grad():
-                self.decay.bias.copy_(_init_decay_bias(self.heads))
+                self.decay.bias.copy_(_init_decay_bias(self.kv_heads))
         nn.init.normal_(self.beta.weight, std=0.02)
         nn.init.constant_(self.beta.bias, -1.0)
         if self.beta_write is not None:
@@ -898,13 +905,16 @@ class FractalDeltaCell(nn.Module):
             conv_out = F.conv1d(padded, self.conv.weight.float(), self.conv.bias.float(), groups=d).transpose(1, 2)
             local = (normed.float() + conv_out).to(normed.dtype)
 
-        q, k, v = self.qkv(local).reshape(b, t, 3, self.heads, self.head_dim).unbind(2)
+        q_flat, k_flat, v_flat = self.qkv(local).split((self.attn_dim, self.kv_dim, self.kv_dim), dim=-1)
+        q = q_flat.reshape(b, t, self.heads, self.head_dim)
+        k = k_flat.reshape(b, t, self.kv_heads, self.head_dim)
+        v = v_flat.reshape(b, t, self.kv_heads, self.head_dim)
         if self.q_norm is not None:
             q = self.q_norm(q)
             k = self.k_norm(k)
         q, k, v = (tensor.transpose(1, 2) for tensor in (q, k, v))
         if self.kda:
-            decay_raw = self.decay(F.silu(self.decay_down(local))).reshape(b, t, self.heads, self.head_dim).permute(0, 2, 1, 3)
+            decay_raw = self.decay(F.silu(self.decay_down(local))).reshape(b, t, self.kv_heads, self.head_dim).permute(0, 2, 1, 3)
         else:
             decay_raw = self.decay(local).transpose(1, 2)
         beta_raw = self.beta(local).transpose(1, 2)
@@ -917,10 +927,15 @@ class FractalDeltaCell(nn.Module):
                 pos_steps = (base_pos[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :]).double()
                 freq = self.golden_inv_freq.double().view(1, 1, 1, -1)
                 if adapter is not None and adapter.phase_scale is not None:
-                    freq = freq * adapter.phase_scale.double().view(1, self.heads, 1, 1)
-                angles = (pos_steps[:, None, :, None] * freq).remainder(2.0 * math.pi).float()
-                query = _apply_golden_phase(query, angles)
-                key = _apply_golden_phase(key, angles)
+                    ps = adapter.phase_scale.double()
+                    freq_k = freq * ps.view(1, self.kv_heads, 1, 1)
+                    freq_q = freq * (ps.repeat_interleave(self.kv_groups) if self.kv_groups > 1 else ps).view(1, self.heads, 1, 1)
+                    query = _apply_golden_phase(query, (pos_steps[:, None, :, None] * freq_q).remainder(2.0 * math.pi).float())
+                    key = _apply_golden_phase(key, (pos_steps[:, None, :, None] * freq_k).remainder(2.0 * math.pi).float())
+                else:
+                    angles = (pos_steps[:, None, :, None] * freq).remainder(2.0 * math.pi).float()
+                    query = _apply_golden_phase(query, angles)
+                    key = _apply_golden_phase(key, angles)
             elif self.deltanet_rope and self.head_dim >= 2:
                 base_pos = x.new_zeros((b,), dtype=torch.int64) if phase_pos is None else phase_pos
                 pos_steps = (base_pos[:, None] + torch.arange(t, device=x.device, dtype=torch.int64)[None, :]).double()
@@ -929,22 +944,22 @@ class FractalDeltaCell(nn.Module):
                 key = _apply_split_half_rope(key, angles)
             val_f = v.float()
             if adapter is not None and adapter.val_mix is not None and v0 is not None:
-                mix = adapter.val_mix.float().sigmoid().view(1, self.heads, 1, 1)
+                mix = adapter.val_mix.float().sigmoid().view(1, self.kv_heads, 1, 1)
                 val_f = torch.lerp(val_f, v0, mix)
 
             decay_logits = decay_raw.float()
             beta_logits = beta_raw.float()
             if adapter is not None:
-                decay_bias = adapter.decay_bias.float().view(1, self.heads, 1, 1) if self.kda else adapter.decay_bias.float().view(1, self.heads, 1)
+                decay_bias = adapter.decay_bias.float().view(1, self.kv_heads, 1, 1) if self.kda else adapter.decay_bias.float().view(1, self.kv_heads, 1)
                 decay_logits = decay_logits + decay_bias
-                beta_logits = beta_logits + adapter.beta_bias.float().view(1, self.heads, 1)
+                beta_logits = beta_logits + adapter.beta_bias.float().view(1, self.kv_heads, 1)
 
             log_w = F.logsigmoid(decay_logits) if self.kda else F.logsigmoid(decay_logits).unsqueeze(-1)
             beta_erase = (self.beta_scale * beta_logits.sigmoid()).unsqueeze(-1)
             if self.beta_write is not None:
                 bw_logits = self.beta_write(local).transpose(1, 2).float()
                 if adapter is not None and adapter.beta_write_bias is not None:
-                    bw_logits = bw_logits + adapter.beta_write_bias.float().view(1, self.heads, 1)
+                    bw_logits = bw_logits + adapter.beta_write_bias.float().view(1, self.kv_heads, 1)
                 beta_write = (self.beta_scale * bw_logits.sigmoid()).unsqueeze(-1)
             else:
                 beta_write = beta_erase
@@ -1006,6 +1021,9 @@ class FractalDeltaMemory(Backbone):
         self.heads = config.n_heads
         self.head_dim = research.fractal_head_dim if research.fractal_head_dim > 0 else (config.d_model // self.heads)
         self.attn_dim = self.heads * self.head_dim
+        req_kv = int(research.fractal_swa_kv_heads) if research.fractal_delta_gqa else 0
+        self.delta_kv_heads = req_kv if (0 < req_kv < self.heads and self.heads % req_kv == 0) else self.heads
+        self.delta_kv_dim = self.delta_kv_heads * self.head_dim
         self.assoc_dim = research.memory_dim
         self.use_assoc_channel = bool(research.fractal_assoc_channel)
         self.chunk_size = research.state_chunk_size
@@ -1093,7 +1111,7 @@ class FractalDeltaMemory(Backbone):
                 [
                     FractalLevelAdapter(
                         d,
-                        self.heads,
+                        self.delta_kv_heads,
                         lvl,
                         self.depth,
                         value_residual=self.value_residual,
@@ -1122,7 +1140,7 @@ class FractalDeltaMemory(Backbone):
         if not isinstance(state, FractalDeltaState) or len(state.levels) != self.depth:
             raise ValueError("invalid fractal delta state shape/dtype")
         b, _, d = x.shape
-        mem_shape = (b, self.heads, self.head_dim, self.head_dim)
+        mem_shape = (b, self.delta_kv_heads, self.head_dim, self.head_dim)
         tail_shape = (b, d, 3)
         if self.use_assoc_channel:
             assoc_checks = (
@@ -1488,13 +1506,16 @@ class FractalDeltaMemory(Backbone):
             padded = torch.cat((prefix, norm_f), dim=2)
             conv_out = F.conv1d(padded, cell.conv.weight.float(), cell.conv.bias.float(), groups=d).transpose(1, 2)
             local = (normed.float() + conv_out).to(normed.dtype)
-        q, k, v = cell.qkv(local).reshape(b, t, 3, cell.heads, cell.head_dim).unbind(2)
+        q_flat, k_flat, v_flat = cell.qkv(local).split((cell.attn_dim, cell.kv_dim, cell.kv_dim), dim=-1)
+        q = q_flat.reshape(b, t, cell.heads, cell.head_dim)
+        k = k_flat.reshape(b, t, cell.kv_heads, cell.head_dim)
+        v = v_flat.reshape(b, t, cell.kv_heads, cell.head_dim)
         if cell.q_norm is not None:
             q = cell.q_norm(q)
             k = cell.k_norm(k)
         q, k, v = (tensor.transpose(1, 2) for tensor in (q, k, v))
         if cell.kda:
-            decay_raw = cell.decay(F.silu(cell.decay_down(local))).reshape(b, t, cell.heads, cell.head_dim).permute(0, 2, 1, 3)
+            decay_raw = cell.decay(F.silu(cell.decay_down(local))).reshape(b, t, cell.kv_heads, cell.head_dim).permute(0, 2, 1, 3)
         else:
             decay_raw = cell.decay(local).transpose(1, 2)
         beta_raw = cell.beta(local).transpose(1, 2)
@@ -1505,10 +1526,15 @@ class FractalDeltaMemory(Backbone):
                 pos_steps = torch.arange(t, device=x.device, dtype=torch.int64)[None, :].double()
                 freq = cell.golden_inv_freq.double().view(1, 1, 1, -1)
                 if adapter is not None and adapter.phase_scale is not None:
-                    freq = freq * adapter.phase_scale.double().view(1, cell.heads, 1, 1)
-                angles = (pos_steps[:, None, :, None] * freq).remainder(2.0 * math.pi).float()
-                query = _apply_golden_phase(query, angles)
-                key = _apply_golden_phase(key, angles)
+                    ps = adapter.phase_scale.double()
+                    freq_k = freq * ps.view(1, cell.kv_heads, 1, 1)
+                    freq_q = freq * (ps.repeat_interleave(cell.kv_groups) if cell.kv_groups > 1 else ps).view(1, cell.heads, 1, 1)
+                    query = _apply_golden_phase(query, (pos_steps[:, None, :, None] * freq_q).remainder(2.0 * math.pi).float())
+                    key = _apply_golden_phase(key, (pos_steps[:, None, :, None] * freq_k).remainder(2.0 * math.pi).float())
+                else:
+                    angles = (pos_steps[:, None, :, None] * freq).remainder(2.0 * math.pi).float()
+                    query = _apply_golden_phase(query, angles)
+                    key = _apply_golden_phase(key, angles)
             elif cell.deltanet_rope and cell.head_dim >= 2:
                 pos_steps = torch.arange(t, device=x.device, dtype=torch.int64)[None, :].double()
                 angles = (pos_steps[:, None, :, None] * cell.rope_inv_freq.double().view(1, 1, 1, -1)).float()
@@ -1518,15 +1544,15 @@ class FractalDeltaMemory(Backbone):
             decay_logits = decay_raw.float()
             beta_logits = beta_raw.float()
             if adapter is not None:
-                decay_bias = adapter.decay_bias.float().view(1, cell.heads, 1, 1) if cell.kda else adapter.decay_bias.float().view(1, cell.heads, 1)
+                decay_bias = adapter.decay_bias.float().view(1, cell.kv_heads, 1, 1) if cell.kda else adapter.decay_bias.float().view(1, cell.kv_heads, 1)
                 decay_logits = decay_logits + decay_bias
-                beta_logits = beta_logits + adapter.beta_bias.float().view(1, cell.heads, 1)
+                beta_logits = beta_logits + adapter.beta_bias.float().view(1, cell.kv_heads, 1)
             log_w = F.logsigmoid(decay_logits) if cell.kda else F.logsigmoid(decay_logits).unsqueeze(-1)
             beta_erase = (cell.beta_scale * beta_logits.sigmoid()).unsqueeze(-1)
             if cell.beta_write is not None:
                 bw_logits = cell.beta_write(local).transpose(1, 2).float()
                 if adapter is not None and adapter.beta_write_bias is not None:
-                    bw_logits = bw_logits + adapter.beta_write_bias.float().view(1, cell.heads, 1)
+                    bw_logits = bw_logits + adapter.beta_write_bias.float().view(1, cell.kv_heads, 1)
                 beta_write = (cell.beta_scale * bw_logits.sigmoid()).unsqueeze(-1)
             else:
                 beta_write = beta_erase
@@ -1555,7 +1581,7 @@ class FractalDeltaMemory(Backbone):
     def state_bytes_per_sequence(self, seq_len: int = 0):
         d = self.config.d_model
         kv_dtype_bytes = 2 if self.embedding.weight.dtype in (torch.float16, torch.bfloat16) else 4
-        delta_level_bytes = (self.heads * self.head_dim * self.head_dim + d * 3) * 4
+        delta_level_bytes = (self.delta_kv_heads * self.head_dim * self.head_dim + d * 3) * 4
         levels_bytes = 0
         for lvl in range(self.depth):
             if lvl in self.swa_levels:
@@ -1622,7 +1648,7 @@ class FractalDeltaMemory(Backbone):
 
     def parameter_formula(self):
         c = self.config
-        d, h, ad, ff, k = c.d_model, self.heads, self.attn_dim, c.hidden_dim, 4
+        d, h, kv_h, ad, kv_d, ff, k = c.d_model, self.heads, self.delta_kv_heads, self.attn_dim, self.delta_kv_dim, c.hidden_dim, 4
         embed = c.vocab_size * d
         assoc_params = (
             d + 3 * d + d + d * self.assoc_dim + d * self.assoc_val_dim + (d + 1) + self.assoc_val_dim * d + d + (d if self.assoc_multilag else 0)
@@ -1639,10 +1665,10 @@ class FractalDeltaMemory(Backbone):
                 if delta_cell0.out_gate_rank > 0
                 else (d * ad) // linear_scale
             )
-            dense_proj = (3 * d * ad + ad * d + 3 * d * ff) // linear_scale + gate_params
-            decay_cell = (d * delta_cell0.decay_rank + (delta_cell0.decay_rank + 1) * ad) if delta_cell0.kda else (d + 1) * h
+            dense_proj = (d * (ad + 2 * kv_d) + ad * d + 3 * d * ff) // linear_scale + gate_params
+            decay_cell = (d * delta_cell0.decay_rank + (delta_cell0.decay_rank + 1) * kv_d) if delta_cell0.kda else (d + 1) * kv_h
             fe_cell = (d + 2 * d * delta_cell0.fe_rank) if self.free_energy else 0
-            beta_cell = 2 * (d + 1) * h if self.decoupled_gates else (d + 1) * h
+            beta_cell = 2 * (d + 1) * kv_h if self.decoupled_gates else (d + 1) * kv_h
             qkn_cell = (2 * delta_cell0.head_dim) if delta_cell0.qk_norm else 0
             delta_cell_params = (
                 d  # attn_norm
@@ -1661,13 +1687,13 @@ class FractalDeltaMemory(Backbone):
             cell_i.parameter_count() if isinstance(cell_i, SlidingWindowGQACell) else delta_cell_params
             for cell_i in self.cells
         )
-        adapters = self.depth * (6 * d + 2 * h) + max(self.depth - 1, 0) * d if self.depth > 1 else 0
+        adapters = self.depth * (6 * d + 2 * kv_h) + max(self.depth - 1, 0) * d if self.depth > 1 else 0
         if self.decoupled_gates and self.depth > 1:
-            adapters += self.depth * h
+            adapters += self.depth * kv_h
         if self.value_residual and self.depth > 1:
-            adapters += (self.depth - 1) * h
+            adapters += (self.depth - 1) * kv_h
         if self.golden_phase and self.depth > 1:
-            adapters += self.depth * h
+            adapters += self.depth * kv_h
         if self.free_energy and self.depth > 1:
             adapters += (self.depth - 1) * (d + 2)
         exit_params = (d + 1) if self.use_exit_gate else 0

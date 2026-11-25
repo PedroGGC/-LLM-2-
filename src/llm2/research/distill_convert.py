@@ -240,9 +240,15 @@ def transplant_teacher_weights(
                 o_p = getattr(attn, "o_proj", None) or getattr(attn, "out", None)
                 if q_p is not None and k_p is not None and v_p is not None and o_p is not None:
                     qw = q_p.weight.detach().float()
-                    kw = _expand_gqa_kv(k_p.weight, qw.shape[0], head_dim=cell_hd)
-                    vw = _expand_gqa_kv(v_p.weight, qw.shape[0], head_dim=cell_hd)
-                    if qw.shape[0] == cell_ad and qw.shape[1] == d_s and kw.shape == qw.shape and vw.shape == qw.shape:
+                    cell_kv_dim = getattr(cell, "kv_dim", cell_ad)
+                    if cell_kv_dim < cell_ad and k_p.weight.shape[0] == cell_kv_dim and v_p.weight.shape[0] == cell_kv_dim:
+                        # Native GQA-DeltaNet: verbatim 1:1 transplant with ZERO weight duplication!
+                        kw = k_p.weight.detach().float()
+                        vw = v_p.weight.detach().float()
+                    else:
+                        kw = _expand_gqa_kv(k_p.weight, qw.shape[0], head_dim=cell_hd)
+                        vw = _expand_gqa_kv(v_p.weight, qw.shape[0], head_dim=cell_hd)
+                    if qw.shape[0] == cell_ad and qw.shape[1] == d_s and kw.shape[0] == cell_kv_dim and vw.shape[0] == cell_kv_dim:
                         qkv_cat = torch.cat((qw, kw, vw), dim=0)
                         _copy_matching_or_slice(cell.qkv.weight, qkv_cat)
                         vw_for_scale = vw

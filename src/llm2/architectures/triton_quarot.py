@@ -186,8 +186,8 @@ def _quarot_int4_linear_op(
     out = torch.empty((m, out_features), device=x.device, dtype=x.dtype)
 
     if m == 1:
-        block_n = 32 if out_features >= 512 else 8
-        block_kb = 64 if in_features >= 256 else 32
+        block_n = 16 if out_features >= 512 else 8
+        block_kb = 128 if in_features >= 512 else (64 if in_features >= 256 else 32)
         grid = (triton.cdiv(out_features, block_n),)
         _quarot_int4_matvec_kernel[grid](
             x_2d,
@@ -275,5 +275,34 @@ def quarot_int4_linear(
     use_triton: bool = True,
 ) -> torch.Tensor:
     if use_triton and can_use_triton_quarot(x.shape[-1], group_size, x.device):
+        # Fast direct matvec launch for m==1 inference decode (avoids custom_op autograd dispatcher overhead).
+        in_features = x.shape[-1]
+        if not x.requires_grad and x.numel() == in_features:
+            out_features = packed_weight.shape[0]
+            x_2d = x.reshape(1, in_features)
+            if not x_2d.is_contiguous():
+                x_2d = x_2d.contiguous()
+            w_c = packed_weight if packed_weight.is_contiguous() else packed_weight.contiguous()
+            s_c = weight_scale if weight_scale.is_contiguous() else weight_scale.contiguous()
+            has_bias = bias is not None
+            b_c = (bias if bias.is_contiguous() else bias.contiguous()) if has_bias else s_c
+            out = torch.empty((*x.shape[:-1], out_features), device=x.device, dtype=x.dtype)
+            block_n = 16 if out_features >= 512 else 8
+            block_kb = 128 if in_features >= 512 else (64 if in_features >= 256 else 32)
+            _quarot_int4_matvec_kernel[(triton.cdiv(out_features, block_n),)](
+                x_2d,
+                w_c,
+                s_c,
+                b_c,
+                out,
+                N=out_features,
+                K=in_features,
+                G=group_size,
+                HAS_BIAS=has_bias,
+                BLOCK_N=block_n,
+                BLOCK_KB=block_kb,
+                num_warps=4,
+            )
+            return out
         return _quarot_int4_linear_op(x, packed_weight, weight_scale, bias, group_size)
     return _quarot_int4_pytorch_linear(x, packed_weight, weight_scale, bias, group_size)

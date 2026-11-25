@@ -206,6 +206,7 @@ class ResearchConfig:
     fractal_kv_quant: str = "none"
     fractal_out_gate_rank: int = 0
     fractal_assoc_channel: bool = True
+    fractal_delta_gqa: bool = False
     fractal_exit_gate: bool = False
     exit_gate_weight: float = 0.0
 

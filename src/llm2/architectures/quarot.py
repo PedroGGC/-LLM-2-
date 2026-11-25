@@ -262,6 +262,7 @@ def quantize_model_quarot_int4(
     inplace: bool = True,
     seed: int = 1729,
     use_triton: bool = True,
+    rotate_input: bool = True,
 ) -> tuple[nn.Module, dict]:
     """Convert dense Linear layers of a model into packed HadamardLinearINT4 while preserving shared embeddings."""
     target = model if inplace else copy.deepcopy(model)
@@ -291,6 +292,7 @@ def quantize_model_quarot_int4(
                     max_block=max_block,
                     seed=seed + len(replaced),
                     use_triton=use_triton,
+                    rotate_input=rotate_input,
                 )
                 setattr(parent, name, q_layer)
                 replaced.append(full_name)

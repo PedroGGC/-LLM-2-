@@ -296,3 +296,68 @@ def test_titans_ttt_causality_o1_state_and_streaming_equivalence():
     out_g.square().mean().backward()
     assert x_g.grad is not None and torch.isfinite(x_g.grad).all()
     assert cell.init_w1.grad is not None and torch.isfinite(cell.init_w1.grad).all()
+
+
+def test_gqa_deltanet_equivalence_transplant_and_w4a16_fast():
+    from llm2.architectures.state_kernels import dplr_chunked, dplr_sequential
+
+    torch.manual_seed(42)
+    # 1. Exact mathematical equivalence between dplr_chunked and dplr_sequential under GQA (H_q=8, H_kv=2)
+    b, h_q, h_kv, t, d = 2, 8, 2, 19, 16
+    q = torch.randn(b, h_q, t, d)
+    k = torch.nn.functional.normalize(torch.randn(b, h_kv, t, d), dim=-1)
+    v = torch.randn(b, h_kv, t, d)
+    log_w = torch.nn.functional.logsigmoid(torch.randn(b, h_kv, t, 1))
+    beta = 1.5 * torch.sigmoid(torch.randn(b, h_kv, t, 1))
+    a = -log_w.exp() * beta * k
+    y_seq, m_seq = dplr_sequential(q, k, v, log_w, a, k)
+    y_chk, m_chk = dplr_chunked(q, k, v, log_w, a, k, chunk_size=8, use_triton=False)
+    assert m_seq.shape == (b, h_kv, d, d)
+    assert torch.allclose(y_seq, y_chk, atol=1e-4, rtol=1e-4)
+    assert torch.allclose(m_seq, m_chk, atol=1e-4, rtol=1e-4)
+
+    # 2. Full FractalDeltaMemory with GQA-DeltaNet: parameter_formula exact, smaller state, causal, streaming & 1:1 transplant
+    teacher = _TinyQwen3Teacher().eval()
+    cfg_mha, res_mha = build_lumina_3b_config_from_hf(
+        teacher.config, swa_levels=[0, 3], swa_global=True, kv_quant="none", out_gate_rank=16, assoc_channel=False, delta_gqa=False
+    )
+    cfg_gqa, res_gqa = build_lumina_3b_config_from_hf(
+        teacher.config, swa_levels=[0, 3], swa_global=True, kv_quant="none", out_gate_rank=16, assoc_channel=False, delta_gqa=True
+    )
+    m_mha = build_student_for_surgery(cfg_mha, res_mha, dtype=torch.float32)
+    m_gqa = build_student_for_surgery(cfg_gqa, res_gqa, dtype=torch.float32)
+    transplant_teacher_weights(teacher, m_gqa, quiet_init_gates=True)
+
+    enum_params = sum({p.data_ptr(): p.numel() for p in m_gqa.parameters()}.values())
+    assert m_gqa.parameter_formula() == enum_params
+    assert enum_params < m_mha.parameter_formula()
+    assert m_gqa.state_bytes_per_sequence(seq_len=0) < m_mha.state_bytes_per_sequence(seq_len=0)
+
+    m_gqa.eval()
+    ids = torch.randint(0, 64, (1, 14))
+    ids_mut = ids.clone()
+    ids_mut[:, 10] = (ids_mut[:, 10] + 7) % 64
+    with torch.no_grad():
+        out_a = m_gqa(ids).logits
+        out_b = m_gqa(ids_mut).logits
+        assert torch.allclose(out_a[:, :10], out_b[:, :10], atol=1e-5)
+
+        dec = FractalDecode(m_gqa)
+        pref_lg, st = dec.prefill(ids[:, :8], capacity=32)
+        step_cols = [pref_lg]
+        for idx in range(8, 14):
+            slg, st = dec.step(ids[:, idx : idx + 1], st)
+            step_cols.append(slg)
+        stream_lg = torch.cat(step_cols, dim=1)
+        assert torch.allclose(out_a[:, 7:], stream_lg, atol=1e-4, rtol=1e-4)
+
+        # Stage-1 forward_level_attn_delta works cleanly on GQA-DeltaNet cell
+        h_in = torch.randn(1, 10, cfg_gqa.d_model)
+        delta_out = m_gqa.forward_level_attn_delta(1, h_in, h_in)
+        assert delta_out.shape == h_in.shape and torch.isfinite(delta_out).all()
+
+    # 3. Fast W4A16 without online Hadamard (rotate_input=False)
+    q_fast, q_rep = quantize_model_quarot_int4(m_gqa, group_size=16, act_bits=16, inplace=False, use_triton=False, rotate_input=False)
+    assert q_rep["shared_embedding_preserved"] is True
+    with torch.no_grad():
+        assert torch.isfinite(q_fast(ids).logits).all()

@@ -15,18 +15,25 @@ RULES = ("gated_delta", "rwkv7", "mlstm")
 
 
 def dplr_sequential(q, k, v, log_w, a, b, state=None, *, return_all_states=False):
-    """S_t=S_{t-1}diag(w_t)+(S_{t-1}a_t)b_t^T+v_t k_t^T."""
+    """S_t=S_{t-1}diag(w_t)+(S_{t-1}a_t)b_t^T+v_t k_t^T (supports GQA when H_q = H_kv * G)."""
     with torch.autocast(device_type=q.device.type, enabled=False):
         q, k, v, log_w, a, b = (x.float() for x in (q, k, v, log_w, a, b))
-        memory = v.new_zeros(*q.shape[:2], v.shape[-1], q.shape[-1]) if state is None else state.float()
+        batch, q_heads, seq_len, k_dim = q.shape
+        kv_heads = k.shape[1]
+        g_mult = q_heads // kv_heads
+        memory = v.new_zeros(batch, kv_heads, v.shape[-1], k_dim) if state is None else state.float()
         outputs = []
         states = [] if return_all_states else None
-        for t in range(q.shape[-2]):
+        for t in range(seq_len):
             removed = torch.einsum("bhvk,bhk->bhv", memory, a[:, :, t])
             memory = (memory * log_w[:, :, t].exp().unsqueeze(-2)
                       + removed.unsqueeze(-1) * b[:, :, t].unsqueeze(-2)
                       + v[:, :, t].unsqueeze(-1) * k[:, :, t].unsqueeze(-2))
-            outputs.append(torch.einsum("bhvk,bhk->bhv", memory, q[:, :, t]))
+            if g_mult == 1:
+                outputs.append(torch.einsum("bhvk,bhk->bhv", memory, q[:, :, t]))
+            else:
+                qg = q[:, :, t].reshape(batch, kv_heads, g_mult, k_dim)
+                outputs.append(torch.einsum("bhvk,bhgk->bhgv", memory, qg).reshape(batch, q_heads, v.shape[-1]))
             if states is not None:
                 states.append(memory)
         out = torch.stack(outputs, -2)
@@ -36,22 +43,24 @@ def dplr_sequential(q, k, v, log_w, a, b, state=None, *, return_all_states=False
 
 
 def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32, use_triton=True):
-    """Exact DPLR recurrence via batched within-chunk causal triangular systems."""
+    """Exact DPLR recurrence via batched within-chunk causal triangular systems (supports GQA H_q = H_kv * G)."""
     with torch.autocast(device_type=q.device.type, enabled=False):
         q, k, v, log_w, a, b = (x.float() for x in (q, k, v, log_w, a, b))
-        batch, heads, total_len, k_dim = q.shape
+        batch, q_heads, total_len, k_dim = q.shape
+        kv_heads = k.shape[1]
+        g_mult = q_heads // kv_heads
         v_dim = v.shape[-1]
         w_dim = log_w.shape[-1]
         if w_dim not in (1, k_dim):
             raise ValueError(f"Expected log_w trailing dim 1 or {k_dim}, got {w_dim}")
-        memory = v.new_zeros(batch, heads, v_dim, k_dim) if state is None else state.float()
+        memory = v.new_zeros(batch, kv_heads, v_dim, k_dim) if state is None else state.float()
         pad = (-total_len) % chunk_size
         if pad:
             q, k, v, log_w, a, b = (F.pad(x, (0, 0, 0, pad)) for x in (q, k, v, log_w, a, b))
         n_chunks = q.shape[-2] // chunk_size
-        qc, kc, ac, bc = (x.reshape(batch, heads, n_chunks, chunk_size, k_dim) for x in (q, k, a, b))
-        wc = log_w.reshape(batch, heads, n_chunks, chunk_size, w_dim)
-        vc = v.reshape(batch, heads, n_chunks, chunk_size, v_dim)
+        kc, ac, bc = (x.reshape(batch, kv_heads, n_chunks, chunk_size, k_dim) for x in (k, a, b))
+        wc = log_w.reshape(batch, kv_heads, n_chunks, chunk_size, w_dim)
+        vc = v.reshape(batch, kv_heads, n_chunks, chunk_size, v_dim)
 
         cumulative = wc.cumsum(-2)
         previous = cumulative - wc
@@ -66,8 +75,6 @@ def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32, use_triton=
             rank = torch.matmul(ac, bc.transpose(-1, -2)) * decay_before
             inputs = torch.matmul(ac, kc.transpose(-1, -2)) * decay_before
             decay_after = torch.where(causal, cum_s.unsqueeze(-1) - cum_s.unsqueeze(-2), 0.0).exp().masked_fill(~causal, 0.0)
-            reads_k = torch.matmul(qc, kc.transpose(-1, -2)) * decay_after
-            reads_b = torch.matmul(qc, bc.transpose(-1, -2)) * decay_after
         else:
             decay_before = previous.unsqueeze(-2) - cumulative.unsqueeze(-3)
             decay_before = torch.where(strict[..., None], decay_before, 0.0).exp()
@@ -75,31 +82,53 @@ def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32, use_triton=
             inputs = (ac.unsqueeze(-2) * kc.unsqueeze(-3) * decay_before).sum(-1).masked_fill(~strict, 0.0)
             decay_after = cumulative.unsqueeze(-2) - cumulative.unsqueeze(-3)
             decay_after = torch.where(causal[..., None], decay_after, 0.0).exp()
-            reads_k = (qc.unsqueeze(-2) * kc.unsqueeze(-3) * decay_after).sum(-1).masked_fill(~causal, 0.0)
-            reads_b = (qc.unsqueeze(-2) * bc.unsqueeze(-3) * decay_after).sum(-1).masked_fill(~causal, 0.0)
 
         eye = torch.eye(chunk_size, device=q.device, dtype=q.dtype)
         rhs_combined = torch.cat((inputs @ vc, ac * previous.exp()), dim=-1)
         solved = torch.linalg.solve_triangular(eye - rank, rhs_combined, upper=False, unitriangular=True)
         u_local, u_state = solved.split((v_dim, k_dim), dim=-1)
 
-        kv_local = reads_k @ vc + reads_b @ u_local
-        read_proj = qc * cumulative.exp() + reads_b @ u_state
         tail = (cumulative[:, :, :, -1:] - cumulative).exp()
         bc_tail = bc * tail
         mem_decay = cumulative[:, :, :, -1].exp().unsqueeze(-2)
         mem_local = vc.transpose(-1, -2) @ (kc * tail) + u_local.transpose(-1, -2) @ bc_tail
         state_trans = u_state.transpose(-1, -2) @ bc_tail
 
-        if use_triton and (q.is_cuda or can_use_triton_dplr(chunk_size, v_dim, k_dim, q.device)):
-            out, memory = dplr_inter_chunk_scan(kv_local, read_proj, mem_decay, state_trans, mem_local, memory)
+        if g_mult == 1:
+            qc = q.reshape(batch, kv_heads, n_chunks, chunk_size, k_dim)
+            if w_dim == 1:
+                reads_k = torch.matmul(qc, kc.transpose(-1, -2)) * decay_after
+                reads_b = torch.matmul(qc, bc.transpose(-1, -2)) * decay_after
+            else:
+                reads_k = (qc.unsqueeze(-2) * kc.unsqueeze(-3) * decay_after).sum(-1).masked_fill(~causal, 0.0)
+                reads_b = (qc.unsqueeze(-2) * bc.unsqueeze(-3) * decay_after).sum(-1).masked_fill(~causal, 0.0)
+            kv_local = reads_k @ vc + reads_b @ u_local
+            read_proj = qc * cumulative.exp() + reads_b @ u_state
+            if use_triton and (q.is_cuda or can_use_triton_dplr(chunk_size, v_dim, k_dim, q.device)):
+                out, memory = dplr_inter_chunk_scan(kv_local, read_proj, mem_decay, state_trans, mem_local, memory)
+                return (out[:, :, :total_len] if pad else out), memory
+            outputs = []
+            for m in range(n_chunks):
+                outputs.append(kv_local[:, :, m] + read_proj[:, :, m] @ memory.transpose(-1, -2))
+                memory = memory * mem_decay[:, :, m] + mem_local[:, :, m] + memory @ state_trans[:, :, m]
+            out = torch.cat(outputs, dim=-2)
             return (out[:, :, :total_len] if pad else out), memory
 
+        # GQA-DeltaNet path: H_kv states updated once; all G query groups read from shared H_kv states.
+        qc_g = q.reshape(batch, kv_heads, g_mult, n_chunks, chunk_size, k_dim)
+        if w_dim == 1:
+            reads_k = torch.einsum("bhgctd,bhcsd->bhgcts", qc_g, kc) * decay_after.unsqueeze(2)
+            reads_b = torch.einsum("bhgctd,bhcsd->bhgcts", qc_g, bc) * decay_after.unsqueeze(2)
+        else:
+            reads_k = (qc_g.unsqueeze(-2) * kc.unsqueeze(2).unsqueeze(-3) * decay_after.unsqueeze(2)).sum(-1).masked_fill(~causal, 0.0)
+            reads_b = (qc_g.unsqueeze(-2) * bc.unsqueeze(2).unsqueeze(-3) * decay_after.unsqueeze(2)).sum(-1).masked_fill(~causal, 0.0)
+        kv_local = torch.einsum("bhgcts,bhcsv->bhgctv", reads_k, vc) + torch.einsum("bhgcts,bhcsv->bhgctv", reads_b, u_local)
+        read_proj = qc_g * cumulative.exp().unsqueeze(2) + torch.einsum("bhgcts,bhcsd->bhgctd", reads_b, u_state)
         outputs = []
         for m in range(n_chunks):
-            outputs.append(kv_local[:, :, m] + read_proj[:, :, m] @ memory.transpose(-1, -2))
+            outputs.append(kv_local[:, :, :, m] + torch.einsum("bhgtd,bhvd->bhgtv", read_proj[:, :, :, m], memory))
             memory = memory * mem_decay[:, :, m] + mem_local[:, :, m] + memory @ state_trans[:, :, m]
-        out = torch.cat(outputs, dim=-2)
+        out = torch.cat(outputs, dim=-2).reshape(batch, q_heads, -1, v_dim)
         return (out[:, :, :total_len] if pad else out), memory
 
 
