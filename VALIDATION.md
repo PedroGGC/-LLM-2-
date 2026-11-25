@@ -1,5 +1,26 @@
 # Validação vigente — 25/11/2026
 
+## Ondas 2 e 3 (`Kaggle Tesla T4`, `KernelWorkerStatus.COMPLETE`): Torneio Sub-4-bit (`E8` vs `Kintsugi GUE` vs `ParetoQ`), Fix `64K` e Torneio FFN/KV (`MPO-FFN`, `ProSparse ReLU²`, `HALO KV-Share`)
+
+Relatórios completos: [lumina1_wave2_sub4bit_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_wave2_v3/lumina1_wave2_sub4bit_report.json) (`3.069,2s`, v3 `COMPLETE`) e [lumina1_wave3_ffn_kv_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_wave3_v3/lumina1_wave3_ffn_kv_report.json) (`1.825,8s`, v3 `COMPLETE`).
+
+- **CPU local (`Windows`, Python `3.12.2`, PyTorch `2.14.1+cpu`, commits `b58ae6b` e `5410316`):**
+  - `rtk pytest -q tests/test_wave2_sub4bit.py tests/test_wave1_cudagraph_static_kv.py` → **`10 passed, 0 failed`** (`E8 2-bit` superou 2-bit escalar em `+0.98 dB` em pesos Gaussianos: `9.71 vs 8.73 dB` no mesmo `2.25 bpw`; STE de `ParetoQ` + `BitPlane` monotônico verificados).
+  - `rtk pytest -q tests/test_wave3_ffn_kv.py` → **`3 passed, 0 failed`**.
+- **Onda 2 — Parte 1: Torneio de Compressão PTQ Zero-Shot nos pesos convergidos do `Qwen3-4B-Instruct-2507` (`WikiText-2` 8K tok + `ARC-Easy` 50 ex + `HellaSwag` 50 ex, `1× T4`):**
+  - **Baseline `FP16`:** `7.492 GiB` (`8.224 GiB` pico), `val_nll = 2.2666 (PPL 9.65)`, `ARC-Easy = 82.0%`, `HellaSwag = 52.0%`.
+  - **`W4A16 Fast` (`INT4 g32`, Triton direto — VENCEDOR PTQ):** **`2.647 GiB`** (`−64.7%`), `val_nll = 2.3415 (PPL 10.40)`, **`ARC-Easy = 78.0%`**, **`HellaSwag = 52.0%` (`100%` retenção zero-shot!)**.
+  - **`Kintsugi GUE Mixed-Precision` (`20% INT4 + 80% E8 2-bit` — VENCEDOR SUB-2GiB):** **`1.805 GiB`** (`2.536 GiB` pico), `val_nll = 3.6854 (PPL 39.86)`, `ARC-Easy = 44.0%`, **`HellaSwag = 48.0%` (`92.3%` de FP16 zero-shot sem QAT!)**.
+  - **`E8 Lattice 2-bit` (`2-stage Residual E8-240 + Hadamard`, `2.25 bpw`):** **`1.696 GiB`** (`2.428 GiB` pico), `val_nll = 4.4300 (PPL 83.93)` (**`1.888×` menor PPL que 2-bit escalar no mesmo `1.69 GiB`!**), `ARC-Easy = 44.0%`, `HellaSwag = 36.0%`.
+  - **`ParetoQ 2-bit PTQ` (`1.677 GiB`) e `ParetoQ Ternário 1.58-bit PTQ` (`1.677 GiB`):** colapsaram em PTQ puro (`PPL 158.515` e `990.841`, `ARC-E 28–34%`, `HellaSwag 14–20%`) — só viáveis com QAT/destilação longa.
+- **Onda 2 — Parte 2: Validação do Fix de Prefill `64K` (`chunk_size=512, q_tile=128`) no `Lumina-1-4B` (`GQA-DeltaNet 4.07B`, `9` Globais `HALO` `KV-FP8`, `W4A16 Fast + CUDAGraph`):**
+  - **OOM eliminado com folga na T4 (`14.56 GiB`):** **`65.496` tokens** concluíram com `status: "ok"`, **`peak_prefill_vram_gib = 9.153 GiB`** (`5.41 GiB` livres!), **`peak_decode_vram_gib = 3.870 GiB`** (estado `64K = 1.188,1 MiB`), `capture = 4.28s`, `prefill = 835.0s (78.4 tok/s)`, `decode = 2.16 tok/s (30.488 mJ/tok)`. *(Confirma a necessidade de `QSA` por micro-blocos + `2 KV heads` para acelerar decode em `64K–512K`!)*
+- **Onda 3 — Torneio Estrutural FFN (`60%`) & KV (`Qwen3-4B`, `1× T4`):**
+  - **`MPO-FFN` (`chi=512` `3.64 GiB` / `chi=256` `3.06 GiB`):** **ELIMINADO para PTQ/cirurgia** — `mean_rel_frob_err = 0.802 / 0.895`, `val_nll = 14.79 / 15.54`, `ARC-Easy = 32% / 26%`, `34×` mais lento (`279.6s vs 8.2s`). FFNs treinados têm posto cheio.
+  - **`ProSparse ReLU²` zero-shot (`t=0.0 / 0.15`):** atingiu **`70.2%–71.7%` de zeros exatos**, mas deu overflow em `FP16` (`NaN`, `ARC-E 18–24%`) por elevar ao quadrado ativações calibradas para `SiLU`. **Decisão:** manter `SiLU` no `Lumina 1`; reservar `relu2` para treino nativo no `Lumina 2` (como validado no `Nemotron 3.5 Super VL`).
+  - **Sonda `HALO` `Cross-Layer KV` (`L0/1, L6/7, L23/24, L34/35`):** similaridade `cos ≈ 0.00` em modelo pré-treinado padrão → `K=V` e `KV-Sharing` não são drop-in; no `Lumina 2`, adotar **`2 KV heads` (`16:1 GQA`)** (usado em `Qwen3.8-Flash-Next`, `Muse Glimmer 30B` e `Nemotron 3.5`) já corta KV `4×` nativamente (`512K = 2.35 GiB` FP8 / `1.18 GiB` INT4).
+- **Limitações declaradas:** avaliações das Ondas 2 e 3 foram PTQ zero-shot sem QAT/QAD; `Kintsugi 1.80 GiB` ainda precisa de `200–400` passos de QAD KL-only na Onda 4 para verificar se cruza `≥ 98%` de qualidade.
+
 ## Onda 1 (`Kaggle 1× Tesla T4`, `KernelWorkerStatus.COMPLETE`, `1041.4s`): `CUDAGraphs Eager` + `Global KV-FP8` Estático + Varredura `16K → 32K → 64K` (`GQA-DeltaNet 4.071B`)
 
 Relatório completo salvo em [lumina1_wave1_cudagraph_ctx_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_wave1_v2/lumina1_wave1_cudagraph_ctx_report.json) (kernel `aitherl/lumina-1-wave-1-cudagraph-context-scaling-bench` v2, encerramento 100% limpo sem `os._exit` nem travamento de cota).
