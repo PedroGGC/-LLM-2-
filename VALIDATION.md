@@ -1,5 +1,20 @@
 # Validação vigente — 25/11/2026
 
+## Benchmark Real de Eficiência (`Kaggle 1×/2× Tesla T4`): `GQA-DeltaNet (4.08B)` + `6` Globais `KV-FP8` + `W4A16 Fast` + `Early-Exit` vs `Qwen3-4B-Instruct-2507`
+
+Relatórios salvos em [gqa_w4a16_eff_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_gqa_eff_v2/gqa_w4a16_eff_report.json) (v2, 80 passos Stage-1) e [gqa_w4a16_infer_showdown.json](file:///c:/Users/Lux/Downloads/chibi/gqa_w4a16_infer_showdown.json) (v4, duelo puro de inferência na mesma Tesla T4, NVML real).
+
+- **CPU local (`Windows`, Python `3.12.2`, PyTorch `2.14.1+cpu`):** `rtk pytest -q tests/test_lumina1_upgrades.py tests/test_lumina_3b_hybrid.py tests/test_phase_c_distill_ringue.py tests/test_fractal_v2_grm.py tests/test_quarot_early_exit.py` → **`30 passed, 0 failed, 4 skipped`** (`fd10059`, validando equivalência exata `dplr_chunked == dplr_sequential` sob GQA, `parameter_formula()`, causalidade, streaming `4.17e-6` e transplante 1:1 sem duplicação de pesos).
+- **Kaggle `Tesla T4` (`PyTorch 2.11.0+cu130`, NVML real, `64` tokens decode):**
+  - **`Qwen3-4B-Instruct-2507` FP16 (denso):** `4.02B`, `7.492 GiB` (`7.515 GiB` pico), KV `16K = 2.304,0 MiB`, `18.4 tok/s`, `3.801,4 mJ/tok` (`68.1 W`).
+  - **`Lumina-1-4B` ANTIGO (`MHA-DeltaNet 4.50B`, 9 Globais):** `8.384 GiB` (`8.497 GiB` pico), estado `16K = 348.4 MiB`, `9.7 tok/s` (`7.001 mJ/tok`), Stage-1 80 passos `cos = 0.7083` (`247.7 tok/s`); `QuaRot` antigo `2.908 GiB` (`3.022 GiB` pico), `6.2 tok/s` (`9.985 mJ/tok`).
+  - **`Lumina-1-4B` NOVO (`GQA-DeltaNet 4.08B`, 6 Globais `KV-FP8`):** `4.076.580.400` params (**`−424.3M`**), `7.593 GiB` (`7.629 GiB` pico = **`−868 MiB`**), estado `16K = 211.63 MiB` (**`10,9×` menor que Qwen3-4B**), Stage-1 80 passos **`cos = 0.7169`** (melhor que MHA!) a **`270.7 tok/s` (`+9.3%`)**.
+    - **FP16 + `Early-Exit` (`20.75/36L`):** **`17.4 tok/s`**, **`3.561,0 mJ/tok`** *(abaixo dos `3.801 mJ/tok` do Qwen3-4B mesmo em Python eager!)*.
+    - **`QuaRot W4A16` (`rotate_input=True`):** **`2.679 GiB`** (`2.715 GiB` pico), `6.8 tok/s`, `6.878,8 mJ/tok` (`47.2 W`).
+    - **`W4A16 Fast` (`rotate_input=False`, Triton direto `BLOCK_N=16, BLOCK_KB=128`):** **`2.679 GiB`** (`2.715 GiB` pico = **`2,8×` menos VRAM que Qwen3-4B FP16**), `8.6 tok/s` (`+26.5%`), `6.717,0 mJ/tok`, `sample_nll = 10.42` (vs `10.63` FP16).
+    - **`W4A16 Fast` + `Early-Exit` (`22.5/36L`):** **`2.729 GiB` pico**, **`14.01 tok/s` (`+126%` vs `6.2` antigo)**, **`4.207,0 mJ/tok` (`−57,9%` vs `9.985` antigo)**.
+- **Limitações declaradas:** `torch.compile` (Inductor) em 36 camadas não-compartilhadas + `KV-FP8` estourou `600s` de compilação na T4 (`v3`); em Python eager o `W4A16 Fast` (`8.6` / `14.01 tok/s`) ainda é limitado por overhead de lançamento Python/Triton por camada (requer `CUDAGraphs` estático ou runtime C++/Rust para atingir o teto de banda da T4).
+
 ## `Lumina-1-4B` Oficial — Stage 1 (`AttnDelta + HALO`) + Stage 2a (`Off-Policy Top-K KL + CE`) na Kaggle `2× Tesla T4`
 
 Kernel: `aitherl/lumina-1-4b-official-stage-1-and-2a` (v1; todas as 5 fases concluíram e salvaram `lumina_1_4b_ckpt/model.safetensors`, `config.json` e `lumina_1_4b_report.json` antes do cancelamento pós-execução do worker). Relatório salvo em [lumina_1_4b_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_lumina1_4b_v1/lumina_1_4b_report.json).
