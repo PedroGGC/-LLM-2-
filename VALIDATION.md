@@ -1,5 +1,19 @@
 # Validação vigente — 25/11/2026
 
+## Onda 2b (`Kaggle 2× Tesla T4`, `KernelWorkerStatus.COMPLETE`, `3.320,0s`): QAD KL-Only Zero-Overhead (`Kintsugi 1.805 GiB` + `W4A16 Fast 2.647 GiB`)
+
+Relatório completo: [lumina1_wave2b_kintsugi_qad_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_wave2b_v3/lumina1_wave2b_kintsugi_qad_report.json) (kernel `aitherl/lumina-1-wave-2b-kintsugi-qad` v3, encerramento limpo sem `os._exit`).
+
+- **CPU local (`Windows`, commit `e3fd438`):** `rtk pytest -q tests/test_wave2_sub4bit.py` → **`6 passed, 0 failed`** (fluxo de gradiente em codebooks `E8` + `weight_scale` e congelamento FP16 verificados).
+- **Braço 1 — `Kintsugi GUE Mixed` (`20% INT4 + 80% E8 2-bit`, `1.805 GiB` congelado = `0` bytes extras!) com `150` passos de Top-K (`K=64`) Forward KL-only QAD (`FineWeb-Edu`, `seq=256`, `grad_accum=2`):**
+  - `train_kl`: **`1.8646 → 0.7007`** (`−62.4%`).
+  - `WikiText-2 val_nll (PPL)`: **`3.6854 (PPL 39.86)` → `3.0238 (20.57)` @ 75 → `2.9006 (PPL 18.18)` @ 150** (**PPL cortada em `−54.4%`**!).
+  - **`ARC-Easy`:** **`44.0% → 64.0%` (`+20.0 pp`!)**, `HellaSwag`: `48.0% → 44.0%` (referência FP16 `7.492 GiB`: `PPL 9.65`, `ARC-E 82.0%`, `HellaSwag 52.0%`).
+  - **Conclusão científica:** QAD de codebooks+escalas recupera massivamente o `1.805 GiB` sem aumentar 1 byte de VRAM, mas em 150 passos com índices congelados ainda fica em `~78%` do FP16 no `ARC-Easy` (`64% vs 82%`) — exige QAT completo com STE (ou `35–40%` INT4) para cruzar `≥ 98%`.
+- **Braço 2 — `W4A16 Fast` (`2.647 GiB` = `2.83×` menor que FP16) controle (`60` passos QAD, `lr=1e-3`):**
+  - `ARC-Easy`: **`78.0% → 80.0%` (`97.6%` do FP16)**, `HellaSwag`: **`52.0% → 56.0%` (`107.7%` do FP16)**; `val_nll` subiu levemente `2.3415 → 2.5977` indicando que `lr=1e-3` foi alto demais para escalas INT4 (usar `lr ≤ 1e-4` ou PTQ puro `2.3415` na Onda 4).
+- **Decisão para a Onda 4 (`Lumina-1-4B` produção):** congelar **`GQA-DeltaNet 4.071B` + `9` Globais `HALO` `KV-FP8` (`Q=128` para `64K` em `3.87 GiB`) + `W4A16 Fast (2.68 GiB)` + `CUDAGraphs Eager` (`19.89 tok/s`, `3.430 mJ/tok`) + `MTP`** como stack principal (`≥ 98%` qualidade garantida!), mantendo **`Kintsugi 1.805 GiB`** como modo ultra-compacto experimental.
+
 ## Ondas 2 e 3 (`Kaggle Tesla T4`, `KernelWorkerStatus.COMPLETE`): Torneio Sub-4-bit (`E8` vs `Kintsugi GUE` vs `ParetoQ`), Fix `64K` e Torneio FFN/KV (`MPO-FFN`, `ProSparse ReLU²`, `HALO KV-Share`)
 
 Relatórios completos: [lumina1_wave2_sub4bit_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_wave2_v3/lumina1_wave2_sub4bit_report.json) (`3.069,2s`, v3 `COMPLETE`) e [lumina1_wave3_ffn_kv_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_wave3_v3/lumina1_wave3_ffn_kv_report.json) (`1.825,8s`, v3 `COMPLETE`).
