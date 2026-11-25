@@ -1,4 +1,20 @@
-# Validação vigente — 24/11/2026
+# Validação vigente — 25/11/2026
+
+## `Lumina-1-4B` Oficial — Stage 1 (`AttnDelta + HALO`) + Stage 2a (`Off-Policy Top-K KL + CE`) na Kaggle `2× Tesla T4`
+
+Kernel: `aitherl/lumina-1-4b-official-stage-1-and-2a` (v1; todas as 5 fases concluíram e salvaram `lumina_1_4b_ckpt/model.safetensors`, `config.json` e `lumina_1_4b_report.json` antes do cancelamento pós-execução do worker). Relatório salvo em [lumina_1_4b_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_lumina1_4b_v1/lumina_1_4b_report.json).
+
+- **Arquitetura & Proveniência:**
+  - Doador 1:1: `Qwen/Qwen3-4B-Instruct-2507` (`Apache-2.0`, `36L`, `d=2560`, `head_dim=128`, `QK-Norm`, `rope_theta=5e6`, `tied_embeddings=True`).
+  - Aluno `Lumina-1-4B`: `4.500.887.968` params exatos (`27` `Gated DeltaNet-2` + `9` Globais `HALO` `[0, 1, 6, 7, 12, 23, 24, 34, 35]` com `Global KV-FP8` + `RoPE/HyPE`, `out_gate_rank=256`, `assoc_channel=False`).
+  - **Stage 1 (`AttnDelta`):** `800` passos (`2,457,600` tok SFW, `8.229s`, `298.6 tok/s`) → `attn_delta_loss 0.781 → 0.277`, `mean_attn_cos 0.332 → 0.802`.
+  - **Stage 2a (`Off-Policy Top-K KL + CE`, `LoRA r=16`, `144` camadas, mergeado):** `400` passos (`819,200` tok SFW, `4.378s`, `187.1 tok/s`) → `kl_loss 0.794 → 0.514`, `ce_loss 2.550 → 2.235`.
+- **Resultados `eval_fp16` (`1× T4`, `8.384 GiB`, estado `16K = 348.42 MiB`, `100` ex/tarefa QA, `10` ex/comp. RULER):**
+  - **`RULER NIAH 2048 = 100.0%` (`NLL 0.158`)**, **`RULER 4096 = 100.0%` (`NLL 0.169`)**, **`RULER 8192 = 80.0%` (`NLL 0.430`)** *(salto de `0%` no C018 para `100% / 100% / 80%`!)*.
+  - `PIQA 78.0% norm (75.0% acc)`, `HellaSwag 54.0% norm`, `ARC-Easy 72.0% (68.0% norm)`, `ARC-Challenge 50.0% norm`, `Winogrande 58.0% norm`, `LAMBADA 37.0% (PPL 15.37)`, `free_gen mean_rep4 = 0.250` (Python `is_prime` correto e PT-BR fluente), `decode_eager = 10.1 tok/s` (`8.497 GiB` pico).
+- **Resultados `eval_quarot_w4a16` (`252` matrizes `INT4`, `act_bits=16`, `3.556×` compressão células, `shared_embedding_preserved=True`):**
+  - **`2.908 GiB`** armazenamento (`−65.3%`), **`3.022 GiB`** pico VRAM no decode (`−64.4%`), `6.2 tok/s` eager (`62.51 W`), preservando `ARC-Easy 80.0% acc`, `ARC-Challenge 56.7% norm`, `PIQA 73.3% norm`, `Winogrande 65.0% acc (60.0% norm)`, `LAMBADA 36.7% (PPL 24.76)`, `RULER 2K = 60.0%` e `RULER 4K = 30.0%`.
+- **Limitações declaradas:** `Stage 1` fechou em `cos=0.802` e `Stage 2a` em `kl=0.514` (`3.28M` tok totais) — ainda abaixo da convergência final (`LAMBADA` 37% vs 53% do professor e `rep4=0.25` vs `0.044`), exigindo **Stage 2b** (`seq=1024–1536`, `~3–5M` tok) + **Stage 3 (`OPD` com `Qwen3-14B` na Colab A100)**; `decode_compiled` não foi rodado neste kernel.
 
 ## A/B Controlados em GPU Real (`Kaggle 2× Tesla T4`): `HALO + HyPE (Global KV-INT4/FP8)`, `OPD / GKD` (`Qwen3-4B`) e `Titans / TTT` vs `Gated DeltaNet-2`
 
