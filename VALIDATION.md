@@ -1,4 +1,19 @@
-# Validação vigente — 25/11/2026
+# Validação vigente — 26/11/2026
+
+## `Lumina-1-4B v2` Oficial (`GQA-DeltaNet 4.071B` + `W4A16 Fast` + `CUDAGraphs Eager`, `Kaggle 2× Tesla T4`, `COMPLETE` em `3h26m` / `12.368s`)
+
+Kernel: `aitherl/lumina-1-4b-v2-gqa-official-build` (v1, encerramento 100% limpo em `12.401s` com checkpoint safetensors `lumina_1_4b_v2_gqa_ckpt/` salvo em `7.583 GiB`). Relatório: [lumina_1_4b_v2_gqa_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_lumina1_4b_v2/lumina_1_4b_v2_gqa_report.json).
+
+- **Arquitetura & Treino (`4.071.233.512` params exatos, `tied_embeddings=True`, `max_seq_len=65536`, `27` `GQA-DeltaNet` + `9` Globais `HALO` `KV-FP8`):**
+  - **Stage 1 (`AttnDelta`):** `900` passos (`1.843.200` tok SFW, `5.918s`, **`311.5 tok/s`**) → `attn_delta_loss 0.767 → 0.263`, **`mean_attn_cos 0.349 → 0.813`** (melhor que v1 `0.802` com `−430M` params e menos tokens!).
+  - **Stage 2a (`Off-Policy Top-K KL + CE`, `LoRA r=16`, `144` camadas, mergeado):** `450` passos (`921.600` tok SFW, `4.691s`, `196.5 tok/s`) → **`kl_loss 0.692 → 0.324`** (**`−37%` abaixo da v1 `0.514`!**).
+- **Resultados `eval_fp16` (`7.583 GiB`, estado `16K = 307.9 MiB`, `64K = 1.189 MiB`, `80` ex/tarefa QA, `10` ex/comp. RULER):**
+  - **`LAMBADA 45.0% (PPL 12.49)`** *(salto de `+8.0 pp` sobre v1 `37.0%`!)*, **`HellaSwag 60.0% norm` (`+6.0 pp`)**, **`ARC-Easy 75.0%`**, **`ARC-Challenge 52.5% norm`**, `PIQA 75.0% acc (73.8% norm)`, `Winogrande 55.0% acc`, `RULER 2K/4K/8K = 80% / 100% / 40%`.
+  - **`free_gen mean_rep4 = 0.1429`** (**`−43%` menos repetição** vs v1 `0.250`!), **`CUDAGraphs Eager = 19.31 tok/s` (`3.425 mJ/tok`, captura `0.63s`)**.
+- **Resultados `eval_w4a16_fast` (`2.676 GiB` storage, `2.729 GiB` pico VRAM = `2.76×` menor que `Qwen3-4B` FP16, `60` ex/tarefa QA, `10` ex/comp. RULER):**
+  - **`CUDAGraphs Eager` na T4 real:** **`19.28 tok/s`** (**`3.11×` mais rápido que v1 W4 `6.2 tok/s`** e mais rápido que `Qwen3-4B` FP16 `18.0–18.4 tok/s`!), **`3.455,7 mJ/tok`** (**`−65.4%` energia vs v1 W4 `9.985 mJ/tok`** e `−9%` menos energia que `Qwen3-4B` FP16!), captura `0.72s`.
+  - **Qualidade preservada (`≥ 98%`):** **`RULER 2K/4K = 100.0% / 100.0%`** *(salto de `60%/30%` na v1 W4 para `100%/100%`!)*, **`ARC-Easy 76.7%`**, **`ARC-Challenge 55.0% norm`**, **`PIQA 75.0% norm`**, `HellaSwag 53.3% norm`, `Winogrande 55.0% acc`, `LAMBADA 38.3%`.
+- **Próximas etapas planejadas (continuação direta do checkpoint salvo `lumina_1_4b_v2_gqa_ckpt/`):** **Stage 2b** (`+5M` tok, `seq=1024`, Kaggle dia 27) → **Stage 3** (`OPD` com `Qwen3-14B` + `MTP` self-speculative na Colab A100 dia 2).
 
 ## Onda 2b (`Kaggle 2× Tesla T4`, `KernelWorkerStatus.COMPLETE`, `3.320,0s`): QAD KL-Only Zero-Overhead (`Kintsugi 1.805 GiB` + `W4A16 Fast 2.647 GiB`)
 
