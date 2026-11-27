@@ -1,4 +1,19 @@
-# Validação vigente — 26/11/2026
+# Validação vigente — 27/11/2026
+
+## Perfis `Lumina-Q8 / Q6 / Q5 / Q4` + `torch.profiler` do Decode (`Kaggle 1× Tesla T4`, `COMPLETE` em `5.536s`)
+
+Relatório completo: [lumina1_v2_profiles_profiler_report.json](file:///C:/Users/Lux/.gemini/antigravity/brain/450c56d4-49e7-45a8-b934-ab43e2e4bf7c/scratch/out_profiles_profiler_v1/lumina1_v2_profiles_profiler_report.json) (kernel `aitherl/lumina-1-4b-v2-profiles-and-profiler` v1, sobre o checkpoint oficial `lumina_1_4b_v2_gqa_ckpt/`).
+
+- **Benchmark real dos 5 perfis (`WikiText-2` 8K tok + QA `60` ex/tarefa + `RULER 2K/4K` `8` ex/comp.):**
+  - **`FP16` (`7.583 GiB`, pico `8.341 GiB`):** `val_nll = 2.6201 (PPL 13.74)`, `LAMBADA 46.7%`, `ARC-E 80.0%`, `ARC-C 60.0% norm`, `HellaSwag 56.7% norm`, `PIQA 75.0%`, `Winogrande 55.0%`, `RULER 2K/4K = 87.5% / 87.5%`.
+  - **`Lumina-Q8` (`4.210 GiB`, pico `4.968 GiB`, `1.97×`):** **`val_nll = 2.6145 (PPL 13.66)`** *(empata/supera FP16!)*, `LAMBADA 45.0% (PPL 14.25)`, **`ARC-E 83.3%`**, **`ARC-C 60.0%`**, **`HellaSwag 56.7%`**, **`PIQA 75.0%`**, `Winogrande 55.0%`, **`RULER 2K/4K = 100.0% / 87.5%`** — **near-lossless confirmado!**
+  - **`Lumina-Q6` (`3.446 GiB`, pico `4.204 GiB`, `2.53×`, `50.4%` INT8 / `49.6%` INT4):** `val_nll = 2.6711 (PPL 14.46)`, `LAMBADA 41.7%`, **`ARC-E 80.0%`**, **`ARC-C 60.0%`**, `HellaSwag 55.0%`, `PIQA 73.3%`, **`Winogrande 60.0%`**, **`RULER 2K/4K = 100.0% / 75.0%`**.
+  - **`Lumina-Q5` (`3.058 GiB`, pico `3.816 GiB`, `2.96×`, `25.1%` INT8 / `74.9%` INT4):** `val_nll = 2.6948 (PPL 14.80)`, `LAMBADA 41.7%`, `ARC-E 80.0%`, `ARC-C 60.0%`, `HellaSwag 55.0%`, `PIQA 73.3%`, `Winogrande 58.3%`, `RULER 2K/4K = 50.0% / 75.0%`.
+  - **`Lumina-Q4` (`2.676 GiB`, pico `3.434 GiB`, `3.56×`, `100%` INT4):** `val_nll = 2.8708 (PPL 17.65)`, `LAMBADA 38.3%`, `ARC-E 76.7%`, `ARC-C 55.0%`, `HellaSwag 53.3%`, `PIQA 75.0%`, `Winogrande 48.3%`, `RULER 2K/4K = 100.0% / 62.5%`.
+- **Raio-X `torch.profiler` do decode `W4A16 Fast` (`8` passos, `54.48 ms` CUDA agregados/tok):**
+  1. **`_quarot_int4_matvec_kernel` (`252` chamadas/tok):** **`28.125 ms/tok` (`51.63%` de TODO o tempo de GPU!)** — atingindo apenas `~73 GB/s` (`23%` da banda de `320 GB/s` da T4). Principal alvo único de otimização (carregamento `uint32` + split-K + fusão `gate+up` SwiGLU).
+  2. **`lm_head` (`aten::mm` FP16):** `3.116 ms/tok` (`~250 GB/s`, já perto do teto da T4).
+  3. **Cauda elementwise (`aten::copy_` `1.164`/tok = `2.67 ms`, `aten::mul` `1.162`/tok = `2.12 ms`, `aten::add` `614`/tok = `0.97 ms`, `RMSNorm` `172`/tok = `1.23 ms`):** `~7 ms/tok` recuperáveis com fusão de `RMSNorm` e passo `t==1` do `GQA-DeltaNet` em SRAM.
 
 ## `Lumina-1-4B v2` Oficial (`GQA-DeltaNet 4.071B` + `W4A16 Fast` + `CUDAGraphs Eager`, `Kaggle 2× Tesla T4`, `COMPLETE` em `3h26m` / `12.368s`)
 
