@@ -18,6 +18,71 @@ except Exception:
 if HAS_TRITON:
 
     @triton.jit
+    def _quarot_int4_matvec_grouped_kernel(
+        x_ptr,
+        w_ptr,
+        s_ptr,
+        bias_ptr,
+        out_ptr,
+        N: tl.constexpr,
+        K: tl.constexpr,
+        G_BYTES: tl.constexpr,
+        GROUPS_PER_TILE: tl.constexpr,
+        HAS_BIAS: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        BLOCK_KB: tl.constexpr,
+    ):
+        """Bandwidth-optimized INT4 matvec: 1 scale load per group, single cross-warp reduction, L2 pinning for x."""
+        pid_n = tl.program_id(0)
+        offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+        mask_n = offs_n < N
+        k_bytes = K // 2
+        n_groups = k_bytes // G_BYTES
+
+        acc_g = tl.zeros((BLOCK_N, GROUPS_PER_TILE), dtype=tl.float32)
+        for g0 in range(0, n_groups, GROUPS_PER_TILE):
+            offs_g = g0 + tl.arange(0, GROUPS_PER_TILE)
+            mask_g = offs_g < n_groups
+            s = tl.load(
+                s_ptr + offs_n[:, None] * n_groups + offs_g[None, :],
+                mask=mask_n[:, None] & mask_g[None, :],
+                other=0.0,
+                eviction_policy="evict_first",
+            ).to(tl.float32)
+
+            offs_kb = g0 * G_BYTES + tl.arange(0, BLOCK_KB)
+            mask_kb = offs_kb < k_bytes
+            offs_k_even = offs_kb * 2
+
+            x_even = tl.load(
+                x_ptr + offs_k_even, mask=mask_kb, other=0.0, eviction_policy="evict_last"
+            ).to(tl.float32)
+            x_odd = tl.load(
+                x_ptr + offs_k_even + 1, mask=mask_kb, other=0.0, eviction_policy="evict_last"
+            ).to(tl.float32)
+
+            mask_nb = mask_n[:, None] & mask_kb[None, :]
+            # 0x88 decodes both nibbles to 8 - 8 = 0 for masked positions.
+            b = tl.load(
+                w_ptr + offs_n[:, None] * k_bytes + offs_kb[None, :],
+                mask=mask_nb,
+                other=0x88,
+                eviction_policy="evict_first",
+            )
+
+            low = ((b & 0x0F).to(tl.int32) - 8).to(tl.float32)
+            high = (((b >> 4) & 0x0F).to(tl.int32) - 8).to(tl.float32)
+            prod = low * x_even[None, :] + high * x_odd[None, :]
+            prod_g = tl.reshape(prod, (BLOCK_N, GROUPS_PER_TILE, G_BYTES))
+            acc_g += tl.sum(prod_g, axis=2) * s
+
+        acc = tl.sum(acc_g, axis=1)
+        if HAS_BIAS:
+            bias = tl.load(bias_ptr + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+            acc += bias
+        tl.store(out_ptr + offs_n, acc, mask=mask_n)
+
+    @triton.jit
     def _quarot_int4_matvec_kernel(
         x_ptr,
         w_ptr,
@@ -44,14 +109,28 @@ if HAS_TRITON:
             offs_k_even = offs_kb * 2
             offs_k_odd = offs_k_even + 1
 
-            x_even = tl.load(x_ptr + offs_k_even, mask=mask_kb, other=0.0).to(tl.float32)
-            x_odd = tl.load(x_ptr + offs_k_odd, mask=mask_kb, other=0.0).to(tl.float32)
+            x_even = tl.load(
+                x_ptr + offs_k_even, mask=mask_kb, other=0.0, eviction_policy="evict_last"
+            ).to(tl.float32)
+            x_odd = tl.load(
+                x_ptr + offs_k_odd, mask=mask_kb, other=0.0, eviction_policy="evict_last"
+            ).to(tl.float32)
 
             mask_nb = mask_n[:, None] & mask_kb[None, :]
             # 0x88 decodes both nibbles to 8 - 8 = 0 for masked positions.
-            b = tl.load(w_ptr + offs_n[:, None] * k_bytes + offs_kb[None, :], mask=mask_nb, other=0x88)
+            b = tl.load(
+                w_ptr + offs_n[:, None] * k_bytes + offs_kb[None, :],
+                mask=mask_nb,
+                other=0x88,
+                eviction_policy="evict_first",
+            )
             g_idx = offs_k_even // G
-            s = tl.load(s_ptr + offs_n[:, None] * n_groups + g_idx[None, :], mask=mask_nb, other=0.0).to(tl.float32)
+            s = tl.load(
+                s_ptr + offs_n[:, None] * n_groups + g_idx[None, :],
+                mask=mask_nb,
+                other=0.0,
+                eviction_policy="evict_first",
+            ).to(tl.float32)
 
             low = ((b & 0x0F).to(tl.int32) - 8).to(tl.float32)
             high = (((b >> 4) & 0x0F).to(tl.int32) - 8).to(tl.float32)
@@ -123,6 +202,59 @@ if HAS_TRITON:
         tl.store(out_ptr + offs_m[:, None] * N + offs_n[None, :], acc, mask=mask_out)
 
 
+def _is_power_of_two(n: int) -> bool:
+    return n > 0 and (n & (n - 1)) == 0
+
+
+def _launch_quarot_matvec(
+    x_2d: torch.Tensor,
+    w_c: torch.Tensor,
+    s_c: torch.Tensor,
+    b_c: torch.Tensor,
+    out: torch.Tensor,
+    out_features: int,
+    in_features: int,
+    group_size: int,
+    has_bias: bool,
+) -> None:
+    block_n = 8 if out_features >= 128 else 4
+    k_bytes = in_features // 2
+    block_kb = 128 if k_bytes >= 128 else (64 if k_bytes >= 64 else 32)
+    g_bytes = group_size // 2
+    grid = (triton.cdiv(out_features, block_n),)
+    if _is_power_of_two(g_bytes) and g_bytes <= block_kb and (block_kb % g_bytes == 0):
+        _quarot_int4_matvec_grouped_kernel[grid](
+            x_2d,
+            w_c,
+            s_c,
+            b_c,
+            out,
+            N=out_features,
+            K=in_features,
+            G_BYTES=g_bytes,
+            GROUPS_PER_TILE=block_kb // g_bytes,
+            HAS_BIAS=has_bias,
+            BLOCK_N=block_n,
+            BLOCK_KB=block_kb,
+            num_warps=4,
+        )
+    else:
+        _quarot_int4_matvec_kernel[grid](
+            x_2d,
+            w_c,
+            s_c,
+            b_c,
+            out,
+            N=out_features,
+            K=in_features,
+            G=group_size,
+            HAS_BIAS=has_bias,
+            BLOCK_N=block_n,
+            BLOCK_KB=block_kb,
+            num_warps=4,
+        )
+
+
 def can_use_triton_quarot(in_features: int, group_size: int, device: torch.device) -> bool:
     return bool(
         HAS_TRITON
@@ -187,22 +319,8 @@ def _quarot_int4_linear_op(
 
     with torch.cuda.device(x.device):
         if m == 1:
-            block_n = 16 if out_features >= 512 else 8
-            block_kb = 128 if in_features >= 512 else (64 if in_features >= 256 else 32)
-            grid = (triton.cdiv(out_features, block_n),)
-            _quarot_int4_matvec_kernel[grid](
-                x_2d,
-                w_c,
-                s_c,
-                b_c,
-                out,
-                N=out_features,
-                K=in_features,
-                G=group_size,
-                HAS_BIAS=has_bias,
-                BLOCK_N=block_n,
-                BLOCK_KB=block_kb,
-                num_warps=4,
+            _launch_quarot_matvec(
+                x_2d, w_c, s_c, b_c, out, out_features, in_features, group_size, has_bias
             )
         else:
             block_m = 32 if m >= 32 else 16
@@ -288,22 +406,9 @@ def quarot_int4_linear(
             has_bias = bias is not None
             b_c = (bias if bias.is_contiguous() else bias.contiguous()) if has_bias else s_c
             out = torch.empty((*x.shape[:-1], out_features), device=x.device, dtype=x.dtype)
-            block_n = 16 if out_features >= 512 else 8
-            block_kb = 128 if in_features >= 512 else (64 if in_features >= 256 else 32)
             with torch.cuda.device(x.device):
-                _quarot_int4_matvec_kernel[(triton.cdiv(out_features, block_n),)](
-                    x_2d,
-                    w_c,
-                    s_c,
-                    b_c,
-                    out,
-                    N=out_features,
-                    K=in_features,
-                    G=group_size,
-                    HAS_BIAS=has_bias,
-                    BLOCK_N=block_n,
-                    BLOCK_KB=block_kb,
-                    num_warps=4,
+                _launch_quarot_matvec(
+                    x_2d, w_c, s_c, b_c, out, out_features, in_features, group_size, has_bias
                 )
             return out
         return _quarot_int4_linear_op(x, packed_weight, weight_scale, bias, group_size)

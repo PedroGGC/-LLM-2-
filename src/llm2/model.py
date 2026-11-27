@@ -17,6 +17,10 @@ class RMSNorm(nn.Module):
         self.eps = eps
 
     def forward(self, x):
+        # Fast fused CUDA RMSNorm during inference (PyTorch CUDA kernel accumulates internally in FP32).
+        if x.is_cuda and not torch.is_grad_enabled() and hasattr(F, "rms_norm"):
+            w = self.weight if self.weight.dtype == x.dtype else self.weight.to(x.dtype)
+            return F.rms_norm(x, self.weight.shape, w, self.eps)
         # Accumulate in float32 even under CUDA autocast.
         value = x.float()
         normalized = value * torch.rsqrt(value.square().mean(-1, keepdim=True) + self.eps)
