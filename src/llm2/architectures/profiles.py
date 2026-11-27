@@ -12,28 +12,33 @@ import math
 
 import torch
 from torch import nn
-from torch.nn import functional as F
 
 from .quarot import HadamardLinearINT4
 from .sub4bit import _iter_quantizable_linears, _set_module_by_name, compute_gue_spectral_sensitivity
+from .triton_quarot import int8_group_linear
 
 # fração de parâmetros em INT8; o restante vai para INT4 g32
 PROFILE_INT8_FRACTION = {"q8": 1.0, "q6": 0.5, "q5": 0.25, "q4": 0.0}
 
 
 class Int8GroupLinear(nn.Module):
-    """Linear com pesos INT8 simétricos por grupo + escala FP16 (dequantiza para o dtype da ativação).
+    """Linear com pesos INT8 simétricos por grupo + escala FP16 (Triton matvec fundido no decode CUDA)."""
 
-    shortcut: dequantização em PyTorch puro (sem kernel fundido), serve para qualidade/VRAM; fundir em Triton
-    antes de medir tok/s.
-    """
-
-    def __init__(self, in_features: int, out_features: int, *, bias: bool = False, group_size: int = 128):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        *,
+        bias: bool = False,
+        group_size: int = 128,
+        use_triton: bool = True,
+    ):
         super().__init__()
         self.in_features = int(in_features)
         self.out_features = int(out_features)
         self.group_size = math.gcd(self.in_features, int(group_size)) or 1
         self.n_groups = self.in_features // self.group_size
+        self.use_triton = bool(use_triton)
         self.register_buffer("qweight", torch.zeros((self.out_features, self.in_features), dtype=torch.int8))
         self.register_buffer("weight_scale", torch.ones((self.out_features, self.n_groups), dtype=torch.float16))
         self.bias = nn.Parameter(torch.zeros(self.out_features)) if bias else None
@@ -49,8 +54,14 @@ class Int8GroupLinear(nn.Module):
             self.bias.copy_(bias.detach())
 
     @classmethod
-    def from_linear(cls, linear: nn.Linear, *, group_size: int = 128) -> Int8GroupLinear:
-        layer = cls(linear.in_features, linear.out_features, bias=linear.bias is not None, group_size=group_size)
+    def from_linear(cls, linear: nn.Linear, *, group_size: int = 128, use_triton: bool = True) -> Int8GroupLinear:
+        layer = cls(
+            linear.in_features,
+            linear.out_features,
+            bias=linear.bias is not None,
+            group_size=group_size,
+            use_triton=use_triton,
+        )
         layer = layer.to(device=linear.weight.device)
         layer.pack_from_float_weight(linear.weight, linear.bias)
         return layer
@@ -64,8 +75,9 @@ class Int8GroupLinear(nn.Module):
         return int(self.qweight.numel() + self.weight_scale.numel() * self.weight_scale.element_size())
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b = None if self.bias is None else self.bias.to(x.dtype)
-        return F.linear(x, self.dequantize_weight(x.dtype), b)
+        return int8_group_linear(
+            x, self.qweight, self.weight_scale, self.bias, self.group_size, use_triton=self.use_triton
+        )
 
 
 def quantize_model_profile(
@@ -99,7 +111,7 @@ def quantize_model_profile(
     bytes8 = bytes4 = n8 = n4 = 0
     for idx, (name, lin) in enumerate(cands):
         if name in int8_names:
-            q = Int8GroupLinear.from_linear(lin, group_size=int8_group_size)
+            q = Int8GroupLinear.from_linear(lin, group_size=int8_group_size, use_triton=use_triton)
             bytes8 += q.weight_memory_bytes()
             n8 += 1
         else:

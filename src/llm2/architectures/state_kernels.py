@@ -129,21 +129,36 @@ def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32, use_triton=
             out = torch.cat(outputs, dim=-2)
             return (out[:, :, :total_len] if pad else out), memory
 
-        # GQA-DeltaNet path: H_kv states updated once; all G query groups read from shared H_kv states.
+        # GQA-DeltaNet path: H_kv states updated once; all G query groups read from shared H_kv states via batched matmul.
         qc_g = q.reshape(batch, kv_heads, g_mult, n_chunks, chunk_size, k_dim)
         if w_dim == 1:
-            reads_k = torch.einsum("bhgctd,bhcsd->bhgcts", qc_g, kc) * decay_after.unsqueeze(2)
-            reads_b = torch.einsum("bhgctd,bhcsd->bhgcts", qc_g, bc) * decay_after.unsqueeze(2)
+            reads_k = torch.matmul(qc_g, kc.unsqueeze(2).transpose(-1, -2)) * decay_after.unsqueeze(2)
+            reads_b = torch.matmul(qc_g, bc.unsqueeze(2).transpose(-1, -2)) * decay_after.unsqueeze(2)
         else:
             reads_k = (qc_g.unsqueeze(-2) * kc.unsqueeze(2).unsqueeze(-3) * decay_after.unsqueeze(2)).sum(-1).masked_fill(~causal, 0.0)
             reads_b = (qc_g.unsqueeze(-2) * bc.unsqueeze(2).unsqueeze(-3) * decay_after.unsqueeze(2)).sum(-1).masked_fill(~causal, 0.0)
-        kv_local = torch.einsum("bhgcts,bhcsv->bhgctv", reads_k, vc) + torch.einsum("bhgcts,bhcsv->bhgctv", reads_b, u_local)
-        read_proj = qc_g * cumulative.exp().unsqueeze(2) + torch.einsum("bhgcts,bhcsd->bhgctd", reads_b, u_state)
+        kv_local = torch.matmul(reads_k, vc.unsqueeze(2)) + torch.matmul(reads_b, u_local.unsqueeze(2))
+        read_proj = qc_g * cumulative.exp().unsqueeze(2) + torch.matmul(reads_b, u_state.unsqueeze(2))
+        kv_flat = kv_local.transpose(2, 3).reshape(batch, kv_heads, n_chunks, g_mult * chunk_size, v_dim)
+        rp_flat = read_proj.transpose(2, 3).reshape(batch, kv_heads, n_chunks, g_mult * chunk_size, k_dim)
+        if use_triton and can_use_triton_dplr(g_mult * chunk_size, v_dim, k_dim, q.device):
+            out_flat, memory = dplr_inter_chunk_scan(kv_flat, rp_flat, mem_decay, state_trans, mem_local, memory)
+            out = (
+                out_flat.reshape(batch, kv_heads, n_chunks, g_mult, chunk_size, v_dim)
+                .transpose(2, 3)
+                .reshape(batch, q_heads, -1, v_dim)
+            )
+            return (out[:, :, :total_len] if pad else out), memory
         outputs = []
         for m in range(n_chunks):
-            outputs.append(kv_local[:, :, :, m] + torch.einsum("bhgtd,bhvd->bhgtv", read_proj[:, :, :, m], memory))
+            outputs.append(kv_flat[:, :, m] + torch.matmul(rp_flat[:, :, m], memory.transpose(-1, -2)))
             memory = memory * mem_decay[:, :, m] + mem_local[:, :, m] + memory @ state_trans[:, :, m]
-        out = torch.cat(outputs, dim=-2).reshape(batch, q_heads, -1, v_dim)
+        out = (
+            torch.stack(outputs, dim=2)
+            .reshape(batch, kv_heads, n_chunks, g_mult, chunk_size, v_dim)
+            .transpose(2, 3)
+            .reshape(batch, q_heads, -1, v_dim)
+        )
         return (out[:, :, :total_len] if pad else out), memory
 
 

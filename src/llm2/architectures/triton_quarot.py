@@ -201,6 +201,120 @@ if HAS_TRITON:
         mask_out = mask_m[:, None] & mask_n[None, :]
         tl.store(out_ptr + offs_m[:, None] * N + offs_n[None, :], acc, mask=mask_out)
 
+    @triton.jit
+    def _int8_group_matvec_grouped_kernel(
+        x_ptr,
+        w_ptr,
+        s_ptr,
+        bias_ptr,
+        out_ptr,
+        N: tl.constexpr,
+        K: tl.constexpr,
+        G: tl.constexpr,
+        GROUPS_PER_TILE: tl.constexpr,
+        HAS_BIAS: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+    ):
+        """Fused INT8 per-group matvec for Lumina-Q8/Q6/Q5 decode (1 scale load per group, L2-pinned x)."""
+        pid_n = tl.program_id(0)
+        offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+        mask_n = offs_n < N
+        n_groups = K // G
+
+        if GROUPS_PER_TILE == 1:
+            acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
+            for g0 in range(0, n_groups):
+                s = tl.load(
+                    s_ptr + offs_n * n_groups + g0,
+                    mask=mask_n,
+                    other=0.0,
+                    eviction_policy="evict_first",
+                ).to(tl.float32)
+                offs_k = g0 * G + tl.arange(0, BLOCK_K)
+                mask_k = offs_k < K
+                xv = tl.load(x_ptr + offs_k, mask=mask_k, other=0.0, eviction_policy="evict_last").to(tl.float32)
+                w = tl.load(
+                    w_ptr + offs_n[:, None] * K + offs_k[None, :],
+                    mask=mask_n[:, None] & mask_k[None, :],
+                    other=0,
+                    eviction_policy="evict_first",
+                ).to(tl.float32)
+                acc += tl.sum(w * xv[None, :], axis=1) * s
+        else:
+            acc_g = tl.zeros((BLOCK_N, GROUPS_PER_TILE), dtype=tl.float32)
+            for g0 in range(0, n_groups, GROUPS_PER_TILE):
+                offs_g = g0 + tl.arange(0, GROUPS_PER_TILE)
+                mask_g = offs_g < n_groups
+                s = tl.load(
+                    s_ptr + offs_n[:, None] * n_groups + offs_g[None, :],
+                    mask=mask_n[:, None] & mask_g[None, :],
+                    other=0.0,
+                    eviction_policy="evict_first",
+                ).to(tl.float32)
+                offs_k = g0 * G + tl.arange(0, BLOCK_K)
+                mask_k = offs_k < K
+                xv = tl.load(x_ptr + offs_k, mask=mask_k, other=0.0, eviction_policy="evict_last").to(tl.float32)
+                w = tl.load(
+                    w_ptr + offs_n[:, None] * K + offs_k[None, :],
+                    mask=mask_n[:, None] & mask_k[None, :],
+                    other=0,
+                    eviction_policy="evict_first",
+                ).to(tl.float32)
+                prod = tl.reshape(w * xv[None, :], (BLOCK_N, GROUPS_PER_TILE, G))
+                acc_g += tl.sum(prod, axis=2) * s
+            acc = tl.sum(acc_g, axis=1)
+
+        if HAS_BIAS:
+            bias = tl.load(bias_ptr + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+            acc += bias
+        tl.store(out_ptr + offs_n, acc, mask=mask_n)
+
+    @triton.jit
+    def _int8_group_matvec_kernel(
+        x_ptr,
+        w_ptr,
+        s_ptr,
+        bias_ptr,
+        out_ptr,
+        N: tl.constexpr,
+        K: tl.constexpr,
+        G: tl.constexpr,
+        HAS_BIAS: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+    ):
+        pid_n = tl.program_id(0)
+        offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+        mask_n = offs_n < N
+        n_groups = K // G
+
+        acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
+        for k0 in range(0, K, BLOCK_K):
+            offs_k = k0 + tl.arange(0, BLOCK_K)
+            mask_k = offs_k < K
+            xv = tl.load(x_ptr + offs_k, mask=mask_k, other=0.0, eviction_policy="evict_last").to(tl.float32)
+            mask_nk = mask_n[:, None] & mask_k[None, :]
+            w = tl.load(
+                w_ptr + offs_n[:, None] * K + offs_k[None, :],
+                mask=mask_nk,
+                other=0,
+                eviction_policy="evict_first",
+            ).to(tl.float32)
+            g_idx = offs_k // G
+            s = tl.load(
+                s_ptr + offs_n[:, None] * n_groups + g_idx[None, :],
+                mask=mask_nk,
+                other=0.0,
+                eviction_policy="evict_first",
+            ).to(tl.float32)
+            acc += tl.sum(w * xv[None, :] * s, axis=1)
+
+        if HAS_BIAS:
+            bias = tl.load(bias_ptr + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+            acc += bias
+        tl.store(out_ptr + offs_n, acc, mask=mask_n)
+
 
 def _is_power_of_two(n: int) -> bool:
     return n > 0 and (n & (n - 1)) == 0
@@ -413,3 +527,99 @@ def quarot_int4_linear(
             return out
         return _quarot_int4_linear_op(x, packed_weight, weight_scale, bias, group_size)
     return _quarot_int4_pytorch_linear(x, packed_weight, weight_scale, bias, group_size)
+
+
+def can_use_triton_int8(in_features: int, group_size: int, device: torch.device) -> bool:
+    return bool(
+        HAS_TRITON
+        and device.type == "cuda"
+        and in_features >= 32
+        and group_size >= 1
+        and in_features % group_size == 0
+    )
+
+
+def _int8_group_pytorch_linear(
+    x: torch.Tensor,
+    qweight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    bias: torch.Tensor | None,
+    group_size: int,
+) -> torch.Tensor:
+    out_features, in_features = qweight.shape
+    n_groups = in_features // group_size
+    w = qweight.view(out_features, n_groups, group_size).to(torch.float32)
+    w = (w * weight_scale.to(torch.float32).unsqueeze(-1)).view(out_features, in_features).to(x.dtype)
+    b = None if bias is None else bias.to(x.dtype)
+    return torch.nn.functional.linear(x, w, b)
+
+
+def int8_group_linear(
+    x: torch.Tensor,
+    qweight: torch.Tensor,
+    weight_scale: torch.Tensor,
+    bias: torch.Tensor | None,
+    group_size: int,
+    *,
+    use_triton: bool = True,
+) -> torch.Tensor:
+    in_features = x.shape[-1]
+    if (
+        use_triton
+        and not x.requires_grad
+        and x.numel() == in_features
+        and can_use_triton_int8(in_features, group_size, x.device)
+    ):
+        out_features = qweight.shape[0]
+        x_2d = x.reshape(1, in_features)
+        if not x_2d.is_contiguous():
+            x_2d = x_2d.contiguous()
+        w_c = qweight if qweight.is_contiguous() else qweight.contiguous()
+        s_c = weight_scale if weight_scale.is_contiguous() else weight_scale.contiguous()
+        has_bias = bias is not None
+        b_c = (bias if bias.is_contiguous() else bias.contiguous()) if has_bias else s_c
+        out = torch.empty((*x.shape[:-1], out_features), device=x.device, dtype=x.dtype)
+        block_n = 8 if out_features >= 128 else 4
+        if in_features >= 256 and group_size == 128:
+            block_k = 256
+        elif in_features >= 128:
+            block_k = 128
+        elif in_features >= 64:
+            block_k = 64
+        else:
+            block_k = 32
+        grid = (triton.cdiv(out_features, block_n),)
+        with torch.cuda.device(x.device):
+            if _is_power_of_two(group_size) and group_size <= block_k and (block_k % group_size == 0):
+                _int8_group_matvec_grouped_kernel[grid](
+                    x_2d,
+                    w_c,
+                    s_c,
+                    b_c,
+                    out,
+                    N=out_features,
+                    K=in_features,
+                    G=group_size,
+                    GROUPS_PER_TILE=block_k // group_size,
+                    HAS_BIAS=has_bias,
+                    BLOCK_N=block_n,
+                    BLOCK_K=block_k,
+                    num_warps=4,
+                )
+            else:
+                _int8_group_matvec_kernel[grid](
+                    x_2d,
+                    w_c,
+                    s_c,
+                    b_c,
+                    out,
+                    N=out_features,
+                    K=in_features,
+                    G=group_size,
+                    HAS_BIAS=has_bias,
+                    BLOCK_N=block_n,
+                    BLOCK_K=block_k,
+                    num_warps=4,
+                )
+        return out
+    return _int8_group_pytorch_linear(x, qweight, weight_scale, bias, group_size)

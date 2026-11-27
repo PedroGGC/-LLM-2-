@@ -48,3 +48,19 @@ def test_profiles_error_and_size_ordering():
 def test_invalid_profile_rejected():
     with pytest.raises(ValueError):
         quantize_model_profile(_stack(), "q3", use_triton=False)
+
+
+@pytest.mark.cuda
+def test_int8_triton_cuda_decode_parity():
+    from llm2.architectures.triton_quarot import HAS_TRITON, int8_group_linear
+
+    if not (torch.cuda.is_available() and HAS_TRITON):
+        pytest.skip("CUDA + Triton required")
+    torch.manual_seed(7)
+    lin = nn.Linear(512, 256, bias=True).cuda().half()
+    q = Int8GroupLinear.from_linear(lin, group_size=128)
+    x = torch.randn(1, 1, 512, device="cuda", dtype=torch.float16)
+    with torch.inference_mode():
+        y_tri = int8_group_linear(x, q.qweight, q.weight_scale, q.bias, q.group_size, use_triton=True)
+        y_ref = int8_group_linear(x, q.qweight, q.weight_scale, q.bias, q.group_size, use_triton=False)
+    torch.testing.assert_close(y_tri, y_ref, atol=2e-2, rtol=2e-2)
