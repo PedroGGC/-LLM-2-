@@ -237,6 +237,140 @@ if HAS_TRITON:
             mask=mask_vk,
         )
 
+    @triton.jit
+    def _dplr_inter_chunk_fwd_vtiled_128_kernel(
+        kv_ptr,
+        p_ptr,
+        t_ptr,
+        m_ptr,
+        init_ptr,
+        out_ptr,
+        final_ptr,
+        N: tl.constexpr,
+        C: tl.constexpr,
+        V: tl.constexpr,
+        K: tl.constexpr,
+        BLOCK_C: tl.constexpr,
+        BLOCK_V: tl.constexpr,
+        HALF_K: tl.constexpr,
+        stride_kv_bh,
+        stride_kv_n,
+        stride_kv_c,
+        stride_kv_v,
+        stride_p_bh,
+        stride_p_n,
+        stride_p_c,
+        stride_p_k,
+        stride_t_bh,
+        stride_t_n,
+        stride_t_k0,
+        stride_t_k1,
+        stride_m_bh,
+        stride_m_n,
+        stride_m_v,
+        stride_m_k,
+        stride_s_bh,
+        stride_s_v,
+        stride_s_k,
+        stride_o_bh,
+        stride_o_n,
+        stride_o_c,
+        stride_o_v,
+    ):
+        """V-tiled + 2x2 K-split DPLR scan (<28 KiB SRAM) enabling head_dim=128 on sm_75 (T4)."""
+        bh = tl.program_id(0).to(tl.int64)
+        pid_v = tl.program_id(1)
+        offs_v = pid_v * BLOCK_V + tl.arange(0, BLOCK_V)
+        offs_k0 = tl.arange(0, HALF_K)
+        offs_k1 = HALF_K + tl.arange(0, HALF_K)
+        mask_v = offs_v < V
+        mask_k0 = offs_k0 < K
+        mask_k1 = offs_k1 < K
+        mask_vk0 = mask_v[:, None] & mask_k0[None, :]
+        mask_vk1 = mask_v[:, None] & mask_k1[None, :]
+
+        s0 = tl.load(
+            init_ptr + bh * stride_s_bh + offs_v[:, None] * stride_s_v + offs_k0[None, :] * stride_s_k,
+            mask=mask_vk0,
+            other=0.0,
+        ).to(tl.float32)
+        s1 = tl.load(
+            init_ptr + bh * stride_s_bh + offs_v[:, None] * stride_s_v + offs_k1[None, :] * stride_s_k,
+            mask=mask_vk1,
+            other=0.0,
+        ).to(tl.float32)
+
+        for n in range(N):
+            for c0 in range(0, C, BLOCK_C):
+                offs_c = c0 + tl.arange(0, BLOCK_C)
+                mask_c = offs_c < C
+                kv = tl.load(
+                    kv_ptr + bh * stride_kv_bh + n * stride_kv_n + offs_c[:, None] * stride_kv_c + offs_v[None, :] * stride_kv_v,
+                    mask=mask_c[:, None] & mask_v[None, :],
+                    other=0.0,
+                ).to(tl.float32)
+                p0 = tl.load(
+                    p_ptr + bh * stride_p_bh + n * stride_p_n + offs_c[:, None] * stride_p_c + offs_k0[None, :] * stride_p_k,
+                    mask=mask_c[:, None] & mask_k0[None, :],
+                    other=0.0,
+                ).to(tl.float32)
+                p1 = tl.load(
+                    p_ptr + bh * stride_p_bh + n * stride_p_n + offs_c[:, None] * stride_p_c + offs_k1[None, :] * stride_p_k,
+                    mask=mask_c[:, None] & mask_k1[None, :],
+                    other=0.0,
+                ).to(tl.float32)
+                out_n = kv + tl.dot(p0, tl.trans(s0), input_precision="ieee") + tl.dot(p1, tl.trans(s1), input_precision="ieee")
+                tl.store(
+                    out_ptr + bh * stride_o_bh + n * stride_o_n + offs_c[:, None] * stride_o_c + offs_v[None, :] * stride_o_v,
+                    out_n,
+                    mask=mask_c[:, None] & mask_v[None, :],
+                )
+            t00 = tl.load(
+                t_ptr + bh * stride_t_bh + n * stride_t_n + offs_k0[:, None] * stride_t_k0 + offs_k0[None, :] * stride_t_k1,
+                mask=mask_k0[:, None] & mask_k0[None, :],
+                other=0.0,
+            ).to(tl.float32)
+            t10 = tl.load(
+                t_ptr + bh * stride_t_bh + n * stride_t_n + offs_k1[:, None] * stride_t_k0 + offs_k0[None, :] * stride_t_k1,
+                mask=mask_k1[:, None] & mask_k0[None, :],
+                other=0.0,
+            ).to(tl.float32)
+            m0 = tl.load(
+                m_ptr + bh * stride_m_bh + n * stride_m_n + offs_v[:, None] * stride_m_v + offs_k0[None, :] * stride_m_k,
+                mask=mask_vk0,
+                other=0.0,
+            ).to(tl.float32)
+            ns0 = tl.where(mask_vk0, tl.dot(s0, t00, input_precision="ieee") + tl.dot(s1, t10, input_precision="ieee") + m0, 0.0)
+
+            t01 = tl.load(
+                t_ptr + bh * stride_t_bh + n * stride_t_n + offs_k0[:, None] * stride_t_k0 + offs_k1[None, :] * stride_t_k1,
+                mask=mask_k0[:, None] & mask_k1[None, :],
+                other=0.0,
+            ).to(tl.float32)
+            t11 = tl.load(
+                t_ptr + bh * stride_t_bh + n * stride_t_n + offs_k1[:, None] * stride_t_k0 + offs_k1[None, :] * stride_t_k1,
+                mask=mask_k1[:, None] & mask_k1[None, :],
+                other=0.0,
+            ).to(tl.float32)
+            m1 = tl.load(
+                m_ptr + bh * stride_m_bh + n * stride_m_n + offs_v[:, None] * stride_m_v + offs_k1[None, :] * stride_m_k,
+                mask=mask_vk1,
+                other=0.0,
+            ).to(tl.float32)
+            ns1 = tl.where(mask_vk1, tl.dot(s0, t01, input_precision="ieee") + tl.dot(s1, t11, input_precision="ieee") + m1, 0.0)
+            s0, s1 = ns0, ns1
+
+        tl.store(
+            final_ptr + bh * stride_s_bh + offs_v[:, None] * stride_s_v + offs_k0[None, :] * stride_s_k,
+            s0,
+            mask=mask_vk0,
+        )
+        tl.store(
+            final_ptr + bh * stride_s_bh + offs_v[:, None] * stride_s_v + offs_k1[None, :] * stride_s_k,
+            s1,
+            mask=mask_vk1,
+        )
+
 
 def _next_pow2_16(x: int) -> int:
     return 16 if x <= 16 else 1 << (x - 1).bit_length()
@@ -426,6 +560,18 @@ def _backward(ctx, grad_out, grad_final, grad_ckpt):
 _dplr_inter_chunk_scan_fwd.register_autograd(_backward, setup_context=_setup_context)
 
 
+def can_use_triton_dplr_vtiled(chunk_size: int, v_dim: int, k_dim: int, device: torch.device) -> bool:
+    """Inference-only V-tiled + 2x2 K-split scan supporting head_dim up to 128 on sm_75 (T4)."""
+    return bool(
+        HAS_TRITON
+        and device.type == "cuda"
+        and not torch.is_grad_enabled()
+        and 1 <= chunk_size <= 256
+        and 1 <= v_dim <= 128
+        and 1 <= k_dim <= 128
+    )
+
+
 def dplr_inter_chunk_scan(
     kv_local: torch.Tensor,
     read_proj: torch.Tensor,
@@ -440,11 +586,40 @@ def dplr_inter_chunk_scan(
     bh = b * h
     decay_vec = mem_decay.squeeze(-2).expand(b, h, n_chunks, k_dim)
     trans_mat = state_trans + torch.diag_embed(decay_vec)
-    out_bh, final_bh, _ = _dplr_inter_chunk_scan_fwd(
-        kv_local.reshape(bh, n_chunks, c_len, v_dim),
-        read_proj.reshape(bh, n_chunks, c_len, k_dim),
-        trans_mat.reshape(bh, n_chunks, k_dim, k_dim),
-        mem_local.reshape(bh, n_chunks, v_dim, k_dim),
-        init_state.reshape(bh, v_dim, k_dim),
-    )
+    kv_bh = kv_local.reshape(bh, n_chunks, c_len, v_dim)
+    p_bh = read_proj.reshape(bh, n_chunks, c_len, k_dim)
+    t_bh = trans_mat.reshape(bh, n_chunks, k_dim, k_dim)
+    m_bh = mem_local.reshape(bh, n_chunks, v_dim, k_dim)
+    s0_bh = init_state.reshape(bh, v_dim, k_dim)
+    if (
+        not can_use_triton_dplr(c_len, v_dim, k_dim, kv_local.device)
+        and can_use_triton_dplr_vtiled(c_len, v_dim, k_dim, kv_local.device)
+    ):
+        kv_c = kv_bh.float().contiguous()
+        p_c = p_bh.float().contiguous()
+        t_c = t_bh.float().contiguous()
+        m_c = m_bh.float().contiguous()
+        s0_c = s0_bh.float().contiguous()
+        out_bh = torch.empty_like(kv_c)
+        final_bh = torch.empty_like(s0_c)
+        block_v = 32 if v_dim >= 32 else 16
+        block_c = 32 if c_len >= 32 else 16
+        half_k = 64 if k_dim > 64 else 32
+        grid = (bh, triton.cdiv(v_dim, block_v))
+        with torch.cuda.device(kv_c.device):
+            _dplr_inter_chunk_fwd_vtiled_128_kernel[grid](
+                kv_c, p_c, t_c, m_c, s0_c, out_bh, final_bh,
+                n_chunks, c_len, v_dim, k_dim, block_c, block_v, half_k,
+                kv_c.stride(0), kv_c.stride(1), kv_c.stride(2), kv_c.stride(3),
+                p_c.stride(0), p_c.stride(1), p_c.stride(2), p_c.stride(3),
+                t_c.stride(0), t_c.stride(1), t_c.stride(2), t_c.stride(3),
+                m_c.stride(0), m_c.stride(1), m_c.stride(2), m_c.stride(3),
+                s0_c.stride(0), s0_c.stride(1), s0_c.stride(2),
+                out_bh.stride(0), out_bh.stride(1), out_bh.stride(2), out_bh.stride(3),
+                num_warps=4,
+                num_stages=1,
+            )
+        return out_bh.reshape(b, h, n_chunks * c_len, v_dim), final_bh.reshape(b, h, v_dim, k_dim)
+
+    out_bh, final_bh, _ = _dplr_inter_chunk_scan_fwd(kv_bh, p_bh, t_bh, m_bh, s0_bh)
     return out_bh.reshape(b, h, n_chunks * c_len, v_dim), final_bh.reshape(b, h, v_dim, k_dim)

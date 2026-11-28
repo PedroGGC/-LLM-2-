@@ -215,7 +215,7 @@ class CompiledDecode:
             skip_ptrs: set[int] = set()
             for lvl in getattr(static_state, "levels", ()):
                 if getattr(lvl, "is_static", False):
-                    for attr in ("k_tail", "v_tail", "k_scale", "v_scale"):
+                    for attr in ("k_tail", "v_tail", "k_scale", "v_scale", "k_block_summary"):
                         t_attr = getattr(lvl, attr, None)
                         if isinstance(t_attr, torch.Tensor):
                             skip_ptrs.add(t_attr.data_ptr())

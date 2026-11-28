@@ -50,6 +50,19 @@ def test_invalid_profile_rejected():
         quantize_model_profile(_stack(), "q3", use_triton=False)
 
 
+def test_mp_spectral_sensitivity_profile():
+    m = _stack(seed=9)
+    x = torch.randn(8, 128)
+    with torch.no_grad():
+        ref = m(x)
+        q6, info = quantize_model_profile(m, "q6", use_triton=False, sensitivity_mode="mp")
+        q4, _ = quantize_model_profile(m, "q4", use_triton=False, sensitivity_mode="mp")
+        err_q6 = ((q6(x) - ref).norm() / ref.norm()).item()
+        err_q4 = ((q4(x) - ref).norm() / ref.norm()).item()
+    assert err_q6 < err_q4
+    assert info["int8_layers"] > 0 and info["int4_layers"] > 0
+
+
 @pytest.mark.cuda
 def test_int8_triton_cuda_decode_parity():
     from llm2.architectures.triton_quarot import HAS_TRITON, int8_group_linear

@@ -416,6 +416,47 @@ def compute_gue_spectral_sensitivity(linear: nn.Linear, name: str, *, halo_level
     return prior * math.log1p(max(kurt, 1.0))
 
 
+@torch.no_grad()
+def compute_mp_spectral_sensitivity(
+    linear: nn.Linear,
+    name: str,
+    *,
+    halo_levels: set[int] | None = None,
+    top_k: int = 16,
+) -> float:
+    """Marchenko-Pastur spectral sensitivity: fraction of singular energy escaping the MP bulk edge sigma_+."""
+    w = linear.weight.detach().float()
+    m, n = w.shape
+    sigma = float(w.std().clamp_min(1e-8).item())
+    # Marchenko-Pastur upper bulk edge for (m x n) matrix: sigma * (sqrt(m) + sqrt(n))
+    mp_edge = sigma * (math.sqrt(m) + math.sqrt(n))
+    k = min(int(top_k), min(m, n))
+    try:
+        _, s, _ = torch.svd_lowrank(w, q=k, niter=2)
+    except Exception:
+        return compute_gue_spectral_sensitivity(linear, name, halo_levels=halo_levels)
+    frob_sq = float(w.square().sum().clamp_min(1e-12).item())
+    excess_sq = float((s.square() - mp_edge * mp_edge).clamp_min(0.0).sum().item())
+    spike_ratio = excess_sq / frob_sq
+    edge_ratio = float(s[0].item()) / max(mp_edge, 1e-8)
+
+    prior = 1.0
+    if any(tok in name for tok in ("q_proj", "k_proj", "v_proj", "out_proj", "qkv")):
+        prior *= 1.6
+    if "ffn.down" in name:
+        prior *= 1.25
+    if halo_levels is not None:
+        for part in name.split("."):
+            if part.isdigit():
+                lvl = int(part)
+                if lvl in halo_levels:
+                    prior *= 1.5
+                if lvl in (0, 1):
+                    prior *= 1.4
+                break
+    return prior * (1.0 + 4.0 * spike_ratio + math.log1p(max(edge_ratio - 1.0, 0.0)))
+
+
 def _iter_quantizable_linears(model: nn.Module):
     for full_name, module in model.named_modules():
         if not isinstance(module, nn.Linear):

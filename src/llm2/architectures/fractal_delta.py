@@ -13,7 +13,7 @@ from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 from ..interfaces import Backbone, ModelOutput
 from ..model import RMSNorm, SwiGLU
-from .quarot import HadamardLinearINT4, pack_int4_signed, unpack_int4_signed
+from .quarot import HadamardLinearINT4, hadamard_matrix, pack_int4_signed, unpack_int4_signed
 from .state_kernels import dplr_chunked, dplr_sequential
 
 
@@ -193,10 +193,11 @@ class SWAState:
     k_scale: torch.Tensor | None = None
     v_scale: torch.Tensor | None = None
     is_static: bool = False
+    k_block_summary: torch.Tensor | None = None
 
 
 def _quantize_kv_cache(t: torch.Tensor, mode: str) -> tuple[torch.Tensor, torch.Tensor | None]:
-    """Symmetric per-token-head KV cache compression ('none'|'fp8'|'int4') for global/SWA layers."""
+    """Symmetric per-token-head KV cache compression ('none'|'fp8'|'int4'|'turbo4') for global/SWA layers."""
     if mode == "none" or t.shape[2] == 0:
         return t, None
     f = t.float()
@@ -204,7 +205,7 @@ def _quantize_kv_cache(t: torch.Tensor, mode: str) -> tuple[torch.Tensor, torch.
         scale = (f.abs().amax(dim=-1, keepdim=True) / 127.0).clamp_min(1e-6)
         q = (f / scale).round().clamp(-127.0, 127.0).to(torch.int8)
         return q.contiguous(), scale.to(torch.float16).contiguous()
-    if mode == "int4":
+    if mode in ("int4", "turbo4"):
         scale = (f.abs().amax(dim=-1, keepdim=True) / 7.0).clamp_min(1e-6)
         q = (f / scale).round().clamp(-7.0, 7.0).to(torch.int8)
         return pack_int4_signed(q), scale.to(torch.float16).contiguous()
@@ -217,7 +218,7 @@ def _dequantize_kv_cache(q: torch.Tensor, scale: torch.Tensor | None, mode: str,
         return q if q.dtype == dtype else q.to(dtype)
     if mode == "fp8":
         return q.to(dtype) * scale.to(dtype)
-    if mode == "int4":
+    if mode in ("int4", "turbo4"):
         return unpack_int4_signed(q).to(dtype) * scale.to(dtype)
     raise ValueError(f"unsupported kv_quant mode: {mode}")
 
@@ -375,6 +376,9 @@ class SlidingWindowGQACell(nn.Module):
         self.use_rope = research.fractal_swa_rope
         self.qk_norm = bool(research.fractal_qk_norm)
         self.kv_quant = str(research.fractal_kv_quant)
+        self.qsa_block_size = 0
+        self.qsa_top_blocks = 0
+        self._turbo_h: torch.Tensor | None = None
         self.dropout = config.dropout
         self.weight_mode = research.fractal_weight_mode
 
@@ -407,11 +411,16 @@ class SlidingWindowGQACell(nn.Module):
         _init_linear_weight(self.ffn.up, 0.02)
         _init_linear_weight(self.ffn.down, proj_std)
 
+    def _get_turbo_hadamard(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        if self._turbo_h is None or self._turbo_h.device != device or self._turbo_h.dtype != dtype:
+            self._turbo_h = hadamard_matrix(self.head_dim, device=device, dtype=dtype)
+        return self._turbo_h
+
     def _stored_dim(self) -> int:
-        return self.head_dim // 2 if self.kv_quant == "int4" else self.head_dim
+        return self.head_dim // 2 if self.kv_quant in ("int4", "turbo4") else self.head_dim
 
     def _stored_dtype(self, compute_dtype: torch.dtype) -> torch.dtype:
-        if self.kv_quant == "int4":
+        if self.kv_quant in ("int4", "turbo4"):
             return torch.uint8
         if self.kv_quant == "fp8":
             return torch.int8
@@ -624,7 +633,10 @@ class SlidingWindowGQACell(nn.Module):
             return st
         cur_len = st.k_tail.shape[2]
         cap = max(int(capacity), cur_len)
-        if st.is_static and cur_len == cap:
+        r = self.qsa_block_size if (self.qsa_block_size > 1 and self.qsa_top_blocks > 0) else 0
+        if r > 0:
+            cap = ((cap + r - 1) // r) * r
+        if st.is_static and cur_len == cap and (r == 0 or st.k_block_summary is not None):
             return st
         b = st.k_tail.shape[0]
         device = st.k_tail.device
@@ -635,6 +647,11 @@ class SlidingWindowGQACell(nn.Module):
         pos_buf = torch.full((b, cap), -1, device=device, dtype=torch.int64)
         k_sc = torch.ones(b, self.kv_heads, cap, 1, device=device, dtype=torch.float16) if self.kv_quant != "none" else None
         v_sc = torch.ones(b, self.kv_heads, cap, 1, device=device, dtype=torch.float16) if self.kv_quant != "none" else None
+        k_sum = (
+            torch.zeros(b, self.kv_heads, cap // r, self.head_dim, device=device, dtype=st.k_sinks.dtype)
+            if r > 0
+            else None
+        )
         if cur_len > 0:
             k_buf[:, :, :cur_len, :].copy_(st.k_tail)
             v_buf[:, :, :cur_len, :].copy_(st.v_tail)
@@ -642,6 +659,15 @@ class SlidingWindowGQACell(nn.Module):
             if k_sc is not None and st.k_scale is not None:
                 k_sc[:, :, :cur_len, :].copy_(st.k_scale)
                 v_sc[:, :, :cur_len, :].copy_(st.v_scale)
+            if k_sum is not None:
+                k_deq = _dequantize_kv_cache(st.k_tail, st.k_scale, self.kv_quant, st.k_sinks.dtype)
+                n_full = cur_len // r
+                if n_full > 0:
+                    k_sum[:, :, :n_full, :].copy_(
+                        k_deq[:, :, : n_full * r, :].reshape(b, self.kv_heads, n_full, r, self.head_dim).mean(dim=3)
+                    )
+                if cur_len % r != 0:
+                    k_sum[:, :, n_full, :].copy_(k_deq[:, :, n_full * r :, :].mean(dim=2))
         return SWAState(
             st.k_sinks,
             st.v_sinks,
@@ -653,6 +679,7 @@ class SlidingWindowGQACell(nn.Module):
             k_sc,
             v_sc,
             is_static=True,
+            k_block_summary=k_sum,
         )
 
     def forward_attn_delta(
@@ -683,6 +710,12 @@ class SlidingWindowGQACell(nn.Module):
                 q = _apply_split_half_rope(q.float(), angles).to(k.dtype)
                 k = _apply_split_half_rope(k.float(), angles).to(k.dtype)
 
+        turbo_h = self._get_turbo_hadamard(k.device, k.dtype) if self.kv_quant == "turbo4" else None
+        if turbo_h is not None:
+            q = torch.matmul(q, turbo_h)
+            k = torch.matmul(k, turbo_h)
+            v = torch.matmul(v, turbo_h)
+
         drop_p = self.dropout if self.training else 0.0
         if st.is_static and self.global_attn and not return_all_states:
             cap = st.k_tail.shape[2]
@@ -699,10 +732,53 @@ class SlidingWindowGQACell(nn.Module):
                     idx_sc = slot.view(b, 1, 1, 1).expand(b, self.kv_heads, 1, 1)
                     st.k_scale.scatter_(2, idx_sc, ks)
                     st.v_scale.scatter_(2, idx_sc, vs)
-                k_all = _dequantize_kv_cache(st.k_tail, st.k_scale, self.kv_quant, k.dtype)
-                v_all = _dequantize_kv_cache(st.v_tail, st.v_scale, self.kv_quant, v.dtype)
-                mask = (st.pos_tail >= 0)[:, None, None, :]
-                attn = self._sdpa(q, k_all, v_all, attn_mask=mask, dropout_p=drop_p)
+                r = self.qsa_block_size
+                if (
+                    st.k_block_summary is not None
+                    and r > 1
+                    and self.qsa_top_blocks > 0
+                    and cap > r * self.qsa_top_blocks
+                ):
+                    n_blocks = st.k_block_summary.shape[2]
+                    cur_blk = (slot // r).clamp(0, n_blocks - 1)
+                    idx_blk_upd = cur_blk.view(b, 1, 1, 1).expand(b, self.kv_heads, 1, self.head_dim)
+                    prev_sum = torch.gather(st.k_block_summary, 2, idx_blk_upd)
+                    is_first = ((slot % r) == 0).view(b, 1, 1, 1)
+                    upd_sum = torch.where(is_first, k.to(prev_sum.dtype), prev_sum * 0.75 + k.to(prev_sum.dtype) * 0.25)
+                    st.k_block_summary.scatter_(2, idx_blk_upd, upd_sum)
+
+                    q_g = q.view(b, self.kv_heads, self.kv_groups, 1, self.head_dim)
+                    scores = torch.matmul(
+                        q_g, st.k_block_summary[:, :, None, :, :].to(q.dtype).transpose(-1, -2)
+                    ).squeeze(-2).amax(dim=2)
+                    blk_arange = torch.arange(n_blocks, device=k.device)[None, None, :]
+                    cur_blk_3 = cur_blk[:, None, None]
+                    scores = scores.masked_fill(blk_arange > cur_blk_3, -1e4)
+                    must_keep = (blk_arange < 2) | ((blk_arange <= cur_blk_3) & (blk_arange > (cur_blk_3 - 16)))
+                    scores = scores.masked_fill(must_keep, 1e4)
+                    top_k = min(self.qsa_top_blocks, n_blocks)
+                    top_blk = torch.topk(scores, top_k, dim=-1).indices
+                    offsets = torch.arange(r, device=k.device)[None, None, None, :]
+                    tok_idx = (top_blk.unsqueeze(-1) * r + offsets).reshape(b, self.kv_heads, top_k * r)
+                    gather_kv = tok_idx.unsqueeze(-1).expand(b, self.kv_heads, top_k * r, self._stored_dim())
+                    k_sel_q = torch.gather(st.k_tail, 2, gather_kv)
+                    v_sel_q = torch.gather(st.v_tail, 2, gather_kv)
+                    if self.kv_quant != "none":
+                        gather_sc = tok_idx.unsqueeze(-1)
+                        ks_sel = torch.gather(st.k_scale, 2, gather_sc)
+                        vs_sel = torch.gather(st.v_scale, 2, gather_sc)
+                    else:
+                        ks_sel = vs_sel = None
+                    k_all = _dequantize_kv_cache(k_sel_q, ks_sel, self.kv_quant, k.dtype)
+                    v_all = _dequantize_kv_cache(v_sel_q, vs_sel, self.kv_quant, v.dtype)
+                    pos_sel = torch.gather(st.pos_tail[:, None, :].expand(b, self.kv_heads, cap), 2, tok_idx)
+                    mask = (pos_sel >= 0).repeat_interleave(self.kv_groups, dim=1)[:, :, None, :]
+                    attn = self._sdpa(q, k_all, v_all, attn_mask=mask, dropout_p=drop_p)
+                else:
+                    k_all = _dequantize_kv_cache(st.k_tail, st.k_scale, self.kv_quant, k.dtype)
+                    v_all = _dequantize_kv_cache(st.v_tail, st.v_scale, self.kv_quant, v.dtype)
+                    mask = (st.pos_tail >= 0)[:, None, None, :]
+                    attn = self._sdpa(q, k_all, v_all, attn_mask=mask, dropout_p=drop_p)
                 st.seen.add_(1)
                 next_state = st
             else:
@@ -761,6 +837,23 @@ class SlidingWindowGQACell(nn.Module):
                         if self.kv_quant != "none":
                             st.k_scale[:, :, s0:end, :].copy_(ks[:, :, :w_len, :])
                             st.v_scale[:, :, s0:end, :].copy_(vs[:, :, :w_len, :])
+                        if st.k_block_summary is not None and self.qsa_block_size > 1:
+                            r = self.qsa_block_size
+                            b0, b1 = s0 // r, end // r
+                            if s0 % r == 0 and b1 > b0:
+                                n_blk_w = b1 - b0
+                                st.k_block_summary[:, :, b0:b1, :].copy_(
+                                    k[:, :, : n_blk_w * r, :]
+                                    .reshape(b, self.kv_heads, n_blk_w, r, self.head_dim)
+                                    .mean(dim=3)
+                                    .to(st.k_block_summary.dtype)
+                                )
+                            if end % r != 0:
+                                rem_start = (end // r) * r - s0
+                                if rem_start >= 0:
+                                    st.k_block_summary[:, :, end // r, :].copy_(
+                                        k[:, :, rem_start:w_len, :].mean(dim=2).to(st.k_block_summary.dtype)
+                                    )
                     st.seen.add_(t)
                     next_state = st
                 else:
@@ -788,6 +881,8 @@ class SlidingWindowGQACell(nn.Module):
             attn = self._sdpa(q, k_all, v_all, attn_mask=mask, dropout_p=drop_p)
             next_state = self._update_state_block(st, k, v, new_pos, return_all_states=return_all_states)
 
+        if turbo_h is not None:
+            attn = torch.matmul(attn, turbo_h)
         out = attn.transpose(1, 2).contiguous().reshape(b, t, self.attn_dim).to(x.dtype)
         attn_update = F.dropout(self.out_proj(out).to(x.dtype), p=self.dropout, training=self.training)
         if adapter is not None:

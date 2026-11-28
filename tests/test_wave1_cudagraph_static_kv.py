@@ -148,3 +148,23 @@ def test_state_bytes_scaling_16k_32k_64k():
     # Linear growth of Global KV-FP8 state across 16K -> 32K -> 64K
     assert (s32 - s16) == (s16 - s0)
     assert (s64 - s32) == 2 * (s32 - s16)
+
+
+def test_qsa_microblocks_and_turbo4_static_decode():
+    torch.manual_seed(11)
+    model = _build_small_hybrid(kv_quant="fp8", delta_gqa=True, max_seq_len=512).eval()
+    for cell in model.cells:
+        if hasattr(cell, "qsa_block_size"):
+            cell.kv_quant = "turbo4"
+            cell.qsa_block_size = 4
+            cell.qsa_top_blocks = 8
+    dec = FractalDecode(model)
+    ids = torch.randint(0, model.config.vocab_size, (1, 48))
+    with torch.inference_mode():
+        lg, st = dec.prefill_static(ids, capacity=128, chunk_size=16)
+        assert torch.isfinite(lg).all()
+        nxt = lg[:, -1:].argmax(dim=-1)
+        for _ in range(6):
+            lg, st = dec.step(nxt, st)
+            assert torch.isfinite(lg).all()
+            nxt = lg[:, -1:].argmax(dim=-1)

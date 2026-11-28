@@ -8,7 +8,7 @@ import math
 import torch
 from torch.nn import functional as F
 
-from .triton_dplr import can_use_triton_dplr, dplr_inter_chunk_scan
+from .triton_dplr import can_use_triton_dplr, can_use_triton_dplr_vtiled, dplr_inter_chunk_scan
 
 
 RULES = ("gated_delta", "rwkv7", "mlstm")
@@ -141,7 +141,10 @@ def dplr_chunked(q, k, v, log_w, a, b, state=None, *, chunk_size=32, use_triton=
         read_proj = qc_g * cumulative.exp().unsqueeze(2) + torch.matmul(reads_b, u_state.unsqueeze(2))
         kv_flat = kv_local.transpose(2, 3).reshape(batch, kv_heads, n_chunks, g_mult * chunk_size, v_dim)
         rp_flat = read_proj.transpose(2, 3).reshape(batch, kv_heads, n_chunks, g_mult * chunk_size, k_dim)
-        if use_triton and can_use_triton_dplr(g_mult * chunk_size, v_dim, k_dim, q.device):
+        if use_triton and (
+            can_use_triton_dplr(g_mult * chunk_size, v_dim, k_dim, q.device)
+            or can_use_triton_dplr_vtiled(g_mult * chunk_size, v_dim, k_dim, q.device)
+        ):
             out_flat, memory = dplr_inter_chunk_scan(kv_flat, rp_flat, mem_decay, state_trans, mem_local, memory)
             out = (
                 out_flat.reshape(batch, kv_heads, n_chunks, g_mult, chunk_size, v_dim)

@@ -14,7 +14,12 @@ import torch
 from torch import nn
 
 from .quarot import HadamardLinearINT4
-from .sub4bit import _iter_quantizable_linears, _set_module_by_name, compute_gue_spectral_sensitivity
+from .sub4bit import (
+    _iter_quantizable_linears,
+    _set_module_by_name,
+    compute_gue_spectral_sensitivity,
+    compute_mp_spectral_sensitivity,
+)
 from .triton_quarot import int8_group_linear
 
 # fração de parâmetros em INT8; o restante vai para INT4 g32
@@ -89,16 +94,20 @@ def quantize_model_profile(
     int4_group_size: int = 32,
     inplace: bool = False,
     use_triton: bool = True,
+    sensitivity_mode: str = "kurtosis",
 ) -> tuple[nn.Module, dict]:
     """Aplica `q8|q6|q5|q4`. Retorna (modelo, info) com bytes de pesos quantizados por tipo."""
     if profile not in PROFILE_INT8_FRACTION:
         raise ValueError(f"profile deve ser um de {sorted(PROFILE_INT8_FRACTION)}")
+    if sensitivity_mode not in ("kurtosis", "mp"):
+        raise ValueError("sensitivity_mode deve ser 'kurtosis' ou 'mp'")
     target = model if inplace else copy.deepcopy(model)
     halo_set = set(halo_levels) if halo_levels is not None else None
     cands = [(n, m) for n, m in _iter_quantizable_linears(target) if m.in_features % int4_group_size == 0]
     total = sum(m.weight.numel() for _, m in cands)
     budget = PROFILE_INT8_FRACTION[profile] * total
-    ranked = sorted(cands, key=lambda it: compute_gue_spectral_sensitivity(it[1], it[0], halo_levels=halo_set), reverse=True)
+    scorer = compute_mp_spectral_sensitivity if sensitivity_mode == "mp" else compute_gue_spectral_sensitivity
+    ranked = sorted(cands, key=lambda it: scorer(it[1], it[0], halo_levels=halo_set), reverse=True)
 
     int8_names: set[str] = set()
     acc = 0
